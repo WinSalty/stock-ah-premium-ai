@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import csv
+from io import StringIO
+from typing import Any
+
 from sqlalchemy.orm import Session
 
 from app.db.models.market import AHStockPair, FxRateDaily
@@ -72,3 +76,30 @@ class ManualImportService:
         count = self.repository.upsert_many(FxRateDaily, payload)
         self.db.commit()
         return count
+
+    def import_ah_pairs_csv(self, content: str) -> int:
+        """导入 CSV 格式的人工 AH 配对。
+
+        创建日期：2026-05-04
+        author: sunshengxian
+        """
+
+        rows = [ManualAHPairImportRow.model_validate(row) for row in self._read_csv(content)]
+        return self.import_ah_pairs(rows)
+
+    def import_fx_rates_csv(self, content: str) -> int:
+        """导入 CSV 格式的人工汇率。
+
+        创建日期：2026-05-04
+        author: sunshengxian
+        """
+
+        rows = [ManualFxRateImportRow.model_validate(row) for row in self._read_csv(content)]
+        return self.import_fx_rates(rows)
+
+    def _read_csv(self, content: str) -> list[dict[str, Any]]:
+        reader = csv.DictReader(StringIO(content.strip()))
+        rows: list[dict[str, Any]] = []
+        for row in reader:
+            rows.append({key: value for key, value in row.items() if value not in (None, "")})
+        return rows

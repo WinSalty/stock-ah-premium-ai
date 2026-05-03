@@ -111,6 +111,13 @@ body {
   align-items: end;
 }
 
+.manual-import-grid {
+  display: grid;
+  grid-template-columns: minmax(180px, 240px) minmax(300px, 1fr) auto;
+  gap: 12px;
+  align-items: end;
+}
+
 .chat-form-grid {
   display: grid;
   grid-template-columns: minmax(240px, 420px) minmax(160px, 260px);
@@ -200,6 +207,10 @@ body {
   .premium-filter-grid {
     grid-template-columns: repeat(2, minmax(160px, 1fr));
   }
+
+  .manual-import-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 720px) {
@@ -209,6 +220,7 @@ body {
 
   .sync-form-grid,
   .premium-filter-grid,
+  .manual-import-grid,
   .chat-form-grid {
     grid-template-columns: 1fr;
   }

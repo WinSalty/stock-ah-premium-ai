@@ -26,6 +26,8 @@
 - 低权限兜底导入：
   - 支持通过 `POST /api/manual-import/ah-pairs` 导入人工 AH 配对。
   - 支持通过 `POST /api/manual-import/fx-rates` 导入人工汇率。
+  - 支持通过 CSV 文本接口导入人工 AH 配对和汇率。
+  - 前端同步页增加人工导入入口。
   - 增加人工导入服务单元测试。
 - A/H 溢价计算：
   - 港股通通道过滤。

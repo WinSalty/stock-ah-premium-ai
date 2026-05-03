@@ -88,3 +88,7 @@ export interface ChatMessageResponse {
   sql: string | null;
   rows: Record<string, unknown>[];
 }
+
+export interface ImportResponse {
+  imported_rows: number;
+}

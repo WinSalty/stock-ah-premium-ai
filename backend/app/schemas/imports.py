@@ -64,3 +64,13 @@ class ImportResponse(BaseModel):
     """
 
     imported_rows: int
+
+
+class CsvImportRequest(BaseModel):
+    """CSV 文本导入请求。
+
+    创建日期：2026-05-04
+    author: sunshengxian
+    """
+
+    content: str = Field(min_length=1)

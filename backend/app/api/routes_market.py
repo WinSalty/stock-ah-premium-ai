@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from app.db.models.market import AHPremiumDaily
 from app.db.session import get_db
 from app.schemas.imports import (
+    CsvImportRequest,
     ImportResponse,
     ManualAHPairImportRequest,
     ManualFxRateImportRequest,
@@ -205,4 +206,34 @@ def import_manual_fx_rates(
     """
 
     count = ManualImportService(db).import_fx_rates(payload.rows)
+    return ImportResponse(imported_rows=count)
+
+
+@router.post("/manual-import/ah-pairs/csv", response_model=ImportResponse)
+def import_manual_ah_pairs_csv(
+    payload: CsvImportRequest,
+    db: DbSession,
+) -> ImportResponse:
+    """导入 CSV 格式人工 AH 配对。
+
+    创建日期：2026-05-04
+    author: sunshengxian
+    """
+
+    count = ManualImportService(db).import_ah_pairs_csv(payload.content)
+    return ImportResponse(imported_rows=count)
+
+
+@router.post("/manual-import/fx-rates/csv", response_model=ImportResponse)
+def import_manual_fx_rates_csv(
+    payload: CsvImportRequest,
+    db: DbSession,
+) -> ImportResponse:
+    """导入 CSV 格式人工汇率。
+
+    创建日期：2026-05-04
+    author: sunshengxian
+    """
+
+    count = ManualImportService(db).import_fx_rates_csv(payload.content)
     return ImportResponse(imported_rows=count)

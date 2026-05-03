@@ -1,10 +1,11 @@
-import { Button, DatePicker, Form, Input, Select, Space, Table, Tag, message } from 'antd';
-import { Play, RotateCw } from 'lucide-react';
+import { Button, DatePicker, Form, Input, Select, Space, Table, Tabs, Tag, message } from 'antd';
+import { FileUp, Play, RotateCw } from 'lucide-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import dayjs from 'dayjs';
 import PageHeader from '../components/PageHeader';
 import { createSyncRun, fetchDatasets, fetchSyncRuns } from '../api/sync';
 import type { SyncRun, SyncRunCreate } from '../types/domain';
+import { importCsv, type ImportKind } from '../api/imports';
 
 interface SyncFormValues {
   dataset: string;
@@ -14,6 +15,11 @@ interface SyncFormValues {
   type?: string;
 }
 
+interface ImportFormValues {
+  kind: ImportKind;
+  content: string;
+}
+
 /**
  * 数据同步页面。
  * 创建日期：2026-05-04
@@ -21,6 +27,7 @@ interface SyncFormValues {
  */
 function SyncPage() {
   const [form] = Form.useForm<SyncFormValues>();
+  const [importForm] = Form.useForm<ImportFormValues>();
   const queryClient = useQueryClient();
   const datasets = useQuery({ queryKey: ['datasets'], queryFn: fetchDatasets });
   const runs = useQuery({ queryKey: ['sync-runs'], queryFn: fetchSyncRuns });
@@ -31,6 +38,14 @@ function SyncPage() {
       queryClient.invalidateQueries({ queryKey: ['sync-runs'] });
     },
     onError: (error) => message.error(error instanceof Error ? error.message : '同步失败')
+  });
+  const importMutation = useMutation({
+    mutationFn: (values: ImportFormValues) => importCsv(values.kind, values.content),
+    onSuccess: (response) => {
+      message.success(`导入完成：${response.imported_rows} 条`);
+      importForm.resetFields(['content']);
+    },
+    onError: (error) => message.error(error instanceof Error ? error.message : '导入失败')
   });
 
   const onFinish = (values: SyncFormValues) => {
@@ -59,42 +74,101 @@ function SyncPage() {
         }
       />
       <section className="panel">
-        <Form form={form} layout="vertical" onFinish={onFinish}>
-          <div className="sync-form-grid">
-            <Form.Item label="数据集" name="dataset" rules={[{ required: true, message: '请选择数据集' }]}>
-              <Select
-                placeholder="选择数据集"
-                loading={datasets.isLoading}
-                options={datasets.data?.map((item) => ({ value: item.name, label: item.label }))}
-              />
-            </Form.Item>
-            <Form.Item label="交易日" name="trade_date">
-              <DatePicker className="full-width" />
-            </Form.Item>
-            <Form.Item label="日期范围" name="range">
-              <DatePicker.RangePicker className="full-width" />
-            </Form.Item>
-            <Form.Item label="代码" name="ts_code">
-              <Input placeholder="如 600000.SH" />
-            </Form.Item>
-            <Form.Item label="通道" name="type">
-              <Select
-                allowClear
-                options={[
-                  { value: 'SH_HK', label: 'SH_HK' },
-                  { value: 'SZ_HK', label: 'SZ_HK' },
-                  { value: 'HK_SH', label: 'HK_SH' },
-                  { value: 'HK_SZ', label: 'HK_SZ' }
-                ]}
-              />
-            </Form.Item>
-            <Form.Item label=" ">
-              <Button type="primary" htmlType="submit" icon={<Play size={16} />} loading={mutation.isPending}>
-                执行同步
-              </Button>
-            </Form.Item>
-          </div>
-        </Form>
+        <Tabs
+          items={[
+            {
+              key: 'sync',
+              label: '接口同步',
+              children: (
+                <Form form={form} layout="vertical" onFinish={onFinish}>
+                  <div className="sync-form-grid">
+                    <Form.Item
+                      label="数据集"
+                      name="dataset"
+                      rules={[{ required: true, message: '请选择数据集' }]}
+                    >
+                      <Select
+                        placeholder="选择数据集"
+                        loading={datasets.isLoading}
+                        options={datasets.data?.map((item) => ({ value: item.name, label: item.label }))}
+                      />
+                    </Form.Item>
+                    <Form.Item label="交易日" name="trade_date">
+                      <DatePicker className="full-width" />
+                    </Form.Item>
+                    <Form.Item label="日期范围" name="range">
+                      <DatePicker.RangePicker className="full-width" />
+                    </Form.Item>
+                    <Form.Item label="代码" name="ts_code">
+                      <Input placeholder="如 600000.SH" />
+                    </Form.Item>
+                    <Form.Item label="通道" name="type">
+                      <Select
+                        allowClear
+                        options={[
+                          { value: 'SH_HK', label: 'SH_HK' },
+                          { value: 'SZ_HK', label: 'SZ_HK' },
+                          { value: 'HK_SH', label: 'HK_SH' },
+                          { value: 'HK_SZ', label: 'HK_SZ' }
+                        ]}
+                      />
+                    </Form.Item>
+                    <Form.Item label=" ">
+                      <Button
+                        type="primary"
+                        htmlType="submit"
+                        icon={<Play size={16} />}
+                        loading={mutation.isPending}
+                      >
+                        执行同步
+                      </Button>
+                    </Form.Item>
+                  </div>
+                </Form>
+              )
+            },
+            {
+              key: 'manual',
+              label: '人工导入',
+              children: (
+                <Form
+                  form={importForm}
+                  layout="vertical"
+                  onFinish={(values) => importMutation.mutate(values)}
+                  initialValues={{ kind: 'ah-pairs' }}
+                >
+                  <div className="manual-import-grid">
+                    <Form.Item label="类型" name="kind" rules={[{ required: true }]}>
+                      <Select
+                        options={[
+                          { value: 'ah-pairs', label: 'AH 配对' },
+                          { value: 'fx-rates', label: '汇率' }
+                        ]}
+                      />
+                    </Form.Item>
+                    <Form.Item
+                      label="CSV"
+                      name="content"
+                      rules={[{ required: true, message: '请输入 CSV' }]}
+                    >
+                      <Input.TextArea rows={6} className="mono-text" />
+                    </Form.Item>
+                    <Form.Item label=" ">
+                      <Button
+                        type="primary"
+                        htmlType="submit"
+                        icon={<FileUp size={16} />}
+                        loading={importMutation.isPending}
+                      >
+                        导入
+                      </Button>
+                    </Form.Item>
+                  </div>
+                </Form>
+              )
+            }
+          ]}
+        />
       </section>
 
       <section className="panel">
