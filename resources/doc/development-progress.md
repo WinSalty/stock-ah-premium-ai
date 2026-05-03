@@ -4,7 +4,7 @@
 
 ## 当前状态
 
-已按一阶段方案完成主要代码开发，暂不执行真实功能测试。原因是当前 Tushare Token 权限较低，且用户明确要求先尽量完成代码开发，不进行功能测试。
+已按一阶段方案完成主要代码开发和本地 MySQL 初始化验证。当前仍未执行 Tushare 与 LLM 真实接口验证，原因是当前 Tushare Token 权限较低，且 LLM Key 尚未配置。
 
 ## 已完成
 
@@ -18,6 +18,7 @@
   - `stock_ah_ai` 建库 SQL。
   - 一阶段业务表、任务表、聊天表、官方 AH 校验表。
   - LLM 只读视图和只读用户模板 SQL。
+  - 已在本地 MySQL 5.7 完成建库、Alembic 迁移和只读视图创建验证。
 - Tushare 同步：
   - HTTP 客户端封装。
   - 数据集配置：A 股基础、A 股日线、A 股交易日历、港股基础、港股日线、港股交易日历、沪深港通名单、外汇日线、官方 AH 比价。
@@ -59,30 +60,29 @@
 - 未读取 `/Users/salty/codeProject/ai/doc/tushare-token.txt` 内容。
 - 未调用 Tushare 接口。
 - 未调用 LLM API。
-- 未连接或初始化本地 MySQL。
-- 未执行端到端功能测试。
+- 未执行依赖 Tushare 或 LLM 的端到端功能测试。
 
 ## 已执行的非功能性检查
 
 - `python3 -m compileall backend/app backend/tests`：通过。
-- 后端虚拟环境使用 `/opt/homebrew/bin/python3.13` 创建，`pytest`：5 个单元测试通过。
+- 后端虚拟环境使用 `/opt/homebrew/bin/python3.13` 创建，`pytest`：7 个单元测试通过。
 - `ruff check app tests`：通过。
 - `npm install`：完成，生成 `frontend/package-lock.json`。
 - `npm run build`：通过。
 - `npm audit --omit=dev`：0 个生产依赖漏洞。
+- `scripts/init-db.sh`：通过，已创建 `stock_ah_ai` 表和视图。
 - 敏感信息扫描：只发现文档中的 `<local-only>` 占位符，未发现真实 Token、密码或 API Key。
 
 ## 待验证事项
 
 - Tushare 低权限 Token 可用接口范围。
 - `stock_hsgt`、`hk_daily`、`stk_ah_comparison`、`fx_daily` 的实际返回字段与当前字段映射是否完全一致。
-- MySQL 5.7 环境下 Alembic 迁移和只读视图脚本。
 - 前后端联调、页面响应式截图和真实数据展示。
 - LLM 输出 SQL 的稳定性和问答答案质量。
 
 ## 下一步建议
 
-1. 在确认可以做功能测试后，先用本机 MySQL 跑 `00_create_database.sql` 和 `alembic upgrade head`。
-2. 用低权限 Tushare Token 跑 `stock_basic`、`trade_cal` 等基础接口，记录权限不足的数据集。
-3. 若 AH 官方比价或港股通接口权限不足，先导入人工 AH 配对 CSV 和汇率 CSV，完成自算链路验证。
-4. 配置 LLM Key 后验证 SQL Guard 和问答闭环。
+1. 用低权限 Tushare Token 跑 `stock_basic`、`trade_cal` 等基础接口，记录权限不足的数据集。
+2. 若 AH 官方比价或港股通接口权限不足，先导入人工 AH 配对 CSV 和汇率 CSV，完成自算链路验证。
+3. 配置 LLM Key 后验证 SQL Guard 和问答闭环。
+4. 启动前后端后做页面联调和响应式截图验证。

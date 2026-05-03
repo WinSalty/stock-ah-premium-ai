@@ -439,7 +439,7 @@ flowchart LR
 | P3 AH 配对与溢价计算 | 导入 AH 配对，计算港股通 A/H 溢价，落 `ah_premium_daily` | 计算服务、结果查询 API | 已编码，待真实数据验证 |
 | P4 LLM 问答 | OpenAI-compatible 适配、只读 SQL Guard、问答 API | 聊天 API、提示词模板、只读查询视图 | 已编码，待 LLM Key 验证 |
 | P5 前端页面 | 总览、同步、AH 溢价、智能问答页面 | React 前端 | 已编码，待前后端联调 |
-| P6 联调与验收 | 端到端测试、异常处理、README、启动脚本 | 完整本地运行说明 | README 已更新；功能测试按用户要求暂不执行 |
+| P6 联调与验收 | 端到端测试、异常处理、README、启动脚本 | 完整本地运行说明 | 本地 MySQL 初始化、静态检查和构建已通过；Tushare/LLM 验证待权限配置 |
 
 建议排期：8-12 个工作日。
 

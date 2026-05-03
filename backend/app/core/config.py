@@ -18,7 +18,7 @@ class Settings(BaseSettings):
     app_version: str = "0.1.0"
     log_level: str = "INFO"
     database_url: str = Field(
-        default="mysql+pymysql://stock_ah_user:change-me@127.0.0.1:3306/stock_ah_ai?charset=utf8mb4",
+        default="mysql+pymysql://root@127.0.0.1:3306/stock_ah_ai?charset=utf8mb4",
         alias="STOCK_AH_DB_URL",
     )
     tushare_api_url: str = Field(default="http://api.tushare.pro", alias="TUSHARE_API_URL")
