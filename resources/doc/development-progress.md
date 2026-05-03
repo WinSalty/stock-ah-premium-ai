@@ -51,6 +51,7 @@
   - `scripts/init-db.sh`：创建数据库、执行 Alembic 迁移和只读视图 SQL。
   - `scripts/start-backend.sh`、`scripts/start-frontend.sh`：启动本地服务。
   - `Makefile`：提供 `make bootstrap/check/init-db/backend/frontend` 快捷入口。
+  - `resources/doc/startup-guide.md`：完整启动、配置、验证和排错手册。
 - 非真实功能测试资产：
   - 后端公式单元测试。
   - SQL Guard 单元测试。
