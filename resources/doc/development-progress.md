@@ -42,6 +42,12 @@
   - 数据同步页：数据集、日期、代码、通道、任务记录。
   - AH 溢价页：筛选、分页表格、计算入口、趋势抽屉。
   - 智能问答页：会话、问题输入、SQL 预览和结果表格。
+- 本地运行与验收脚本：
+  - `scripts/bootstrap.sh`：安装后端和前端依赖。
+  - `scripts/check.sh`：执行 Ruff、pytest、前端构建和生产依赖审计。
+  - `scripts/init-db.sh`：创建数据库、执行 Alembic 迁移和只读视图 SQL。
+  - `scripts/start-backend.sh`、`scripts/start-frontend.sh`：启动本地服务。
+  - `Makefile`：提供 `make bootstrap/check/init-db/backend/frontend` 快捷入口。
 - 非真实功能测试资产：
   - 后端公式单元测试。
   - SQL Guard 单元测试。

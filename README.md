@@ -32,30 +32,36 @@
 
 ## 本地启动
 
+首次安装依赖：
+
+```bash
+cd /Users/salty/codeProject/ai/coding/stock-ah-premium-ai
+./scripts/bootstrap.sh
+```
+
+执行非外部依赖检查：
+
+```bash
+./scripts/check.sh
+```
+
 后端：
 
 ```bash
-cd /Users/salty/codeProject/ai/coding/stock-ah-premium-ai/backend
-python -m venv .venv
-source .venv/bin/activate
-pip install -e ".[dev]"
-cp .env.example .env
-uvicorn app.main:app --reload
+cp backend/.env.example backend/.env
+./scripts/start-backend.sh
 ```
 
 前端：
 
 ```bash
-cd /Users/salty/codeProject/ai/coding/stock-ah-premium-ai/frontend
-npm install
-npm run dev
+./scripts/start-frontend.sh
 ```
 
 数据库初始化：
 
 ```bash
-mysql -u root < /Users/salty/codeProject/ai/coding/stock-ah-premium-ai/resources/sql/00_create_database.sql
-cd /Users/salty/codeProject/ai/coding/stock-ah-premium-ai/backend
-alembic upgrade head
-mysql -u root stock_ah_ai < /Users/salty/codeProject/ai/coding/stock-ah-premium-ai/resources/sql/01_readonly_views.sql
+./scripts/init-db.sh
 ```
+
+也可以使用 `make bootstrap`、`make check`、`make init-db`、`make backend`、`make frontend`。
