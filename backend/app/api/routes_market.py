@@ -9,6 +9,11 @@ from sqlalchemy.orm import Session
 
 from app.db.models.market import AHPremiumDaily
 from app.db.session import get_db
+from app.schemas.imports import (
+    ImportResponse,
+    ManualAHPairImportRequest,
+    ManualFxRateImportRequest,
+)
 from app.schemas.market import (
     PremiumCalculateRequest,
     PremiumCalculateResponse,
@@ -16,6 +21,7 @@ from app.schemas.market import (
     PremiumQueryResponse,
     PremiumSummaryResponse,
 )
+from app.services.manual_import_service import ManualImportService
 from app.services.premium_calc_service import PremiumCalcService
 
 router = APIRouter()
@@ -170,3 +176,33 @@ def premium_trend(
         statement = statement.where(AHPremiumDaily.trade_date <= end_date)
     statement = statement.order_by(AHPremiumDaily.trade_date)
     return [PremiumQueryResponse.model_validate(item) for item in db.scalars(statement).all()]
+
+
+@router.post("/manual-import/ah-pairs", response_model=ImportResponse)
+def import_manual_ah_pairs(
+    payload: ManualAHPairImportRequest,
+    db: DbSession,
+) -> ImportResponse:
+    """导入人工 AH 配对。
+
+    创建日期：2026-05-04
+    author: sunshengxian
+    """
+
+    count = ManualImportService(db).import_ah_pairs(payload.rows)
+    return ImportResponse(imported_rows=count)
+
+
+@router.post("/manual-import/fx-rates", response_model=ImportResponse)
+def import_manual_fx_rates(
+    payload: ManualFxRateImportRequest,
+    db: DbSession,
+) -> ImportResponse:
+    """导入人工汇率。
+
+    创建日期：2026-05-04
+    author: sunshengxian
+    """
+
+    count = ManualImportService(db).import_fx_rates(payload.rows)
+    return ImportResponse(imported_rows=count)

@@ -309,6 +309,8 @@ stock-ah-premium-ai/
 - `GET /api/ah-premiums`：分页查询溢价结果，支持日期、代码、行业、通道、溢价区间筛选。
 - `GET /api/ah-premiums/summary`：返回最新交易日概览、最高/最低溢价、缺失数据数量。
 - `GET /api/ah-premiums/{aTsCode}/{hkTsCode}/trend`：返回指定 AH 配对的趋势。
+- `POST /api/manual-import/ah-pairs`：当 Tushare AH 比价权限不足时，导入人工 AH 配对。
+- `POST /api/manual-import/fx-rates`：当 Tushare 外汇权限不足时，导入人工汇率。
 
 LLM 问答：
 

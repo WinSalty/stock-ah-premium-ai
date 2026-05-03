@@ -23,6 +23,10 @@
   - 数据集配置：A 股基础、A 股日线、A 股交易日历、港股基础、港股日线、港股交易日历、沪深港通名单、外汇日线、官方 AH 比价。
   - 同步任务记录、失败状态、checkpoint、MySQL upsert。
   - 官方 AH 比价同步后维护 AH 配对。
+- 低权限兜底导入：
+  - 支持通过 `POST /api/manual-import/ah-pairs` 导入人工 AH 配对。
+  - 支持通过 `POST /api/manual-import/fx-rates` 导入人工汇率。
+  - 增加人工导入服务单元测试。
 - A/H 溢价计算：
   - 港股通通道过滤。
   - A 股/H 股同日行情对齐。
@@ -53,7 +57,7 @@
 ## 已执行的非功能性检查
 
 - `python3 -m compileall backend/app backend/tests`：通过。
-- 后端虚拟环境使用 `/opt/homebrew/bin/python3.13` 创建，`pytest`：3 个单元测试通过。
+- 后端虚拟环境使用 `/opt/homebrew/bin/python3.13` 创建，`pytest`：5 个单元测试通过。
 - `ruff check app tests`：通过。
 - `npm install`：完成，生成 `frontend/package-lock.json`。
 - `npm run build`：通过。
