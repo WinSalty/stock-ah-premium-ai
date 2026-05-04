@@ -3,6 +3,8 @@ import type {
   PremiumCalculateRequest,
   PremiumCalculateResponse,
   PremiumListResponse,
+  PremiumOfficialTrendPoint,
+  PremiumPairOption,
   PremiumSummaryResponse
 } from '../types/domain';
 
@@ -20,6 +22,15 @@ export function fetchPremiumSummary() {
   return requestJson<PremiumSummaryResponse>('/api/ah-premiums/summary');
 }
 
+export function fetchPremiumPairs(keyword?: string) {
+  const search = new URLSearchParams();
+  if (keyword) {
+    search.set('keyword', keyword);
+  }
+  search.set('limit', '300');
+  return requestJson<PremiumPairOption[]>(`/api/ah-premiums/pairs?${search.toString()}`);
+}
+
 export function fetchPremiums(params: PremiumQueryParams) {
   const search = new URLSearchParams();
   Object.entries(params).forEach(([key, value]) => {
@@ -32,6 +43,11 @@ export function fetchPremiums(params: PremiumQueryParams) {
 
 export function fetchPremiumTrend(aTsCode: string, hkTsCode: string) {
   return requestJson<PremiumListResponse['items']>(`/api/ah-premiums/${aTsCode}/${hkTsCode}/trend`);
+}
+
+export function fetchOfficialPremiumTrend(aTsCode: string, hkTsCode: string) {
+  const search = new URLSearchParams({ a_ts_code: aTsCode, hk_ts_code: hkTsCode });
+  return requestJson<PremiumOfficialTrendPoint[]>(`/api/ah-premiums/official-trend?${search.toString()}`);
 }
 
 export function calculatePremium(payload: PremiumCalculateRequest) {

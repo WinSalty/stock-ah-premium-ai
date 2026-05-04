@@ -88,3 +88,35 @@ class PremiumSummaryResponse(BaseModel):
     issue_count: int
     top_premiums: list[PremiumQueryResponse] = Field(default_factory=list)
     bottom_premiums: list[PremiumQueryResponse] = Field(default_factory=list)
+
+
+class PremiumPairOption(BaseModel):
+    """AH 配对选择项。
+
+    创建日期：2026-05-04
+    author: sunshengxian
+    """
+
+    a_ts_code: str
+    hk_ts_code: str
+    a_name: str | None
+    hk_name: str | None
+    latest_trade_date: date | None
+
+
+class PremiumOfficialTrendPoint(BaseModel):
+    """官方 AH/H/A 溢价趋势点。
+
+    创建日期：2026-05-04
+    author: sunshengxian
+    """
+
+    trade_date: date
+    a_ts_code: str
+    hk_ts_code: str
+    a_name: str | None
+    hk_name: str | None
+    ah_ratio: Decimal | None
+    ah_premium_pct: Decimal | None
+    ha_ratio: Decimal | None
+    ha_premium_pct: Decimal | None

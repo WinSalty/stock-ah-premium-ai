@@ -63,6 +63,26 @@ export interface PremiumSummaryResponse {
   bottom_premiums: PremiumItem[];
 }
 
+export interface PremiumPairOption {
+  a_ts_code: string;
+  hk_ts_code: string;
+  a_name: string | null;
+  hk_name: string | null;
+  latest_trade_date: string | null;
+}
+
+export interface PremiumOfficialTrendPoint {
+  trade_date: string;
+  a_ts_code: string;
+  hk_ts_code: string;
+  a_name: string | null;
+  hk_name: string | null;
+  ah_ratio: string | null;
+  ah_premium_pct: string | null;
+  ha_ratio: string | null;
+  ha_premium_pct: string | null;
+}
+
 export interface PremiumCalculateRequest {
   start_date: string;
   end_date?: string;

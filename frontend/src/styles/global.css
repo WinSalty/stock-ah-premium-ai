@@ -145,6 +145,22 @@ body {
   margin-bottom: 14px;
 }
 
+.overview-chart-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.overview-pair-select {
+  width: 240px;
+}
+
+.overview-direction-select {
+  width: 96px;
+}
+
 .chat-form-grid {
   display: grid;
   grid-template-columns: minmax(240px, 420px) minmax(160px, 260px);
@@ -283,6 +299,10 @@ body {
   .query-filter-grid {
     grid-template-columns: repeat(2, minmax(160px, 1fr));
   }
+
+  .overview-chart-head {
+    flex-direction: column;
+  }
 }
 
 @media (max-width: 720px) {
@@ -300,5 +320,9 @@ body {
 
   .brand-text {
     display: none;
+  }
+
+  .overview-pair-select {
+    width: min(260px, 100%);
   }
 }

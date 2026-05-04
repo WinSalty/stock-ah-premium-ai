@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy import asc, desc, func, or_, select
 from sqlalchemy.orm import Session
 
-from app.db.models.market import AHPremiumDaily
+from app.db.models.market import AHPremiumDaily, OfficialAHComparison
 from app.db.session import get_db
 from app.schemas.imports import (
     CsvImportRequest,
@@ -19,6 +19,8 @@ from app.schemas.market import (
     PremiumCalculateRequest,
     PremiumCalculateResponse,
     PremiumListResponse,
+    PremiumOfficialTrendPoint,
+    PremiumPairOption,
     PremiumQueryResponse,
     PremiumSummaryResponse,
 )
@@ -148,6 +150,97 @@ def premium_summary(db: DbSession) -> PremiumSummaryResponse:
         top_premiums=[PremiumQueryResponse.model_validate(item) for item in top],
         bottom_premiums=[PremiumQueryResponse.model_validate(item) for item in bottom],
     )
+
+
+@router.get("/ah-premiums/pairs", response_model=list[PremiumPairOption])
+def list_premium_pairs(
+    db: DbSession,
+    keyword: str | None = None,
+    limit: int = Query(default=80, ge=1, le=300),
+) -> list[PremiumPairOption]:
+    """查询可展示趋势的 AH 配对。
+
+    创建日期：2026-05-04
+    author: sunshengxian
+    """
+
+    latest_date = func.max(OfficialAHComparison.trade_date).label("latest_trade_date")
+    statement = select(
+        OfficialAHComparison.a_ts_code,
+        OfficialAHComparison.hk_ts_code,
+        OfficialAHComparison.a_name,
+        OfficialAHComparison.hk_name,
+        latest_date,
+    )
+    if keyword:
+        like = f"%{keyword}%"
+        statement = statement.where(
+            or_(
+                OfficialAHComparison.a_ts_code.like(like),
+                OfficialAHComparison.hk_ts_code.like(like),
+                OfficialAHComparison.a_name.like(like),
+                OfficialAHComparison.hk_name.like(like),
+            )
+        )
+    statement = (
+        statement.group_by(
+            OfficialAHComparison.a_ts_code,
+            OfficialAHComparison.hk_ts_code,
+            OfficialAHComparison.a_name,
+            OfficialAHComparison.hk_name,
+        )
+        .order_by(desc(latest_date), OfficialAHComparison.a_ts_code)
+        .limit(limit)
+    )
+    return [
+        PremiumPairOption(
+            a_ts_code=row.a_ts_code,
+            hk_ts_code=row.hk_ts_code,
+            a_name=row.a_name,
+            hk_name=row.hk_name,
+            latest_trade_date=row.latest_trade_date,
+        )
+        for row in db.execute(statement).all()
+    ]
+
+
+@router.get("/ah-premiums/official-trend", response_model=list[PremiumOfficialTrendPoint])
+def official_premium_trend(
+    a_ts_code: str,
+    hk_ts_code: str,
+    db: DbSession,
+    start_date: date | None = None,
+    end_date: date | None = None,
+) -> list[PremiumOfficialTrendPoint]:
+    """查询官方 AH/H/A 溢价趋势。
+
+    创建日期：2026-05-04
+    author: sunshengxian
+    """
+
+    statement = select(OfficialAHComparison).where(
+        OfficialAHComparison.a_ts_code == a_ts_code,
+        OfficialAHComparison.hk_ts_code == hk_ts_code,
+    )
+    if start_date:
+        statement = statement.where(OfficialAHComparison.trade_date >= start_date)
+    if end_date:
+        statement = statement.where(OfficialAHComparison.trade_date <= end_date)
+    statement = statement.order_by(OfficialAHComparison.trade_date)
+    return [
+        PremiumOfficialTrendPoint(
+            trade_date=item.trade_date,
+            a_ts_code=item.a_ts_code,
+            hk_ts_code=item.hk_ts_code,
+            a_name=item.a_name,
+            hk_name=item.hk_name,
+            ah_ratio=item.ah_comparison,
+            ah_premium_pct=item.ah_premium,
+            ha_ratio=item.ha_comparison,
+            ha_premium_pct=item.ha_premium,
+        )
+        for item in db.scalars(statement).all()
+    ]
 
 
 @router.get(
