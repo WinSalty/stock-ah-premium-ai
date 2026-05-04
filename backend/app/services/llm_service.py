@@ -20,6 +20,10 @@ logger = logging.getLogger(__name__)
 
 LLM_CHAT_TIMEOUT_SECONDS = 90.0
 LLM_STREAM_TIMEOUT_SECONDS = 240.0
+DEFAULT_CHAT_MODEL = "deepseek-v4-flash"
+DEEPSEEK_PRO_CHAT_MODEL = "deepseek-v4-pro"
+QWEN_CHAT_MODEL = "qwen3.6-max-preview"
+SUPPORTED_CHAT_MODELS = (DEFAULT_CHAT_MODEL, DEEPSEEK_PRO_CHAT_MODEL, QWEN_CHAT_MODEL)
 
 INVESTMENT_ADVISOR_SYSTEM_PROMPT = """你是专业、有独立观点、注重证据链的金融投资分析顾问。
 这是用户自己的本地投资评估项目，用户需要明确、可执行、可复核的真实建议。
@@ -44,6 +48,14 @@ INVESTMENT_ADVISOR_SYSTEM_PROMPT = """你是专业、有独立观点、注重证
 
 SQL_SYSTEM_PROMPT = """你是只读金融数据查询规划器。只生成可执行 MySQL SELECT SQL，并且只返回 JSON。
 禁止输出解释、Markdown、代码块或多余文本。禁止写入、DDL、多语句和非白名单对象。
+"""
+
+QUESTION_CLASSIFIER_SYSTEM_PROMPT = """你是投资问答边界分类器，只判断用户问题是否属于投资研究范围。
+投资研究范围包括股票、基金、指数、行业、估值、财报、红利、仓位、风险、
+组合配置、A/H 溢价、港股通、宏观与投资策略相关问题；股票代码、公司投研、
+阈值建议和投资报告写作也属于范围。
+闲聊、编程、娱乐、日常生活、账号操作、违法违规交易和与投资研究无关的问题不属于范围。
+只返回 JSON，不要输出解释。格式：{"is_investment_related":true或false}
 """
 
 OUT_OF_SCOPE_MESSAGE = (
@@ -172,8 +184,22 @@ class ChatAnswer:
     rows: list[dict[str, Any]]
 
 
+@dataclass(frozen=True)
+class LlmEndpoint:
+    """OpenAI-compatible 模型调用端点。
+
+    创建日期：2026-05-04
+    author: sunshengxian
+    """
+
+    provider: str
+    base_url: str
+    api_key: str | None
+    model: str
+
+
 class LlmService:
-    """DeepSeek OpenAI-compatible LLM 问答服务。
+    """OpenAI-compatible LLM 问答服务。
 
     创建日期：2026-05-04
     author: sunshengxian
@@ -185,26 +211,37 @@ class LlmService:
         self.sql_guard = SqlGuardService()
         self.knowledge_service = InvestmentKnowledgeService()
 
-    def answer(self, question: str, context: dict[str, Any] | None = None) -> ChatAnswer:
+    def answer(
+        self,
+        question: str,
+        context: dict[str, Any] | None = None,
+        model: str | None = None,
+    ) -> ChatAnswer:
         """根据本地数据回答问题。
 
         创建日期：2026-05-04
         author: sunshengxian
         """
 
+        selected_model = self._normalize_chat_model(model or self.settings.llm_model)
         if not self._is_investment_related_question(question):
             return ChatAnswer(answer=OUT_OF_SCOPE_MESSAGE, sql=None, rows=[])
-        if not self.settings.resolve_llm_api_key() or not self.settings.llm_model:
+        endpoint = self._model_endpoint(selected_model)
+        if not endpoint.api_key or not endpoint.model:
             return ChatAnswer(
                 answer=(
-                    "LLM 未配置。请设置 LLM_API_KEY_FILE 或 LLM_API_KEY，"
-                    "并设置 LLM_MODEL 后再使用智能问答。"
+                    f"{endpoint.provider} LLM 未配置。请设置对应 API Key 文件或环境变量，"
+                    "并确认模型名称后再使用智能问答。"
                 ),
                 sql=None,
                 rows=[],
             )
-        sql, rows, prompt = self._prepare_answer(question, context or {})
-        answer = self._chat_completion(prompt, system_prompt=INVESTMENT_ADVISOR_SYSTEM_PROMPT)
+        sql, rows, prompt = self._prepare_answer(question, context or {}, selected_model)
+        answer = self._chat_completion(
+            prompt,
+            system_prompt=INVESTMENT_ADVISOR_SYSTEM_PROMPT,
+            model=selected_model,
+        )
         answer = self._strip_forbidden_preamble(answer)
         return ChatAnswer(answer=answer, sql=sql, rows=rows)
 
@@ -212,6 +249,7 @@ class LlmService:
         self,
         question: str,
         context: dict[str, Any] | None = None,
+        model: str | None = None,
     ) -> tuple[str | None, list[dict[str, Any]], Iterator[str]]:
         """根据本地数据流式回答问题。
 
@@ -219,23 +257,30 @@ class LlmService:
         author: sunshengxian
         """
 
+        selected_model = self._normalize_chat_model(model or self.settings.llm_model)
         if not self._is_investment_related_question(question):
             return None, [], iter([OUT_OF_SCOPE_MESSAGE])
-        if not self.settings.resolve_llm_api_key() or not self.settings.llm_model:
+        endpoint = self._model_endpoint(selected_model)
+        if not endpoint.api_key or not endpoint.model:
             message = (
-                "LLM 未配置。请设置 LLM_API_KEY_FILE 或 LLM_API_KEY，"
-                "并设置 LLM_MODEL 后再使用智能问答。"
+                f"{endpoint.provider} LLM 未配置。请设置对应 API Key 文件或环境变量，"
+                "并确认模型名称后再使用智能问答。"
             )
             return None, [], iter([message])
-        sql, rows, prompt = self._prepare_answer(question, context or {})
+        sql, rows, prompt = self._prepare_answer(question, context or {}, selected_model)
         return sql, rows, self._clean_answer_stream(
-            self._chat_completion_stream(prompt, system_prompt=INVESTMENT_ADVISOR_SYSTEM_PROMPT)
+            self._chat_completion_stream(
+                prompt,
+                system_prompt=INVESTMENT_ADVISOR_SYSTEM_PROMPT,
+                model=selected_model,
+            )
         )
 
     def _prepare_answer(
         self,
         question: str,
         context: dict[str, Any],
+        model: str,
     ) -> tuple[str | None, list[dict[str, Any]], str]:
         sql: str | None = None
         rows: list[dict[str, Any]] = []
@@ -244,6 +289,7 @@ class LlmService:
                 sql = self._default_sql_for_question(question, context) or self._generate_sql(
                     question,
                     context,
+                    model,
                 )
                 for attempt in range(2):
                     try:
@@ -258,7 +304,7 @@ class LlmService:
                     except (SQLAlchemyError, SqlGuardError) as exc:
                         if attempt == 1:
                             raise
-                        sql = self._repair_sql(question, context, sql, str(exc))
+                        sql = self._repair_sql(question, context, sql, str(exc), model)
             except (
                 SQLAlchemyError,
                 SqlGuardError,
@@ -271,9 +317,9 @@ class LlmService:
                 rows = []
         return sql, rows, self._answer_prompt(question, rows, context)
 
-    def _generate_sql(self, question: str, context: dict[str, Any]) -> str:
+    def _generate_sql(self, question: str, context: dict[str, Any], model: str) -> str:
         prompt = self._sql_prompt(question, context)
-        content = self._chat_completion(prompt, system_prompt=SQL_SYSTEM_PROMPT)
+        content = self._chat_completion(prompt, system_prompt=SQL_SYSTEM_PROMPT, model=model)
         payload = self._extract_json(content)
         sql = payload.get("sql")
         if not isinstance(sql, str) or not sql.strip():
@@ -286,10 +332,12 @@ class LlmService:
         sql: str,
         rows: list[dict[str, Any]],
         context: dict[str, Any],
+        model: str,
     ) -> str:
         answer = self._chat_completion(
             self._answer_prompt(question, rows, context),
             system_prompt=INVESTMENT_ADVISOR_SYSTEM_PROMPT,
+            model=model,
         )
         return self._strip_forbidden_preamble(answer)
 
@@ -333,24 +381,30 @@ class LlmService:
         result = self.db.execute(text(sql))
         return [dict(row._mapping) for row in result.fetchall()]
 
-    def _chat_completion(self, prompt: str, system_prompt: str | None = None) -> str:
-        api_key = self.settings.resolve_llm_api_key()
-        if not api_key:
-            raise ValueError("LLM 未配置 API Key")
-        url = f"{self.settings.llm_base_url.rstrip('/')}/chat/completions"
-        headers = {"Authorization": f"Bearer {api_key}"}
+    def _chat_completion(
+        self,
+        prompt: str,
+        system_prompt: str | None = None,
+        model: str | None = None,
+        temperature: float = 0.1,
+    ) -> str:
+        endpoint = self._model_endpoint(model)
+        if not endpoint.api_key:
+            raise ValueError(f"{endpoint.provider} LLM 未配置 API Key")
+        url = f"{endpoint.base_url.rstrip('/')}/chat/completions"
+        headers = {"Authorization": f"Bearer {endpoint.api_key}"}
         messages: list[dict[str, str]] = []
         if system_prompt:
             messages.append({"role": "system", "content": system_prompt})
         messages.append({"role": "user", "content": prompt})
         payload = {
-            "model": self._api_model_name(),
+            "model": endpoint.model,
             "messages": messages,
-            "temperature": 0.1,
+            "temperature": temperature,
         }
         with httpx.Client(timeout=LLM_CHAT_TIMEOUT_SECONDS) as client:
             response = client.post(url, headers=headers, json=payload)
-        self._raise_for_status(response)
+        self._raise_for_status(response, endpoint.provider)
         body = response.json()
         return body["choices"][0]["message"]["content"]
 
@@ -358,25 +412,26 @@ class LlmService:
         self,
         prompt: str,
         system_prompt: str | None = None,
+        model: str | None = None,
     ) -> Iterator[str]:
-        api_key = self.settings.resolve_llm_api_key()
-        if not api_key:
-            raise ValueError("LLM 未配置 API Key")
-        url = f"{self.settings.llm_base_url.rstrip('/')}/chat/completions"
-        headers = {"Authorization": f"Bearer {api_key}"}
+        endpoint = self._model_endpoint(model)
+        if not endpoint.api_key:
+            raise ValueError(f"{endpoint.provider} LLM 未配置 API Key")
+        url = f"{endpoint.base_url.rstrip('/')}/chat/completions"
+        headers = {"Authorization": f"Bearer {endpoint.api_key}"}
         messages: list[dict[str, str]] = []
         if system_prompt:
             messages.append({"role": "system", "content": system_prompt})
         messages.append({"role": "user", "content": prompt})
         payload = {
-            "model": self._api_model_name(),
+            "model": endpoint.model,
             "messages": messages,
             "temperature": 0.1,
             "stream": True,
         }
         with httpx.Client(timeout=LLM_STREAM_TIMEOUT_SECONDS) as client:
             with client.stream("POST", url, headers=headers, json=payload) as response:
-                self._raise_for_status(response)
+                self._raise_for_status(response, endpoint.provider)
                 for line in response.iter_lines():
                     if not line.startswith("data:"):
                         continue
@@ -389,16 +444,15 @@ class LlmService:
                     if content:
                         yield content
 
-    def _api_model_name(self) -> str | None:
-        """转换为 DeepSeek API 支持的模型名。
+    def _normalize_chat_model(self, model: str | None) -> str:
+        """转换为 OpenAI-compatible API 支持的模型名。
 
         创建日期：2026-05-04
         author: sunshengxian
         """
 
-        model = self.settings.llm_model
         if not model:
-            return model
+            return DEFAULT_CHAT_MODEL
         normalized = model.strip()
         if normalized.startswith("deepseek-v4-pro"):
             return "deepseek-v4-pro"
@@ -406,7 +460,29 @@ class LlmService:
             return "deepseek-v4-flash"
         return normalized
 
-    def _raise_for_status(self, response: httpx.Response) -> None:
+    def _model_endpoint(self, model: str | None = None) -> LlmEndpoint:
+        """根据模型名选择 DeepSeek 或 Qwen 调用端点。
+
+        创建日期：2026-05-04
+        author: sunshengxian
+        """
+
+        normalized = self._normalize_chat_model(model or self.settings.llm_model)
+        if normalized.startswith("qwen"):
+            return LlmEndpoint(
+                provider="Qwen",
+                base_url=self.settings.qwen_base_url,
+                api_key=self.settings.resolve_qwen_api_key(),
+                model=normalized,
+            )
+        return LlmEndpoint(
+            provider="DeepSeek",
+            base_url=self.settings.llm_base_url,
+            api_key=self.settings.resolve_llm_api_key(),
+            model=normalized,
+        )
+
+    def _raise_for_status(self, response: httpx.Response, provider: str) -> None:
         try:
             response.raise_for_status()
         except httpx.HTTPStatusError:
@@ -415,7 +491,8 @@ class LlmService:
             except httpx.ResponseNotRead:
                 body = response.read().decode("utf-8", errors="replace")
             logger.error(
-                "DeepSeek API 请求失败 status=%s body=%s",
+                "%s API 请求失败 status=%s body=%s",
+                provider,
                 response.status_code,
                 body[:2000],
             )
@@ -448,7 +525,14 @@ class LlmService:
             f"{context_json}"
         )
 
-    def _repair_sql(self, question: str, context: dict[str, Any], sql: str, error: str) -> str:
+    def _repair_sql(
+        self,
+        question: str,
+        context: dict[str, Any],
+        sql: str,
+        error: str,
+        model: str,
+    ) -> str:
         payload = {
             "question": question,
             "context": context,
@@ -463,7 +547,7 @@ class LlmService:
             "ha_premium 改为 ha_premium_pct；ah_premium 改为 ah_premium_pct。"
             f"{json.dumps(payload, ensure_ascii=False, default=str)}"
         )
-        content = self._chat_completion(prompt, system_prompt=SQL_SYSTEM_PROMPT)
+        content = self._chat_completion(prompt, system_prompt=SQL_SYSTEM_PROMPT, model=model)
         payload = self._extract_json(content)
         repaired_sql = payload.get("sql")
         if not isinstance(repaired_sql, str) or not repaired_sql.strip():
@@ -620,10 +704,20 @@ class LlmService:
         return None
 
     def _is_investment_related_question(self, question: str) -> bool:
-        normalized = question.lower().replace(" ", "")
-        if re.search(r"\b\d{6}\.(sh|sz)\b|\b\d{5}\.hk\b", normalized):
-            return True
-        return any(keyword in normalized for keyword in INVESTMENT_KEYWORDS)
+        if not question.strip():
+            return False
+        try:
+            content = self._chat_completion(
+                question.strip()[:1000],
+                system_prompt=QUESTION_CLASSIFIER_SYSTEM_PROMPT,
+                model=self.settings.qwen_question_classifier_model,
+                temperature=0,
+            )
+            payload = self._extract_json(content)
+            return payload.get("is_investment_related") is True
+        except (ValueError, KeyError, TypeError, json.JSONDecodeError, httpx.HTTPError):
+            logger.error("Qwen 投资问题边界判定失败", exc_info=True)
+            return False
 
     def _should_query_data(self, question: str, context: dict[str, Any]) -> bool:
         if any(context.get(key) for key in ("start_date", "end_date", "ts_code", "only_watchlist")):

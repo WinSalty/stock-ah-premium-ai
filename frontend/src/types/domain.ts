@@ -228,12 +228,15 @@ export interface ChatMessageRequest {
   end_date?: string;
   ts_code?: string;
   only_watchlist?: boolean;
+  llm_model?: ChatModel;
 }
 
 export interface ChatMessageResponse {
   answer: string;
   rows: Record<string, unknown>[];
 }
+
+export type ChatModel = 'deepseek-v4-flash' | 'deepseek-v4-pro' | 'qwen3.6-max-preview';
 
 export interface ImportResponse {
   imported_rows: number;

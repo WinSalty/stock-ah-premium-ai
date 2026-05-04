@@ -23,7 +23,13 @@ def test_llm_service_rejects_non_investment_question_before_api_call() -> None:
 
     service = LlmService(
         Mock(),
-        settings=Settings(llm_api_key=None, llm_api_key_file=None, llm_model=None),
+        settings=Settings(
+            llm_api_key=None,
+            llm_api_key_file=None,
+            llm_model=None,
+            qwen_api_key=None,
+            qwen_api_key_file=None,
+        ),
     )
 
     answer = service.answer("帮我写一首关于春天的诗")
@@ -201,6 +207,127 @@ def test_deepseek_model_alias_uses_supported_api_name(monkeypatch) -> None:
     assert service._chat_completion("招商银行阈值建议") == "ok"
     assert captured_payload["model"] == "deepseek-v4-pro"
     assert "reasoning_effort" not in captured_payload
+
+
+def test_default_chat_model_is_deepseek_flash() -> None:
+    """确认默认问答模型使用 DeepSeek Flash。
+
+    创建日期：2026-05-04
+    author: sunshengxian
+    """
+
+    service = LlmService(
+        Mock(),
+        settings=Settings(
+            llm_api_key="test-key",
+            llm_api_key_file=None,
+            qwen_api_key="qwen-key",
+            qwen_api_key_file=None,
+        ),
+    )
+
+    endpoint = service._model_endpoint()
+
+    assert endpoint.provider == "DeepSeek"
+    assert endpoint.model == "deepseek-v4-flash"
+
+
+def test_qwen_chat_model_uses_qwen_endpoint(monkeypatch) -> None:
+    """确认选择 Qwen 模型时使用阿里 DashScope 端点和 Qwen Key。
+
+    创建日期：2026-05-04
+    author: sunshengxian
+    """
+
+    captured: dict[str, object] = {}
+
+    class FakeResponse:
+        status_code = 200
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, object]:
+            return {"choices": [{"message": {"content": "qwen ok"}}]}
+
+    class FakeClient:
+        def __init__(self, timeout: float) -> None:
+            self.timeout = timeout
+
+        def __enter__(self) -> FakeClient:
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+        def post(self, url: str, headers: dict[str, str], json: dict[str, object]) -> FakeResponse:
+            captured["url"] = url
+            captured["headers"] = headers
+            captured["payload"] = json
+            return FakeResponse()
+
+    monkeypatch.setattr("app.services.llm_service.httpx.Client", FakeClient)
+    service = LlmService(
+        Mock(),
+        settings=Settings(
+            llm_api_key="deepseek-key",
+            llm_api_key_file=None,
+            qwen_api_key="qwen-key",
+            qwen_api_key_file=None,
+        ),
+    )
+
+    assert service._chat_completion("分析招商银行", model="qwen3.6-max-preview") == "qwen ok"
+    assert captured["url"] == "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
+    assert captured["headers"] == {"Authorization": "Bearer qwen-key"}
+    assert captured["payload"]["model"] == "qwen3.6-max-preview"
+
+
+def test_question_scope_uses_qwen_flash_classifier(monkeypatch) -> None:
+    """确认投资问题边界由 Qwen 3.5 Flash 判定，不再依赖关键词命中。
+
+    创建日期：2026-05-04
+    author: sunshengxian
+    """
+
+    captured_payload: dict[str, object] = {}
+
+    class FakeResponse:
+        status_code = 200
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, object]:
+            return {"choices": [{"message": {"content": '{"is_investment_related":true}'}}]}
+
+    class FakeClient:
+        def __init__(self, timeout: float) -> None:
+            self.timeout = timeout
+
+        def __enter__(self) -> FakeClient:
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+        def post(self, url: str, headers: dict[str, str], json: dict[str, object]) -> FakeResponse:
+            captured_payload.update(json)
+            return FakeResponse()
+
+    monkeypatch.setattr("app.services.llm_service.httpx.Client", FakeClient)
+    service = LlmService(
+        Mock(),
+        settings=Settings(
+            llm_api_key="deepseek-key",
+            llm_api_key_file=None,
+            qwen_api_key="qwen-key",
+            qwen_api_key_file=None,
+        ),
+    )
+
+    assert service._is_investment_related_question("帮我判断这家公司还能不能继续持有")
+    assert captured_payload["model"] == "qwen3.5-flash"
 
 
 def _write_minimal_docx(path: Path, paragraphs: tuple[str, ...]) -> None:

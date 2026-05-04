@@ -38,7 +38,20 @@ class Settings(BaseSettings):
         default=Path("/Users/salty/codeProject/ai/doc/deepseek-apikey.txt"),
         alias="LLM_API_KEY_FILE",
     )
-    llm_model: str | None = Field(default="deepseek-v4-pro", alias="LLM_MODEL")
+    llm_model: str | None = Field(default="deepseek-v4-flash", alias="LLM_MODEL")
+    qwen_base_url: str = Field(
+        default="https://dashscope.aliyuncs.com/compatible-mode/v1",
+        alias="QWEN_BASE_URL",
+    )
+    qwen_api_key: str | None = Field(default=None, alias="QWEN_API_KEY")
+    qwen_api_key_file: Path | None = Field(
+        default=Path("/Users/salty/codeProject/ai/doc/qwen-apikey.txt"),
+        alias="QWEN_API_KEY_FILE",
+    )
+    qwen_question_classifier_model: str = Field(
+        default="qwen3.5-flash",
+        alias="QWEN_QUESTION_CLASSIFIER_MODEL",
+    )
     auth_secret_key: str = Field(default="stock-ah-premium-local-secret", alias="AUTH_SECRET_KEY")
     auth_token_expire_hours: int = Field(default=168, alias="AUTH_TOKEN_EXPIRE_HOURS")
     default_admin_username: str = Field(default="admin", alias="DEFAULT_ADMIN_USERNAME")
@@ -97,6 +110,21 @@ class Settings(BaseSettings):
                 return api_key
         if self.llm_api_key:
             return self.llm_api_key.strip()
+        return None
+
+    def resolve_qwen_api_key(self) -> str | None:
+        """按本机文件优先、环境变量兜底的顺序读取 Qwen API Key。
+
+        创建日期：2026-05-04
+        author: sunshengxian
+        """
+
+        if self.qwen_api_key_file and self.qwen_api_key_file.exists():
+            api_key = self.qwen_api_key_file.read_text(encoding="utf-8").strip()
+            if api_key:
+                return api_key
+        if self.qwen_api_key:
+            return self.qwen_api_key.strip()
         return None
 
 

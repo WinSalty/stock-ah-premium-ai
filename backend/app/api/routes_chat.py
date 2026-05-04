@@ -290,13 +290,16 @@ def create_message(
         updated_at=now,
     )
     db.add(user_message)
-    context = payload.model_dump(exclude={"question", "display_question"}, exclude_none=True)
+    context = payload.model_dump(
+        exclude={"question", "display_question", "llm_model"},
+        exclude_none=True,
+    )
     context["user_id"] = current_user.id
     context["conversation_history"] = history
     _touch_session(session, visible_question, has_history=bool(history))
     db.commit()
     try:
-        answer = LlmService(db).answer(payload.question, context)
+        answer = LlmService(db).answer(payload.question, context, model=payload.llm_model)
     except Exception as exc:
         db.rollback()
         logger.error("LLM 非流式问答失败", exc_info=True)
@@ -346,7 +349,10 @@ def create_message_stream(
     db.add(user_message)
     _touch_session(session, visible_question, has_history=bool(history))
     db.commit()
-    context = payload.model_dump(exclude={"question", "display_question"}, exclude_none=True)
+    context = payload.model_dump(
+        exclude={"question", "display_question", "llm_model"},
+        exclude_none=True,
+    )
     context["user_id"] = current_user.id
     context["conversation_history"] = history
 
@@ -355,12 +361,16 @@ def create_message_stream(
         rows: list[dict[str, object]] = []
         answer_parts: list[str] = []
         try:
-            sql, rows, chunks = LlmService(db).stream_answer(payload.question, context)
+            sql, rows, chunks = LlmService(db).stream_answer(
+                payload.question,
+                context,
+                model=payload.llm_model,
+            )
             yield _json_line({"type": "meta", "rows": rows})
             for chunk in chunks:
                 answer_parts.append(chunk)
                 yield _json_line({"type": "delta", "content": chunk})
-            answer_text = "".join(answer_parts).strip() or "DeepSeek 未返回有效内容。"
+            answer_text = "".join(answer_parts).strip() or "LLM 未返回有效内容。"
             assistant_message = LlmChatMessage(
                 session_id=session_id,
                 role="assistant",

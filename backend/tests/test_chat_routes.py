@@ -67,9 +67,16 @@ def test_chat_message_stores_display_question_without_internal_prompt(monkeypatc
         def __init__(self, db: Session) -> None:
             self.db = db
 
-        def answer(self, question: str, context: dict[str, object]) -> ChatAnswer:
+        def answer(
+            self,
+            question: str,
+            context: dict[str, object],
+            model: str | None = None,
+        ) -> ChatAnswer:
             assert "内部阈值推荐提示词" in question
             assert "display_question" not in context
+            assert "llm_model" not in context
+            assert model == "qwen3.6-max-preview"
             return ChatAnswer(answer="建议将 H/A 目标阈值设为 8.0%。", sql=None, rows=[])
 
     monkeypatch.setattr(routes_chat, "LlmService", FakeLlmService)
@@ -86,6 +93,7 @@ def test_chat_message_stores_display_question_without_internal_prompt(monkeypatc
                 display_question="为招商银行推荐 H/A 目标阈值",
                 only_watchlist=True,
                 ts_code="600036.SH",
+                llm_model="qwen3.6-max-preview",
             ),
             db,
             user,

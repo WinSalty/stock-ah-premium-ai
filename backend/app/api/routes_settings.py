@@ -32,4 +32,5 @@ def public_settings() -> dict[str, object]:
         "appVersion": settings.app_version,
         "tushareConfigured": bool(settings.resolve_tushare_token()),
         "llmConfigured": bool(settings.resolve_llm_api_key() and settings.llm_model),
+        "qwenConfigured": bool(settings.resolve_qwen_api_key()),
     }

@@ -1,4 +1,4 @@
-import { Button, Form, Input, Popconfirm, Skeleton, Table, message } from 'antd';
+import { Button, Form, Input, Popconfirm, Segmented, Skeleton, Table, message } from 'antd';
 import { Plus, SendHorizontal, Trash2 } from 'lucide-react';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -14,6 +14,7 @@ import {
 } from '../api/chat';
 import type {
   ChatMessageResponse,
+  ChatModel,
   ChatSession,
   ChatStoredMessage
 } from '../types/domain';
@@ -133,6 +134,12 @@ const markdownComponents: Components = {
 };
 
 const PRESET_QUESTION_COUNT = 4;
+const DEFAULT_CHAT_MODEL: ChatModel = 'deepseek-v4-flash';
+const CHAT_MODEL_OPTIONS: { label: string; value: ChatModel }[] = [
+  { label: 'DeepSeek Flash', value: 'deepseek-v4-flash' },
+  { label: 'DeepSeek Pro', value: 'deepseek-v4-pro' },
+  { label: 'Qwen 3.6 Max', value: 'qwen3.6-max-preview' }
+];
 
 const REPORT_BASED_PRESET_QUESTIONS = [
   '五粮液当前更应按修复股还是价值股定价？请给出评级口径、核心假设和跟踪指标',
@@ -175,6 +182,7 @@ function ChatPage() {
   const [isSending, setIsSending] = useState(false);
   const [isLoadingSessions, setIsLoadingSessions] = useState(false);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+  const [selectedModel, setSelectedModel] = useState<ChatModel>(DEFAULT_CHAT_MODEL);
 
   useEffect(() => {
     void loadInitialSessions();
@@ -322,7 +330,7 @@ function ChatPage() {
       }
       await sendChatMessageStream(
         currentSession.id,
-        { question },
+        { question, llm_model: selectedModel },
         {
           onMeta: (event) => updateTurnResponse(turnId, { rows: event.rows || [] }),
           onDelta: (content) =>
@@ -472,6 +480,14 @@ function ChatPage() {
                 />
               </Form.Item>
               <div className="composer-actions">
+                <Segmented
+                  size="small"
+                  options={CHAT_MODEL_OPTIONS}
+                  value={selectedModel}
+                  onChange={(value) => setSelectedModel(value as ChatModel)}
+                  disabled={isSending}
+                  aria-label="选择问答模型"
+                />
                 <Button
                   type="primary"
                   htmlType="submit"

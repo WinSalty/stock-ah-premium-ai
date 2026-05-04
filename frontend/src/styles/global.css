@@ -1142,7 +1142,10 @@ body {
 
 .composer-actions {
   display: flex;
+  align-items: center;
+  gap: 12px;
   justify-content: flex-end;
+  flex-wrap: wrap;
 }
 
 .chat-composer {

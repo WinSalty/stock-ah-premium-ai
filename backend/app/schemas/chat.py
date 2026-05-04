@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 from datetime import date, datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
 from app.schemas.common import OrmModel
+
+ChatModel = Literal["deepseek-v4-flash", "deepseek-v4-pro", "qwen3.6-max-preview"]
 
 
 class ChatSessionCreate(BaseModel):
@@ -70,6 +72,7 @@ class ChatMessageCreate(BaseModel):
     end_date: date | None = None
     ts_code: str | None = None
     only_watchlist: bool = False
+    llm_model: ChatModel = "deepseek-v4-flash"
 
 
 class ChatMessageResponse(BaseModel):
