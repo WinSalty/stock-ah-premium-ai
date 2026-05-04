@@ -133,7 +133,7 @@ body {
 
 .sync-run-filter-grid {
   display: grid;
-  grid-template-columns: minmax(160px, 220px) minmax(140px, 180px) minmax(260px, 360px) minmax(100px, 120px) auto;
+  grid-template-columns: minmax(160px, 220px) minmax(140px, 180px) minmax(280px, 380px) minmax(100px, 120px) auto;
   gap: 12px;
   align-items: end;
   margin-bottom: 12px;
@@ -141,6 +141,21 @@ body {
 
 .sync-strategy-text {
   display: block;
+}
+
+.sync-dataset-note {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(220px, 1fr) minmax(180px, 0.7fr);
+  gap: 12px;
+  margin-top: 2px;
+  padding: 12px;
+  border: 1px solid #dbe4ef;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.sync-dataset-note-item {
+  min-width: 0;
 }
 
 .manual-import-grid {
@@ -207,11 +222,20 @@ body {
   display: flex;
   flex-direction: column;
   gap: 2px;
+  min-width: 0;
 }
 
 .stock-cell span {
   color: #64748b;
   font-size: 12px;
+}
+
+.stock-name-text {
+  display: block;
+  overflow: hidden;
+  max-width: 100%;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .formula-title {
@@ -228,6 +252,35 @@ body {
 .mono-text,
 .sql-preview {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.overflow-cell-text {
+  display: block;
+  overflow: hidden;
+  max-width: 100%;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.overflow-cell-text.danger {
+  color: #b91c1c;
+}
+
+.overflow-cell-tooltip {
+  max-width: min(760px, calc(100vw - 32px));
+}
+
+.overflow-cell-tooltip .ant-tooltip-inner {
+  overflow: auto;
+  max-height: min(60vh, 520px);
+  max-width: min(720px, calc(100vw - 56px));
+}
+
+.overflow-cell-tooltip-content {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .sync-table-text {
@@ -358,6 +411,7 @@ body {
 
   .sync-form-grid,
   .sync-batch-grid,
+  .sync-dataset-note,
   .sync-run-filter-grid,
   .premium-filter-grid {
     grid-template-columns: repeat(2, minmax(160px, 1fr));
@@ -383,6 +437,7 @@ body {
 
   .sync-form-grid,
   .sync-batch-grid,
+  .sync-dataset-note,
   .sync-run-filter-grid,
   .premium-filter-grid,
   .manual-import-grid,

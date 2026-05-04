@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import dayjs from 'dayjs';
 import PageHeader from '../components/PageHeader';
+import OverflowCell from '../components/OverflowCell';
 import { fetchQueryDatasets, fetchQueryRows } from '../api/query';
 import type { QueryCellValue, QueryColumn } from '../types/domain';
 
@@ -61,7 +62,7 @@ function DataQueryPage() {
       title: column.label,
       dataIndex: column.key,
       key: column.key,
-      width: column.width || 120,
+      width: resolveColumnWidth(column),
       ellipsis: true,
       render: (value: QueryCellValue) => renderCell(value, column)
     }));
@@ -193,7 +194,25 @@ function renderCell(value: QueryCellValue, column: QueryColumn) {
     const color = status === 'SUCCESS' || status === 'OK' ? 'blue' : status === 'FAILED' ? 'red' : 'gold';
     return <Tag color={color}>{status}</Tag>;
   }
-  return <span className={column.key.includes('json') || column.key.includes('code') ? 'mono-text' : undefined}>{String(value)}</span>;
+  return (
+    <OverflowCell
+      value={value}
+      fieldKey={column.key}
+      mono={column.key.includes('json') || column.key.includes('code')}
+      threshold={isDateLikeColumn(column.key) ? 19 : 24}
+    />
+  );
+}
+
+function resolveColumnWidth(column: QueryColumn) {
+  if (column.width) {
+    return Math.max(column.width, isDateLikeColumn(column.key) ? 132 : column.width);
+  }
+  return isDateLikeColumn(column.key) ? 132 : 120;
+}
+
+function isDateLikeColumn(key: string) {
+  return key.endsWith('_date') || key.endsWith('_at') || key.includes('time');
 }
 
 export default DataQueryPage;

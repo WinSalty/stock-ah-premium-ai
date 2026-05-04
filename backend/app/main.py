@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import logging
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -8,8 +12,38 @@ from app.api.routes_market import router as market_router
 from app.api.routes_query import router as query_router
 from app.api.routes_settings import router as settings_router
 from app.api.routes_sync import router as sync_router
-from app.core.config import get_settings
+from app.core.config import Settings, get_settings
 from app.core.logging import configure_logging
+from app.jobs.scheduler import create_scheduler
+from app.jobs.sync_jobs import register_incremental_sync_jobs
+
+logger = logging.getLogger(__name__)
+
+
+def build_lifespan(settings: Settings):
+    """构建应用生命周期，按配置启动后台增量同步调度器。
+
+    创建日期：2026-05-04
+    author: sunshengxian
+    """
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+        scheduler = None
+        if settings.sync_scheduler_enabled:
+            scheduler = create_scheduler(settings.sync_scheduler_timezone)
+            register_incremental_sync_jobs(scheduler)
+            scheduler.start()
+            app.state.scheduler = scheduler
+            logger.info("同步调度器已启动 timezone=%s", settings.sync_scheduler_timezone)
+        try:
+            yield
+        finally:
+            if scheduler is not None:
+                scheduler.shutdown(wait=False)
+                logger.info("同步调度器已停止")
+
+    return lifespan
 
 
 def create_app() -> FastAPI:
@@ -21,7 +55,11 @@ def create_app() -> FastAPI:
 
     settings = get_settings()
     configure_logging(settings.log_level)
-    app = FastAPI(title=settings.app_name, version=settings.app_version)
+    app = FastAPI(
+        title=settings.app_name,
+        version=settings.app_version,
+        lifespan=build_lifespan(settings),
+    )
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,

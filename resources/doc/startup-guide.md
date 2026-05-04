@@ -75,6 +75,8 @@ TUSHARE_TOKEN=
 TUSHARE_TOKEN_FILE=/Users/salty/codeProject/ai/doc/tushare-token.txt
 TUSHARE_API_URL=http://tsy.xiaodefa.cn
 TUSHARE_REQUEST_INTERVAL_SECONDS=0.6
+SYNC_SCHEDULER_ENABLED=true
+SYNC_SCHEDULER_TIMEZONE=Asia/Shanghai
 LLM_BASE_URL=https://api.openai.com/v1
 LLM_API_KEY=
 LLM_MODEL=
@@ -239,6 +241,26 @@ curl -X POST http://127.0.0.1:8000/api/manual-import/ah-pairs/csv \
 - `stock_basic`、`hk_basic`：基础清单接口不带日期范围，增量和全量都会刷新当前全表。
 
 任务记录可按数据集、状态和开始时间范围筛选；权限不足或接口失败会在记录里显示为 `FAILED`，错误详情可悬浮或点击查看。
+
+### 定时增量同步
+
+后端启动时默认开启 APScheduler 后台任务，所有时间按东八区执行，可用 `SYNC_SCHEDULER_ENABLED=false` 临时关闭。
+
+当前增量任务按 Tushare 文档更新时点和本项目数据依赖设置：
+
+| 时间 | 数据集 | 参数 | 依据 |
+| --- | --- | --- | --- |
+| 工作日 09:05 | `stock_basic` | `mode=incremental` | 基础清单接口不带日期范围，早盘前刷新当前全表 |
+| 工作日 09:10 | `hk_basic` | `mode=incremental` | 基础清单接口不带日期范围，早盘前刷新当前全表 |
+| 周一 08:35 | `trade_cal` | `mode=incremental` | 交易日历支持日期范围，每周补齐并维持未来窗口 |
+| 周一 08:40 | `hk_tradecal` | `mode=incremental` | 港股交易日历支持日期范围，每周补齐并维持未来窗口 |
+| 工作日 09:25 | `stock_hsgt` | `type=SH_HK` | Tushare 文档提示 `stock_hsgt` 每天 09:20 更新 |
+| 工作日 09:28 | `stock_hsgt` | `type=SZ_HK` | Tushare 文档提示 `stock_hsgt` 每天 09:20 更新 |
+| 工作日 16:15 | `a_daily` | `mode=incremental` | Tushare 文档提示 `daily` 交易日 15:00-16:00 入库 |
+| 工作日 17:10 | `ah_comparison` | `mode=incremental` | Tushare 文档提示 `stk_ah_comparison` 每天盘后 17:00 更新 |
+| 周一至周六 07:30 | `fx_daily` | `mode=incremental` | 外汇接口交易日按 GMT，东八区早间补齐上一 GMT 交易日 |
+
+定时任务仍走 `sync_run` 记录和 checkpoint。若某次接口权限不足或返回失败，任务会落 `FAILED`，下一次仍按 checkpoint 加 2 天重叠窗口继续补齐。`hk_daily` 已禁用，不会被定时任务调用。
 
 ## 12. 常见问题
 

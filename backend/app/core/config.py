@@ -38,6 +38,8 @@ class Settings(BaseSettings):
     cors_origins: list[str] = Field(default=["http://localhost:5173"], alias="APP_CORS_ORIGINS")
     query_limit_default: int = 200
     query_limit_max: int = 1000
+    sync_scheduler_enabled: bool = Field(default=True, alias="SYNC_SCHEDULER_ENABLED")
+    sync_scheduler_timezone: str = Field(default="Asia/Shanghai", alias="SYNC_SCHEDULER_TIMEZONE")
 
     model_config = SettingsConfigDict(
         env_file=".env",

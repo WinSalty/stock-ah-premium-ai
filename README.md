@@ -4,7 +4,7 @@
 
 本项目用于通过 Tushare 拉取 A 股、港股通、港股行情和汇率数据，持久化到本地 MySQL，并计算港股通标的中的 A/H 溢价率。后续提供一个简洁前端页面用于查看同步状态、溢价榜单和趋势，并通过 LLM API 对本地数据进行问答分析。
 
-当前已进入一阶段代码开发，完成后端 FastAPI 服务、数据库迁移、Tushare SDK 同步服务、统一数据查询、A/H 溢价计算、LLM 问答 API、React 前端页面和开发进度文档。Tushare 默认使用中转服务 `http://tsy.xiaodefa.cn`，Token 优先从本机文件读取，环境变量作为兜底。
+当前已进入一阶段代码开发，完成后端 FastAPI 服务、数据库迁移、Tushare SDK 同步服务、定时增量跑批、统一数据查询、A/H 溢价计算、LLM 问答 API、React 前端页面和开发进度文档。Tushare 默认使用中转服务 `http://tsy.xiaodefa.cn`，Token 优先从本机文件读取，环境变量作为兜底。
 
 ## 当前产出
 

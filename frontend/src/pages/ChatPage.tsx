@@ -4,6 +4,7 @@ import { useMutation } from '@tanstack/react-query';
 import { useState } from 'react';
 import dayjs from 'dayjs';
 import PageHeader from '../components/PageHeader';
+import OverflowCell from '../components/OverflowCell';
 import { createChatSession, sendChatMessage } from '../api/chat';
 import type { ChatMessageResponse, ChatSession } from '../types/domain';
 
@@ -76,7 +77,13 @@ function ChatPage() {
                   size="small"
                   pagination={false}
                   dataSource={turn.response.rows.slice(0, 8)}
-                  columns={Object.keys(turn.response.rows[0]).map((key) => ({ title: key, dataIndex: key }))}
+                  columns={Object.keys(turn.response.rows[0]).map((key) => ({
+                    title: key,
+                    dataIndex: key,
+                    width: key.endsWith('_at') || key.includes('time') ? 190 : 140,
+                    ellipsis: true,
+                    render: (value) => <OverflowCell value={value} fieldKey={key} threshold={22} />
+                  }))}
                   scroll={{ x: true }}
                 />
               ) : null}

@@ -2,6 +2,7 @@ import { Button, Table, Tag, Tooltip } from 'antd';
 import { Info, LineChart } from 'lucide-react';
 import type { ColumnsType } from 'antd/es/table';
 import type { PremiumItem } from '../types/domain';
+import { formatEast8DateTime } from '../utils/datetime';
 
 interface PremiumTableProps {
   data: PremiumItem[];
@@ -41,6 +42,23 @@ function FormulaTitle({ label, formula }: { label: string; formula: string }) {
 }
 
 /**
+ * 股票名称和代码单元格。
+ * 创建日期：2026-05-04
+ * author: sunshengxian
+ */
+function StockCell({ name, code }: { name: string | null; code: string }) {
+  const displayName = name || '-';
+  return (
+    <div className="stock-cell">
+      <Tooltip title={displayName}>
+        <strong className="stock-name-text">{displayName}</strong>
+      </Tooltip>
+      <span>{code}</span>
+    </div>
+  );
+}
+
+/**
  * AH 溢价结果表格。
  * 创建日期：2026-05-04
  * author: sunshengxian
@@ -50,28 +68,18 @@ function PremiumTable({ data, loading, pagination, onTrend }: PremiumTableProps)
     {
       title: '日期',
       dataIndex: 'trade_date',
-      width: 112,
+      width: 128,
       fixed: 'left'
     },
     {
       title: 'A 股',
       width: 168,
-      render: (_, record) => (
-        <div className="stock-cell">
-          <strong>{record.a_name || '-'}</strong>
-          <span>{record.a_ts_code}</span>
-        </div>
-      )
+      render: (_, record) => <StockCell name={record.a_name} code={record.a_ts_code} />
     },
     {
       title: 'H 股',
       width: 168,
-      render: (_, record) => (
-        <div className="stock-cell">
-          <strong>{record.hk_name || '-'}</strong>
-          <span>{record.hk_ts_code}</span>
-        </div>
-      )
+      render: (_, record) => <StockCell name={record.hk_name} code={record.hk_ts_code} />
     },
     {
       title: 'A 收盘',
@@ -142,7 +150,13 @@ function PremiumTable({ data, loading, pagination, onTrend }: PremiumTableProps)
       title: '来源',
       width: 128,
       render: (_, record) => (
-        <Tooltip title={record.source_updated_at ? `更新时间：${record.source_updated_at}` : record.data_source}>
+        <Tooltip
+          title={
+            record.source_updated_at
+              ? `更新时间：${formatEast8DateTime(record.source_updated_at)}`
+              : record.data_source
+          }
+        >
           <Tag color={record.is_realtime ? 'green' : 'blue'}>
             {record.is_realtime ? '实时' : '官方'}
           </Tag>

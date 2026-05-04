@@ -18,8 +18,9 @@ import {
 import { FileUp, Play, RotateCw } from 'lucide-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import dayjs from 'dayjs';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import PageHeader from '../components/PageHeader';
+import OverflowCell from '../components/OverflowCell';
 import {
   createAhPremiumSyncBatch,
   createSyncRun,
@@ -75,6 +76,10 @@ function SyncPage() {
   });
   const selectedDataset = Form.useWatch('dataset', form);
   const selectedDatasetInfo = datasets.data?.find((item) => item.name === selectedDataset);
+  const datasetInfoMap = useMemo(
+    () => new Map((datasets.data || []).map((item) => [item.name, item])),
+    [datasets.data]
+  );
   const mutation = useMutation({
     mutationFn: createSyncRun,
     onSuccess: (run) => {
@@ -158,7 +163,7 @@ function SyncPage() {
                     type="info"
                     showIcon
                     message="同步说明"
-                    description="建议先用一键增量同步补齐 AH 溢价所需数据；需要重建本地数据时选择一键全量重跑。单个数据集也支持按交易日、日期范围或代码同步，行情类全市场范围会按日拆分请求。"
+                    description="建议先用一键增量同步补齐 AH 溢价所需数据；需要重建本地数据时选择一键全量重跑。后端已按东八区定时增量：9:25/9:28 港股通名单、16:15 A 股日线、17:10 官方 AH 比价、7:30 外汇日线；单个数据集也支持按交易日、日期范围或代码同步，行情类全市场范围会按日拆分请求。"
                   />
                   <Form
                     form={batchForm}
@@ -253,9 +258,28 @@ function SyncPage() {
                       </Form.Item>
                     </div>
                     {selectedDatasetInfo ? (
-                      <Typography.Text type="secondary" className="sync-strategy-text">
-                        {selectedDatasetInfo.sync_strategy}
-                      </Typography.Text>
+                      <div className="sync-dataset-note">
+                        <div className="sync-dataset-note-item">
+                          <Typography.Text className="field-label">数据集说明</Typography.Text>
+                          <OverflowCell
+                            value={selectedDatasetInfo.description}
+                            threshold={36}
+                          />
+                        </div>
+                        <div className="sync-dataset-note-item">
+                          <Typography.Text className="field-label">同步策略</Typography.Text>
+                          <OverflowCell
+                            value={selectedDatasetInfo.sync_strategy}
+                            threshold={36}
+                          />
+                        </div>
+                        <div className="sync-dataset-note-item">
+                          <Typography.Text className="field-label">默认全量起点</Typography.Text>
+                          <Typography.Text>
+                            {selectedDatasetInfo.default_full_start_date || '当前全表'}
+                          </Typography.Text>
+                        </div>
+                      </div>
                     ) : null}
                   </Form>
                 </Space>
@@ -367,7 +391,26 @@ function SyncPage() {
           dataSource={runs.data || []}
           columns={[
             { title: 'ID', dataIndex: 'id', width: 72 },
-            { title: '数据集', dataIndex: 'dataset', width: 150 },
+            {
+              title: '数据集',
+              dataIndex: 'dataset',
+              width: 160,
+              render: (value) => {
+                const info = datasetInfoMap.get(String(value));
+                return <OverflowCell value={info?.label || value} threshold={12} />;
+              }
+            },
+            {
+              title: '数据集说明',
+              dataIndex: 'dataset',
+              width: 260,
+              render: (value) => (
+                <OverflowCell
+                  value={datasetInfoMap.get(String(value))?.description || '-'}
+                  threshold={18}
+                />
+              )
+            },
             {
               title: '状态',
               dataIndex: 'status',
@@ -375,13 +418,23 @@ function SyncPage() {
               render: (value) => <Tag color={value === 'SUCCESS' ? 'blue' : value === 'FAILED' ? 'red' : 'gold'}>{value}</Tag>
             },
             { title: '行数', dataIndex: 'row_count', width: 96, align: 'right' },
-            { title: '开始', dataIndex: 'started_at', width: 180 },
-            { title: '结束', dataIndex: 'finished_at', width: 180 },
+            {
+              title: '开始时间',
+              dataIndex: 'started_at',
+              width: 190,
+              render: (value) => <OverflowCell value={value} fieldKey="started_at" threshold={19} />
+            },
+            {
+              title: '结束时间',
+              dataIndex: 'finished_at',
+              width: 190,
+              render: (value) => <OverflowCell value={value} fieldKey="finished_at" threshold={19} />
+            },
             {
               title: '参数',
               dataIndex: 'params_json',
               width: 260,
-              render: (value) => <span className="mono-text sync-table-text">{value || '-'}</span>
+              render: (value) => <OverflowCell value={formatJson(value)} mono threshold={22} />
             },
             {
               title: '错误',
@@ -415,7 +468,7 @@ function SyncPage() {
                 )
             }
           ]}
-          scroll={{ x: 1280 }}
+          scroll={{ x: 1800 }}
         />
       </section>
       <Modal
