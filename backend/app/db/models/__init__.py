@@ -1,7 +1,6 @@
 from app.db.models.chat import LlmChatMessage, LlmChatSession
 from app.db.models.market import (
     ADailyQuote,
-    AHPremiumDaily,
     AHStockPair,
     AStockBasic,
     ATradeCalendar,
@@ -17,7 +16,6 @@ from app.db.models.market import (
 from app.db.models.sync import DataQualityIssue, SyncCheckpoint, SyncRun
 
 __all__ = [
-    "AHPremiumDaily",
     "AHStockPair",
     "ADailyQuote",
     "AStockBasic",

@@ -183,43 +183,6 @@ CREATE TABLE IF NOT EXISTS `official_ah_comparison` (
   KEY `idx_official_ah_trade_date` (`trade_date`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Tushare 官方 AH 比价快照表，当前主展示口径';
 
-CREATE TABLE IF NOT EXISTS `ah_premium_daily` (
-  `id` INT NOT NULL AUTO_INCREMENT COMMENT '自增主键',
-  `trade_date` DATE NOT NULL COMMENT '交易日期',
-  `a_ts_code` VARCHAR(16) NOT NULL COMMENT 'A 股 Tushare 代码',
-  `hk_ts_code` VARCHAR(16) NOT NULL COMMENT 'H 股 Tushare 代码',
-  `a_name` VARCHAR(128) DEFAULT NULL COMMENT 'A 股名称',
-  `hk_name` VARCHAR(128) DEFAULT NULL COMMENT 'H 股名称',
-  `a_close_cny` DECIMAL(20,6) DEFAULT NULL COMMENT 'A 股人民币收盘价',
-  `h_close_hkd` DECIMAL(20,6) DEFAULT NULL COMMENT 'H 股港币收盘价',
-  `hkd_cny` DECIMAL(20,8) DEFAULT NULL COMMENT '港币兑人民币汇率',
-  `h_close_cny` DECIMAL(20,6) DEFAULT NULL COMMENT 'H 股折算人民币收盘价',
-  `ah_ratio` DECIMAL(20,8) DEFAULT NULL COMMENT '自算 A/H 比价',
-  `ah_premium_pct` DECIMAL(20,8) DEFAULT NULL COMMENT '自算 A/H 溢价，单位百分比',
-  `ha_ratio` DECIMAL(20,8) DEFAULT NULL COMMENT '自算 H/A 比价',
-  `ha_premium_pct` DECIMAL(20,8) DEFAULT NULL COMMENT '自算 H/A 溢价，单位百分比',
-  `is_hk_connect` TINYINT(1) NOT NULL COMMENT '是否港股通可操作',
-  `connect_channels` VARCHAR(64) DEFAULT NULL COMMENT '港股通通道，逗号分隔，例如 SH_HK,SZ_HK',
-  `rate_date` DATE DEFAULT NULL COMMENT '采用的汇率日期',
-  `rate_source` VARCHAR(64) DEFAULT NULL COMMENT '采用的汇率来源',
-  `rate_fallback` TINYINT(1) NOT NULL COMMENT '是否使用非同日汇率兜底',
-  `calc_status` VARCHAR(32) NOT NULL COMMENT '计算状态，例如 OK、MISSING_A_QUOTE、MISSING_H_QUOTE、MISSING_RATE',
-  `official_ah_ratio` DECIMAL(20,8) DEFAULT NULL COMMENT '官方 A/H 比价快照',
-  `official_ah_premium_pct` DECIMAL(20,8) DEFAULT NULL COMMENT '官方 A/H 溢价快照',
-  `official_ha_ratio` DECIMAL(20,8) DEFAULT NULL COMMENT '官方 H/A 比价快照',
-  `official_ha_premium_pct` DECIMAL(20,8) DEFAULT NULL COMMENT '官方 H/A 溢价快照',
-  `diff_from_official_pct` DECIMAL(20,8) DEFAULT NULL COMMENT '自算 A/H 溢价与官方 A/H 溢价差值',
-  `diff_from_official_ha_pct` DECIMAL(20,8) DEFAULT NULL COMMENT '自算 H/A 溢价与官方 H/A 溢价差值',
-  `error_message` TEXT DEFAULT NULL COMMENT '计算异常说明',
-  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '记录创建时间',
-  `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '记录更新时间',
-  PRIMARY KEY (`id`),
-  UNIQUE KEY `uk_ah_premium_daily` (`trade_date`, `a_ts_code`, `hk_ts_code`),
-  KEY `idx_ah_premium_rank` (`trade_date`, `ah_premium_pct`),
-  KEY `idx_ah_premium_hk` (`hk_ts_code`, `trade_date`),
-  KEY `idx_ah_premium_a` (`a_ts_code`, `trade_date`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='自算港股通 AH 溢价结果表，当前仅作扩展和校验口径保留';
-
 CREATE TABLE IF NOT EXISTS `watchlist_stock` (
   `id` INT NOT NULL AUTO_INCREMENT COMMENT '自增主键',
   `a_ts_code` VARCHAR(16) NOT NULL COMMENT 'A 股 Tushare 代码',

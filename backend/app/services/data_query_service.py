@@ -10,7 +10,6 @@ from sqlalchemy.orm import Session
 
 from app.db.models.market import (
     ADailyQuote,
-    AHPremiumDaily,
     AHStockPair,
     AStockBasic,
     ATradeCalendar,
@@ -258,30 +257,6 @@ DATA_QUERY_SPECS: dict[str, QueryDatasetSpec] = {
         ),
         keyword_fields=("a_ts_code", "hk_ts_code", "display_name", "preferred_direction", "note"),
         default_order=(("sort_order", "asc"), ("id", "asc")),
-    ),
-    "ah_premium_daily": QueryDatasetSpec(
-        name="ah_premium_daily",
-        label="自算 AH 溢价",
-        description="项目自算的港股通 AH 溢价结果。",
-        model=AHPremiumDaily,
-        columns=(
-            col("trade_date", "交易日", 132),
-            col("a_ts_code", "A 股代码", 130),
-            col("a_name", "A 股名称", 140),
-            col("hk_ts_code", "H 股代码", 130),
-            col("hk_name", "H 股名称", 150),
-            col("ah_premium_pct", "自算溢价", 120),
-            col("ha_ratio", "H/A 比价", 120),
-            col("ha_premium_pct", "H/A 溢价", 120),
-            col("official_ha_ratio", "官方 H/A 比价", 130),
-            col("official_ha_premium_pct", "官方 H/A 溢价", 130),
-            col("calc_status", "状态", 130),
-            col("connect_channels", "港股通通道", 130),
-            col("error_message", "错误", 220),
-        ),
-        keyword_fields=("a_ts_code", "hk_ts_code", "a_name", "hk_name", "calc_status"),
-        date_field="trade_date",
-        default_order=(("trade_date", "desc"), ("ah_premium_pct", "desc")),
     ),
     "stock_selection_factor_snapshot": QueryDatasetSpec(
         name="stock_selection_factor_snapshot",

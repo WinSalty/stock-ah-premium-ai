@@ -7,8 +7,29 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 from app.db.base import Base
-from app.db.models.market import HsgtConstituent, OfficialAHComparison, WatchlistStock
+from app.db.models.market import (
+    ATradeCalendar,
+    HKTradeCalendar,
+    HsgtConstituent,
+    OfficialAHComparison,
+    WatchlistStock,
+)
 from app.services.premium_query_service import PremiumQueryFilters, PremiumQueryService
+
+
+def add_joint_trade_day(db: Session, trade_date: date) -> None:
+    """写入测试用 A/H 联合交易日历。
+
+    创建日期：2026-05-04
+    author: sunshengxian
+    """
+
+    db.add_all(
+        [
+            ATradeCalendar(exchange="SSE", cal_date=trade_date, is_open=1),
+            HKTradeCalendar(cal_date=trade_date, is_open=1),
+        ]
+    )
 
 
 def test_premium_query_filters_hk_connect_and_returns_metrics() -> None:
@@ -24,6 +45,7 @@ def test_premium_query_filters_hk_connect_and_returns_metrics() -> None:
     with Session(engine) as db:
         for offset in range(3):
             trade_date = latest - timedelta(days=2 - offset)
+            add_joint_trade_day(db, trade_date)
             db.add(
                 OfficialAHComparison(
                     trade_date=trade_date,
@@ -55,6 +77,21 @@ def test_premium_query_filters_hk_connect_and_returns_metrics() -> None:
             )
         )
         db.add(
+            OfficialAHComparison(
+                trade_date=latest + timedelta(days=1),
+                a_ts_code="600036.SH",
+                hk_ts_code="03968.HK",
+                a_name="招商银行",
+                hk_name="招商银行",
+                ah_comparison=Decimal("1.50"),
+                ah_premium=Decimal("50"),
+                ha_comparison=Decimal("0.66666667"),
+                ha_premium=Decimal("-33.33"),
+                is_realtime=False,
+                data_source="TUSHARE_OFFICIAL",
+            )
+        )
+        db.add(
             HsgtConstituent(
                 trade_date=latest,
                 ts_code="03968.HK",
@@ -76,13 +113,16 @@ def test_premium_query_filters_hk_connect_and_returns_metrics() -> None:
         )
         db.commit()
 
-        result = PremiumQueryService(db).list_premiums(
+        service = PremiumQueryService(db)
+        result = service.list_premiums(
             PremiumQueryFilters(trade_date=latest, only_hk_connect=True, direction="HA"),
             page=1,
             page_size=10,
         )
+        latest_trade_date = service.latest_trade_date()
 
     assert result.total == 1
+    assert latest_trade_date == latest
     item = result.items[0]
     assert item.hk_ts_code == "03968.HK"
     assert item.connect_channels == "SH_HK"
@@ -108,6 +148,10 @@ def test_list_pairs_deduplicates_ex_right_names() -> None:
     with Session(engine) as db:
         db.add_all(
             [
+                ATradeCalendar(exchange="SSE", cal_date=latest, is_open=1),
+                HKTradeCalendar(cal_date=latest, is_open=1),
+                ATradeCalendar(exchange="SSE", cal_date=latest - timedelta(days=1), is_open=1),
+                HKTradeCalendar(cal_date=latest - timedelta(days=1), is_open=1),
                 OfficialAHComparison(
                     trade_date=latest,
                     a_ts_code="600036.SH",

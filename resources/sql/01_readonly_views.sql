@@ -88,8 +88,16 @@ SELECT
     WHERE h.a_ts_code = w.a_ts_code
       AND h.hk_ts_code = w.hk_ts_code
       AND h.trade_date <= p.trade_date
-      AND h.trade_date >= DATE_SUB(p.trade_date, INTERVAL 120 DAY)
       AND (CASE WHEN w.preferred_direction = 'AH' THEN h.ah_premium ELSE h.ha_premium END) IS NOT NULL
+      AND (
+        SELECT COUNT(*)
+        FROM official_ah_comparison h2
+        WHERE h2.a_ts_code = w.a_ts_code
+          AND h2.hk_ts_code = w.hk_ts_code
+          AND h2.trade_date <= p.trade_date
+          AND h2.trade_date >= h.trade_date
+          AND (CASE WHEN w.preferred_direction = 'AH' THEN h2.ah_premium ELSE h2.ha_premium END) IS NOT NULL
+      ) <= 60
   ) AS premium_percentile_60,
   p.is_hk_connect,
   p.connect_channels,

@@ -141,22 +141,9 @@ ha_premium_pct = (ha_ratio - 1) * 100
 
 若官方记录缺少 `ah_premium`，才按 `ah_ratio` 反算补齐；不得用四舍五入后的 `ah_comparison` 覆盖官方返回的 `ah_premium`。日间“刷新实时”会写回官方 AH 比价表，并通过 `is_realtime`、`data_source`、`source_updated_at` 标记来源。
 
-自算口径仍保留在代码和 `ah_premium_daily` 表中，作为后续具备港股日线权限后的扩展口径：
+历史自算口径已废弃，`ah_premium_daily` 表和 `premium_calc_service` 已删除。后续如重新引入真实实时或自算校验能力，应先重新评审数据权限、价格来源、汇率口径和展示口径，再新增独立设计。
 
-```text
-h_close_cny = h_close_hkd * hkd_cny
-ah_ratio = a_close_cny / h_close_cny
-ah_premium_pct = (ah_ratio - 1) * 100
-ha_ratio = 1 / ah_ratio
-ha_premium_pct = (ha_ratio - 1) * 100
-```
-
-其中：
-
-- `a_close_cny` 来源于 A 股 `daily.close`。
-- `h_close_hkd` 来源于港股 `hk_daily.close`，但当前 `hk_daily` 已禁用，因此自算口径暂不作为页面主展示来源。
-- `hkd_cny` 来源于汇率表。
-- `ah_premium_pct > 0` 表示 A 股较 H 股溢价；小于 0 表示 A 股折价。
+均值、中位数和分位指标按最近 N 条有效官方交易记录计算，不按自然日区间计算；任一市场休市的日期不会参与溢价落库和指标窗口。
 
 ### 4.5 交易日对齐
 
@@ -228,13 +215,6 @@ ha_premium_pct = (ha_ratio - 1) * 100
 - 来源字段：`is_realtime`、`data_source`、`source_updated_at`
 - 说明：当前溢价页、总览页趋势和统一查询均以该表为主。
 
-`ah_premium_daily`
-
-- 唯一键：`trade_date + a_ts_code + hk_ts_code`
-- 关键字段：`a_close_cny`、`h_close_hkd`、`hkd_cny`、`h_close_cny`、`ah_ratio`、`ah_premium_pct`、`is_hk_connect`、`connect_channels`、`rate_date`、`rate_source`、`rate_fallback`、`calc_status`
-- 校验字段：`official_ah_ratio`、`official_ah_premium_pct`、`diff_from_official_pct`
-- 索引：`trade_date + ah_premium_pct`、`hk_ts_code + trade_date`、`a_ts_code + trade_date`
-
 ### 5.2 任务与审计表
 
 `sync_run`
@@ -290,7 +270,6 @@ stock-ah-premium-ai/
         tushare_client.py
         sync_service.py
         ah_pair_service.py
-        premium_calc_service.py
         fx_rate_service.py
         llm_service.py
         sql_guard_service.py
@@ -317,7 +296,7 @@ stock-ah-premium-ai/
 - `sync_service`：根据数据集和时间范围执行同步，记录 `sync_run` 和 checkpoint。
 - `ah_pair_service`：维护 AH 配对，支持官方接口导入和人工导入。
 - `fx_rate_service`：维护直接汇率和交叉汇率，暴露按日期取 HKD/CNY 的方法。
-- `premium_calc_service`：读取行情、配对、港股通名单和汇率，生成 `ah_premium_daily`。
+- `official_premium_calc_service`：基于官方 A/H 比价重算 H/A 派生字段和来源标记。
 - `llm_service`：封装 DeepSeek OpenAI-compatible Chat API，不把密钥暴露给前端。
 - `sql_guard_service`：对 LLM 生成的 SQL 做只读、白名单、limit、超时校验。
 
@@ -447,11 +426,8 @@ flowchart LR
   A["Tushare 接口"] --> B["同步服务"]
   B --> C["MySQL 原始/标准化表"]
   C --> D["AH 配对服务"]
-  C --> E["汇率服务"]
-  D --> F["溢价计算服务"]
-  E --> F
-  C --> F
-  F --> G["official_ah_comparison / ah_premium_daily"]
+  C --> F["官方 AH 派生计算服务"]
+  F --> G["official_ah_comparison"]
   G --> H["后端查询 API"]
   H --> I["前端页面"]
   H --> J["LLM 问答服务"]
@@ -478,7 +454,7 @@ flowchart LR
 3. 同步 A 股、港股交易日历。
 4. 同步 AH 配对。
 5. 按日期循环同步港股通名单、A 股行情、官方 AH 比价、汇率。
-6. 以官方 AH 比价表为主展示和反推 H/A 字段；具备港股日线权限后再补充自算口径。
+6. 以官方 AH 比价表为主展示和反推 H/A 字段；历史自算落表口径已删除。
 
 ## 11. 一阶段开发计划
 
@@ -487,7 +463,7 @@ flowchart LR
 | P0 方案确认 | 确认目标、技术栈、数据口径、数据库名、目录结构 | 本文档 | 已完成 |
 | P1 后端骨架与数据库 | 创建 FastAPI 项目、配置管理、Alembic、MySQL 连接、建表迁移 | 后端项目、迁移脚本 | 已完成，本地 MySQL 初始化通过 |
 | P2 Tushare 同步 | 封装 Tushare 客户端，实现基础信息、行情、港股通、汇率同步 | 同步 API、同步任务、单元测试 | 已完成；`hk_daily` 因权限禁用 |
-| P3 AH 配对与溢价计算 | 导入 AH 配对，计算/反推 A/H 与 H/A 溢价，落官方表和自算表 | 计算服务、结果查询 API | 已完成，页面以官方 AH 比价表为主 |
+| P3 AH 配对与溢价计算 | 导入 AH 配对，反推 A/H 与 H/A 溢价，落官方 AH 比价表 | 计算服务、结果查询 API | 已完成，页面以官方 AH 比价表为主 |
 | P4 LLM 问答 | DeepSeek OpenAI-compatible 适配、只读 SQL Guard、问答 API | 聊天 API、提示词模板、只读查询视图 | 已编码，DeepSeek 最小调用验证通过 |
 | P5 前端页面 | 总览、同步、查询、AH 溢价、智能问答页面 | React 前端 | 已完成，支持长字段悬浮和东八区时间展示 |
 | P6 联调与验收 | 端到端测试、异常处理、README、启动脚本 | 完整本地运行说明 | 本地 MySQL 初始化、批量同步、静态检查和构建已通过；DeepSeek 最小调用验证通过 |
@@ -512,10 +488,9 @@ flowchart LR
 
 溢价计算：
 
-- 给定一组 A 股收盘价、H 股收盘价和 HKD/CNY 汇率，计算结果与公式一致。
-- 当 H 股不在港股通名单内时，不进入港股通 AH 溢价结果。
-- 当行情或汇率缺失时，结果状态明确，不产生误导性数值。
-- 若有官方 `stk_ah_comparison` 结果，记录自算与官方差异。
+- 官方 AH 比价同步后，A/H 与 H/A 派生字段计算结果与公式一致。
+- 任一市场休市时，官方 AH 比价不落该日期溢价结果，并清理该日期已有误落数据。
+- 港股通可操作性来自当日 `hsgt_constituent`，列表默认只展示港股通可操作标的。
 
 前端：
 
@@ -537,10 +512,10 @@ LLM 安全：
 | 风险 | 影响 | 应对 |
 | --- | --- | --- |
 | Tushare 积分或权限不足 | 部分接口不可用 | 提前运行权限检查；支持 CSV 补录 AH 配对和汇率；错误在同步页可见 |
-| 当前 token 无法请求 `hk_daily` | 自算港股行情链路不完整 | 禁用该接口；展示以官方 AH 比价为主，后续有权限后再启用自算口径 |
+| 当前 token 无法请求 `hk_daily` | 港股行情链路不完整 | 禁用该接口；展示以官方 AH 比价为主，不再维护自算落表口径 |
 | 港股通名单和 AH 配对历史不足 | 历史计算覆盖不完整 | 记录数据覆盖起止日；结果页展示数据范围 |
-| 汇率口径差异 | 自算溢价与官方值有差异 | 保存 `rate_source`、`rate_date`、官方比价字段，便于追踪 |
-| A 股和港股休市不同步 | 部分日期无法计算 | 明确同日计算口径；缺失状态入库 |
+| 汇率口径差异 | 若后续恢复自算能力可能影响对比 | 当前不维护自算落表口径；如恢复需单独评审汇率来源 |
+| A 股和港股休市不同步 | 部分日期不应展示溢价 | 同步官方 AH 比价前校验两地交易日历；任一市场休市则跳过并清理误落数据 |
 | LLM 生成错误 SQL | 数据问答不可靠或有安全风险 | 白名单视图、SQL 解析、只读账号、limit、超时、答案附口径 |
 | MySQL 5.7 能力限制 | 复杂分析 SQL 不便 | 预先建查询视图和聚合接口；避免依赖 MySQL 8 特性 |
 

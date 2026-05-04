@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 
@@ -8,7 +9,21 @@ from sqlalchemy.orm import Session
 
 from app.db.models.market import OfficialAHComparison
 from app.services.decimal_utils import quantize_decimal
-from app.services.premium_calc_service import PremiumCalcResult
+
+
+@dataclass(frozen=True)
+class PremiumCalcResult:
+    """官方 AH 溢价计算汇总结果。
+
+    创建日期：2026-05-04
+    author: sunshengxian
+    """
+
+    start_date: date
+    end_date: date
+    calculated_rows: int
+    skipped_not_connect: int
+    issue_rows: int
 
 
 class OfficialPremiumCalcService:

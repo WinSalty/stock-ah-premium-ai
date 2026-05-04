@@ -6,6 +6,7 @@ from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
@@ -406,10 +407,25 @@ class SyncService:
                     self._coerce_date(params.get("end_date")),
                 )
             )
+        if spec.name == "ah_comparison":
+            trade_date = self._coerce_date(params.get("trade_date"))
+            if trade_date is not None and not self._is_joint_ah_trade_date(trade_date):
+                self._delete_official_premium_date(trade_date)
+                self.db.commit()
+                return 0
 
         result = self.client.query(spec.api_name, params=merged_params, fields=spec.fields)
         rows = [self._normalize_row(spec, row) for row in result.rows]
         rows = [row for row in rows if row]
+        if spec.name == "ah_comparison":
+            blocked_dates = {
+                row["trade_date"]
+                for row in rows
+                if not self._is_joint_ah_trade_date(row["trade_date"])
+            }
+            for blocked_date in blocked_dates:
+                self._delete_official_premium_date(blocked_date)
+            rows = [row for row in rows if row["trade_date"] not in blocked_dates]
         row_count = self.repository.upsert_many(spec.model, rows)
         if spec.name == "ah_comparison":
             from app.services.ah_pair_service import AHPairService
@@ -563,6 +579,35 @@ class SyncService:
             self._normalize_official_ha_row(normalized)
         model_columns = set(spec.model.__table__.columns.keys())
         return {key: value for key, value in normalized.items() if key in model_columns}
+
+    def _is_joint_ah_trade_date(self, trade_date: date) -> bool:
+        """判断 A 股和港股是否同时开市。
+
+        创建日期：2026-05-04
+        author: sunshengxian
+        """
+
+        a_is_open = self.db.scalar(
+            select(ATradeCalendar.is_open).where(
+                ATradeCalendar.exchange == "SSE",
+                ATradeCalendar.cal_date == trade_date,
+            )
+        )
+        hk_is_open = self.db.scalar(
+            select(HKTradeCalendar.is_open).where(HKTradeCalendar.cal_date == trade_date)
+        )
+        return a_is_open == 1 and hk_is_open == 1
+
+    def _delete_official_premium_date(self, trade_date: date) -> None:
+        """删除非联合交易日误落的官方 AH 溢价结果。
+
+        创建日期：2026-05-04
+        author: sunshengxian
+        """
+
+        self.db.execute(
+            delete(OfficialAHComparison).where(OfficialAHComparison.trade_date == trade_date)
+        )
 
     def _normalize_fx_row(self, row: dict[str, Any]) -> None:
         raw_ts_code = row.get("raw_ts_code") or ""

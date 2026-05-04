@@ -30,8 +30,11 @@ A/H 溢价与可交易性：
 - `fx_rate_daily`：外汇汇率日线。
 - `ah_stock_pair`：AH 股票配对。
 - `official_ah_comparison`：Tushare 官方 AH 比价快照，当前主展示口径。
-- `ah_premium_daily`：自算港股通 AH 溢价结果，当前仅作实时、扩展和校验口径保留。
 - `watchlist_stock`：用户自选 AH 股票。
+
+官方 AH 比价只保留 A 股交易日历、港股交易日历同时开市的日期；任一市场休市时，同步服务会跳过该日期的溢价结果，并清理该日期已有误落数据。历史自算结果表 `ah_premium_daily` 已由迁移 `20260504_0006` 删除。
+
+溢价均值、中位数、20/80 分位和历史分位均按最近 N 条有效官方交易记录计算，不按自然日区间计算；`v_watchlist_opportunity.premium_percentile_60` 也使用最近 60 条有效官方溢价记录。
 
 A 股选股因子：
 

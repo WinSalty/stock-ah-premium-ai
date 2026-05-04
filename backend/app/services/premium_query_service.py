@@ -4,10 +4,16 @@ from dataclasses import dataclass
 from datetime import date
 from decimal import ROUND_CEILING, ROUND_FLOOR, Decimal
 
-from sqlalchemy import asc, desc, func, or_, select
+from sqlalchemy import asc, desc, exists, func, or_, select
 from sqlalchemy.orm import Session
 
-from app.db.models.market import HsgtConstituent, OfficialAHComparison, WatchlistStock
+from app.db.models.market import (
+    ATradeCalendar,
+    HKTradeCalendar,
+    HsgtConstituent,
+    OfficialAHComparison,
+    WatchlistStock,
+)
 from app.schemas.market import (
     PremiumListResponse,
     PremiumOfficialTrendPoint,
@@ -181,7 +187,7 @@ class PremiumQueryService:
             OfficialAHComparison.a_name,
             OfficialAHComparison.hk_name,
             OfficialAHComparison.trade_date,
-        )
+        ).where(self._joint_trade_date_filter())
         if keyword:
             like = f"%{keyword.strip()}%"
             statement = statement.where(
@@ -242,6 +248,7 @@ class PremiumQueryService:
         statement = select(OfficialAHComparison).where(
             OfficialAHComparison.a_ts_code == a_ts_code,
             OfficialAHComparison.hk_ts_code == hk_ts_code,
+            self._joint_trade_date_filter(),
         )
         if start_date:
             statement = statement.where(OfficialAHComparison.trade_date >= start_date)
@@ -302,7 +309,11 @@ class PremiumQueryService:
         author: sunshengxian
         """
 
-        return self.db.scalar(select(func.max(OfficialAHComparison.trade_date)))
+        return self.db.scalar(
+            select(func.max(OfficialAHComparison.trade_date)).where(
+                self._joint_trade_date_filter()
+            )
+        )
 
     def latest_pair_row(self, a_ts_code: str, hk_ts_code: str) -> OfficialAHComparison | None:
         """查询单个配对最新官方记录。
@@ -316,6 +327,7 @@ class PremiumQueryService:
             .where(
                 OfficialAHComparison.a_ts_code == a_ts_code,
                 OfficialAHComparison.hk_ts_code == hk_ts_code,
+                self._joint_trade_date_filter(),
             )
             .order_by(desc(OfficialAHComparison.trade_date))
             .limit(1)
@@ -393,7 +405,8 @@ class PremiumQueryService:
         if trade_date is None:
             return []
         statement = select(OfficialAHComparison).where(
-            OfficialAHComparison.trade_date == trade_date
+            OfficialAHComparison.trade_date == trade_date,
+            self._joint_trade_date_filter(),
         )
         if filters.keyword:
             like = f"%{filters.keyword.strip()}%"
@@ -472,6 +485,7 @@ class PremiumQueryService:
                     OfficialAHComparison.a_ts_code == item.a_ts_code,
                     OfficialAHComparison.hk_ts_code == item.hk_ts_code,
                     OfficialAHComparison.trade_date <= item.trade_date,
+                    self._joint_trade_date_filter(),
                 )
                 .order_by(desc(OfficialAHComparison.trade_date))
                 .limit(max(ROLLING_WINDOWS))
@@ -547,6 +561,29 @@ class PremiumQueryService:
 
     def _metric_value(self, item: OfficialAHComparison, direction: str) -> Decimal | None:
         return item.ah_premium if self._normalize_direction(direction) == "AH" else item.ha_premium
+
+    def _joint_trade_date_filter(self):
+        """过滤为 A 股和港股同时开市的官方溢价日期。
+
+        创建日期：2026-05-04
+        author: sunshengxian
+        """
+
+        return (
+            exists(
+                select(1).where(
+                    ATradeCalendar.exchange == "SSE",
+                    ATradeCalendar.cal_date == OfficialAHComparison.trade_date,
+                    ATradeCalendar.is_open == 1,
+                )
+            )
+            & exists(
+                select(1).where(
+                    HKTradeCalendar.cal_date == OfficialAHComparison.trade_date,
+                    HKTradeCalendar.is_open == 1,
+                )
+            )
+        )
 
     def _normalize_direction(self, value: str | None) -> str:
         return "AH" if str(value or "").upper() == "AH" else "HA"
