@@ -1,6 +1,6 @@
 import { Button, Checkbox, DatePicker, Form, Input, Popconfirm, Skeleton, Table, message } from 'antd';
 import { Plus, SendHorizontal, Trash2 } from 'lucide-react';
-import ReactMarkdown from 'react-markdown';
+import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { useEffect, useState } from 'react';
 import dayjs from 'dayjs';
@@ -68,6 +68,72 @@ const CHAT_TABLE_LABELS: Record<string, string> = {
   return_20d: '20 日涨跌幅',
   return_60d: '60 日涨跌幅',
   return_120d: '120 日涨跌幅'
+};
+
+const CHAT_SUMMARY_COLUMN_PRIORITY = [
+  'display_name',
+  'name',
+  'a_name',
+  'hk_name',
+  'ts_code',
+  'a_ts_code',
+  'hk_ts_code',
+  'trade_date',
+  'factor_date',
+  'industry',
+  'selection_tags',
+  'selection_score',
+  'pe_ttm',
+  'pb',
+  'dividend_yield_ttm',
+  'roe',
+  'return_60d',
+  'ah_premium_pct',
+  'ha_premium_pct',
+  'metric_premium_pct',
+  'distance_to_target_pct',
+  'premium_percentile_60',
+  'opportunity_status',
+  'connect_channels',
+  'selection_reason'
+];
+
+const CHAT_SUMMARY_COLUMN_WIDTHS: Record<string, number> = {
+  display_name: 140,
+  name: 120,
+  a_name: 120,
+  hk_name: 120,
+  ts_code: 116,
+  a_ts_code: 116,
+  hk_ts_code: 116,
+  trade_date: 112,
+  factor_date: 112,
+  industry: 116,
+  selection_tags: 180,
+  selection_score: 88,
+  pe_ttm: 88,
+  pb: 80,
+  dividend_yield_ttm: 100,
+  roe: 88,
+  return_60d: 104,
+  ah_premium_pct: 104,
+  ha_premium_pct: 104,
+  metric_premium_pct: 104,
+  distance_to_target_pct: 96,
+  premium_percentile_60: 96,
+  opportunity_status: 96,
+  connect_channels: 120,
+  selection_reason: 260
+};
+
+const markdownComponents: Components = {
+  table({ children }) {
+    return (
+      <div className="markdown-table-wrap">
+        <table>{children}</table>
+      </div>
+    );
+  }
 };
 
 /**
@@ -278,7 +344,7 @@ function ChatPage() {
     <main className="page chat-page">
       <PageHeader title="智能问答" />
       <div className="chat-workspace">
-        <aside className="panel chat-sidebar">
+        <aside className="chat-sidebar">
           <div className="chat-sidebar-head">
             <span>会话</span>
             <Button
@@ -334,19 +400,21 @@ function ChatPage() {
         </aside>
 
         <div className="chat-main">
-          <section className="panel chat-history">
+          <section className="chat-history">
             {isLoadingHistory ? <Skeleton active paragraph={{ rows: 6 }} /> : null}
             {!isLoadingHistory && turns.length === 0 && !isSending ? (
-              <div className="question-bank">
-                {[
-                  '我关注的股票里，最近一个交易日哪些 H/A 折价最明显？',
-                  '哪些自选股已经达到我设置的阈值？',
-                  '请筛选低估值、高股息且 ROE 稳定的 A 股候选'
-                ].map((item) => (
-                  <Button key={item} onClick={() => form.setFieldValue('question', item)}>
-                    {item}
-                  </Button>
-                ))}
+              <div className="chat-empty-state">
+                <div className="question-bank">
+                  {[
+                    '我关注的股票里，最近一个交易日哪些 H/A 折价最明显？',
+                    '哪些自选股已经达到我设置的阈值？',
+                    '请筛选低估值、高股息且 ROE 稳定的 A 股候选'
+                  ].map((item) => (
+                    <Button key={item} onClick={() => form.setFieldValue('question', item)}>
+                      {item}
+                    </Button>
+                  ))}
+                </div>
               </div>
             ) : null}
             {!isLoadingHistory
@@ -355,30 +423,15 @@ function ChatPage() {
                     <div className="chat-question">{turn.question}</div>
                     <div className="chat-answer">
                       <div className="markdown-answer">
-                        <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                        <ReactMarkdown
+                          remarkPlugins={[remarkGfm]}
+                          components={markdownComponents}
+                        >
                           {turn.response?.answer || (turn.streaming ? '正在分析...' : '')}
                         </ReactMarkdown>
                         {turn.streaming ? <span className="stream-caret" /> : null}
                       </div>
-                      {turn.response?.rows.length ? (
-                        <div className="chat-data-table">
-                          <div className="chat-data-title">数据摘要</div>
-                          <Table
-                            rowKey={(_, rowIndex) => String(rowIndex)}
-                            size="small"
-                            pagination={false}
-                            dataSource={turn.response.rows.slice(0, 8)}
-                            columns={Object.keys(turn.response.rows[0]).map((key) => ({
-                              title: CHAT_TABLE_LABELS[key] || key,
-                              dataIndex: key,
-                              width: key.endsWith('_at') || key.includes('time') ? 190 : 140,
-                              ellipsis: true,
-                              render: (value) => <OverflowCell value={value} fieldKey={key} threshold={22} />
-                            }))}
-                            scroll={{ x: true }}
-                          />
-                        </div>
-                      ) : null}
+                      <ChatDataSummary rows={turn.response?.rows || []} />
                     </div>
                   </div>
                 ))
@@ -386,7 +439,7 @@ function ChatPage() {
             {isSending && turns.length === 0 ? <Skeleton active paragraph={{ rows: 4 }} /> : null}
           </section>
 
-          <section className="panel chat-composer">
+          <section className="chat-composer">
             <Form form={form} layout="vertical" onFinish={handleSubmit}>
               <div className="chat-form-grid">
                 <Form.Item label="范围" name="range">
@@ -449,6 +502,48 @@ function buildTurns(messages: ChatStoredMessage[]): ChatTurn[] {
     }
   });
   return turns.filter((turn) => turn.question || turn.response?.answer);
+}
+
+function ChatDataSummary({ rows }: { rows: Record<string, unknown>[] }) {
+  if (!rows.length) {
+    return null;
+  }
+  const keys = getSummaryKeys(rows);
+  const visibleRows = rows.slice(0, 8);
+  const tableWidth = keys.reduce((total, key) => total + (CHAT_SUMMARY_COLUMN_WIDTHS[key] || 128), 0);
+
+  return (
+    <details className="chat-data-summary">
+      <summary>
+        <span>数据摘要</span>
+        <b>{rows.length} 条样本</b>
+      </summary>
+      <div className="chat-data-body">
+        <Table
+          rowKey={(_, rowIndex) => String(rowIndex)}
+          size="small"
+          pagination={false}
+          tableLayout="fixed"
+          dataSource={visibleRows}
+          columns={keys.map((key) => ({
+            title: CHAT_TABLE_LABELS[key] || key,
+            dataIndex: key,
+            width: CHAT_SUMMARY_COLUMN_WIDTHS[key] || 128,
+            ellipsis: true,
+            render: (value) => <OverflowCell value={value} fieldKey={key} threshold={18} />
+          }))}
+          scroll={{ x: tableWidth }}
+        />
+      </div>
+    </details>
+  );
+}
+
+function getSummaryKeys(rows: Record<string, unknown>[]) {
+  const allKeys = Array.from(new Set(rows.flatMap((row) => Object.keys(row))));
+  const prioritized = CHAT_SUMMARY_COLUMN_PRIORITY.filter((key) => allKeys.includes(key));
+  const fallback = allKeys.filter((key) => !prioritized.includes(key));
+  return [...prioritized, ...fallback].slice(0, 9);
 }
 
 export default ChatPage;
