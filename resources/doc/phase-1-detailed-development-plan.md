@@ -329,6 +329,7 @@ LLM 问答：
 - `GET /api/chat/sessions`：按更新时间查看已保存会话。
 - `GET /api/chat/sessions/{sessionId}`：查看会话详情和历史消息。
 - `GET /api/chat/sessions/{sessionId}/messages`：查看会话消息列表。
+- `DELETE /api/chat/sessions/{sessionId}`：逻辑删除会话，保留消息记录但不再展示。
 - `POST /api/chat/sessions/{sessionId}/messages`：提交问题，返回回答和可展示数据摘要，不向前端返回 SQL。
 - `POST /api/chat/sessions/{sessionId}/messages/stream`：提交问题并流式返回回答和可展示数据摘要。
 

@@ -1,5 +1,5 @@
-import { Button, Checkbox, DatePicker, Form, Input, Skeleton, Table, message } from 'antd';
-import { Plus, SendHorizontal } from 'lucide-react';
+import { Button, Checkbox, DatePicker, Form, Input, Popconfirm, Skeleton, Table, message } from 'antd';
+import { Plus, SendHorizontal, Trash2 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { useEffect, useState } from 'react';
@@ -8,6 +8,7 @@ import PageHeader from '../components/PageHeader';
 import OverflowCell from '../components/OverflowCell';
 import {
   createChatSession,
+  deleteChatSession,
   getChatSession,
   listChatSessions,
   sendChatMessageStream
@@ -152,6 +153,32 @@ function ChatPage() {
     }
   };
 
+  const handleDeleteSession = async (sessionId: number) => {
+    if (isSending) {
+      return;
+    }
+    try {
+      await deleteChatSession(sessionId);
+      message.success('会话已删除');
+      const items = await listChatSessions();
+      setSessions(items);
+      if (session?.id === sessionId) {
+        const nextSession = items[0];
+        if (nextSession) {
+          await openSession(nextSession.id, false);
+        } else {
+          setSession(null);
+          setTurns([]);
+          window.localStorage.removeItem(LAST_SESSION_KEY);
+        }
+      } else if (Number(window.localStorage.getItem(LAST_SESSION_KEY)) === sessionId) {
+        window.localStorage.removeItem(LAST_SESSION_KEY);
+      }
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '删除会话失败');
+    }
+  };
+
   const updateTurn = (id: string, patch: Partial<ChatTurn>) => {
     setTurns((items) => items.map((item) => (item.id === id ? { ...item, ...patch } : item)));
   };
@@ -270,16 +297,38 @@ function ChatPage() {
               <div className="chat-session-empty">暂无会话</div>
             ) : null}
             {sessions.map((item) => (
-              <button
+              <div
                 key={item.id}
-                type="button"
                 className={`chat-session-item${session?.id === item.id ? ' active' : ''}`}
-                onClick={() => void openSession(item.id)}
-                disabled={isSending}
               >
-                <strong>{item.title}</strong>
-                <span>{formatEast8DateTime(item.updated_at)}</span>
-              </button>
+                <button
+                  type="button"
+                  className="chat-session-open"
+                  onClick={() => void openSession(item.id)}
+                  disabled={isSending}
+                >
+                  <strong>{item.title}</strong>
+                  <span>{formatEast8DateTime(item.updated_at, { naiveAsEast8: true })}</span>
+                </button>
+                <Popconfirm
+                  title="删除会话"
+                  description="删除后将不再显示该会话"
+                  okText="删除"
+                  cancelText="取消"
+                  onConfirm={() => void handleDeleteSession(item.id)}
+                  disabled={isSending}
+                >
+                  <Button
+                    type="text"
+                    size="small"
+                    danger
+                    aria-label="删除会话"
+                    title="删除会话"
+                    icon={<Trash2 size={15} />}
+                    disabled={isSending}
+                  />
+                </Popconfirm>
+              </div>
             ))}
           </div>
         </aside>

@@ -45,7 +45,7 @@ A 股选股因子：
 - `sync_run`：数据同步任务运行记录。
 - `sync_checkpoint`：数据同步断点。
 - `data_quality_issue`：数据质量问题记录。
-- `llm_chat_session`：LLM 问答会话，用于保存投资问答主题和更新时间。
+- `llm_chat_session`：LLM 问答会话，用于保存投资问答主题和更新时间，`deleted_at` 非空表示会话已逻辑删除。
 - `llm_chat_message`：LLM 问答消息，用于保存用户问题、助手回答、内部查询口径和结果预览，支持后续会话上下文记忆。
 
 ## 使用建议

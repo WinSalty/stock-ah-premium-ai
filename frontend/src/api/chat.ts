@@ -21,6 +21,17 @@ export function getChatSession(sessionId: number) {
   return requestJson<ChatSessionDetail>(`/api/chat/sessions/${sessionId}`);
 }
 
+export function deleteChatSession(sessionId: number) {
+  return fetch(`${API_BASE_URL}/api/chat/sessions/${sessionId}`, {
+    method: 'DELETE'
+  }).then(async (response) => {
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}));
+      throw new ApiError(response.status, body.detail || response.statusText);
+    }
+  });
+}
+
 export function sendChatMessage(sessionId: number, payload: ChatMessageRequest) {
   return requestJson<ChatMessageResponse>(`/api/chat/sessions/${sessionId}/messages`, {
     method: 'POST',

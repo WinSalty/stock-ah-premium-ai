@@ -5,8 +5,9 @@ import logging
 from collections.abc import Iterator
 from datetime import datetime
 from typing import Annotated
+from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from fastapi.responses import StreamingResponse
 from sqlalchemy import desc, select
 from sqlalchemy.orm import Session
@@ -26,6 +27,7 @@ from app.services.llm_service import LlmService
 router = APIRouter()
 DbSession = Annotated[Session, Depends(get_db)]
 logger = logging.getLogger(__name__)
+CHAT_TIMEZONE = ZoneInfo("Asia/Shanghai")
 
 
 def _json_line(payload: dict[str, object]) -> str:
@@ -36,6 +38,29 @@ def _json_line(payload: dict[str, object]) -> str:
     """
 
     return json.dumps(payload, ensure_ascii=False, default=str) + "\n"
+
+
+def _now_east8() -> datetime:
+    """生成东八区本地无时区时间，用于聊天会话展示。
+
+    创建日期：2026-05-04
+    author: sunshengxian
+    """
+
+    return datetime.now(CHAT_TIMEZONE).replace(tzinfo=None)
+
+
+def _active_session_or_404(db: Session, session_id: int) -> LlmChatSession:
+    """读取未删除会话。
+
+    创建日期：2026-05-04
+    author: sunshengxian
+    """
+
+    session = db.get(LlmChatSession, session_id)
+    if session is None or session.deleted_at is not None:
+        raise HTTPException(status_code=404, detail="会话不存在")
+    return session
 
 
 def _session_title(question: str) -> str:
@@ -114,7 +139,7 @@ def _touch_session(session: LlmChatSession, question: str, has_history: bool) ->
 
     if not has_history and session.title == "新的数据问答":
         session.title = _session_title(question)
-    session.updated_at = datetime.now()
+    session.updated_at = _now_east8()
 
 
 @router.post("/chat/sessions", response_model=ChatSessionResponse)
@@ -125,7 +150,8 @@ def create_session(payload: ChatSessionCreate, db: DbSession) -> LlmChatSession:
     author: sunshengxian
     """
 
-    session = LlmChatSession(title=payload.title)
+    now = _now_east8()
+    session = LlmChatSession(title=payload.title, created_at=now, updated_at=now)
     db.add(session)
     db.commit()
     db.refresh(session)
@@ -143,7 +169,12 @@ def list_sessions(
     author: sunshengxian
     """
 
-    statement = select(LlmChatSession).order_by(desc(LlmChatSession.updated_at)).limit(limit)
+    statement = (
+        select(LlmChatSession)
+        .where(LlmChatSession.deleted_at.is_(None))
+        .order_by(desc(LlmChatSession.updated_at))
+        .limit(limit)
+    )
     return list(db.scalars(statement).all())
 
 
@@ -155,12 +186,11 @@ def get_session(session_id: int, db: DbSession) -> ChatSessionDetailResponse:
     author: sunshengxian
     """
 
-    session = db.get(LlmChatSession, session_id)
-    if session is None:
-        raise HTTPException(status_code=404, detail="会话不存在")
+    session = _active_session_or_404(db, session_id)
     return ChatSessionDetailResponse(
         id=session.id,
         title=session.title,
+        deleted_at=session.deleted_at,
         created_at=session.created_at,
         updated_at=session.updated_at,
         messages=[_message_response(message) for message in session.messages],
@@ -175,10 +205,24 @@ def list_messages(session_id: int, db: DbSession) -> list[ChatStoredMessageRespo
     author: sunshengxian
     """
 
-    session = db.get(LlmChatSession, session_id)
-    if session is None:
-        raise HTTPException(status_code=404, detail="会话不存在")
+    session = _active_session_or_404(db, session_id)
     return [_message_response(message) for message in session.messages]
+
+
+@router.delete("/chat/sessions/{session_id}", status_code=204)
+def delete_session(session_id: int, db: DbSession) -> Response:
+    """逻辑删除 LLM 问答会话。
+
+    创建日期：2026-05-04
+    author: sunshengxian
+    """
+
+    session = _active_session_or_404(db, session_id)
+    now = _now_east8()
+    session.deleted_at = now
+    session.updated_at = now
+    db.commit()
+    return Response(status_code=204)
 
 
 @router.post("/chat/sessions/{session_id}/messages", response_model=ChatMessageResponse)
@@ -193,11 +237,16 @@ def create_message(
     author: sunshengxian
     """
 
-    session = db.get(LlmChatSession, session_id)
-    if session is None:
-        raise HTTPException(status_code=404, detail="会话不存在")
+    session = _active_session_or_404(db, session_id)
     history = _recent_history(db, session_id)
-    user_message = LlmChatMessage(session_id=session_id, role="user", content=payload.question)
+    now = _now_east8()
+    user_message = LlmChatMessage(
+        session_id=session_id,
+        role="user",
+        content=payload.question,
+        created_at=now,
+        updated_at=now,
+    )
     db.add(user_message)
     context = payload.model_dump(exclude={"question"}, exclude_none=True)
     context["conversation_history"] = history
@@ -210,6 +259,8 @@ def create_message(
         content=answer.answer,
         sql_text=answer.sql,
         result_preview_json=json.dumps(answer.rows[:20], ensure_ascii=False, default=str),
+        created_at=_now_east8(),
+        updated_at=_now_east8(),
     )
     db.add(assistant_message)
     _touch_session(session, payload.question, has_history=True)
@@ -229,11 +280,16 @@ def create_message_stream(
     author: sunshengxian
     """
 
-    session = db.get(LlmChatSession, session_id)
-    if session is None:
-        raise HTTPException(status_code=404, detail="会话不存在")
+    session = _active_session_or_404(db, session_id)
     history = _recent_history(db, session_id)
-    user_message = LlmChatMessage(session_id=session_id, role="user", content=payload.question)
+    now = _now_east8()
+    user_message = LlmChatMessage(
+        session_id=session_id,
+        role="user",
+        content=payload.question,
+        created_at=now,
+        updated_at=now,
+    )
     db.add(user_message)
     _touch_session(session, payload.question, has_history=bool(history))
     db.commit()
@@ -257,6 +313,8 @@ def create_message_stream(
                 content=answer_text,
                 sql_text=sql,
                 result_preview_json=json.dumps(rows[:20], ensure_ascii=False, default=str),
+                created_at=_now_east8(),
+                updated_at=_now_east8(),
             )
             db.add(assistant_message)
             _touch_session(session, payload.question, has_history=True)
@@ -272,6 +330,8 @@ def create_message_stream(
                 content=answer_text,
                 sql_text=sql,
                 result_preview_json=json.dumps(rows[:20], ensure_ascii=False, default=str),
+                created_at=_now_east8(),
+                updated_at=_now_east8(),
             )
             db.add(assistant_message)
             _touch_session(session, payload.question, has_history=True)

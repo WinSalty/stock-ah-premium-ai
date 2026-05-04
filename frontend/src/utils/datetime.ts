@@ -3,12 +3,16 @@ const DATE_ONLY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const TIMEZONE_PATTERN = /(z|[+-]\d{2}:?\d{2})$/i;
 const DATETIME_FIELD_PATTERN = /(^|_)(created|updated|started|finished|resolved|source_updated)_at$|time$/i;
 
+interface FormatDateTimeOptions {
+  naiveAsEast8?: boolean;
+}
+
 /**
  * 将接口时间统一格式化为东八区 yyyy-MM-dd HH:mm:ss。
  * 创建日期：2026-05-04
  * author: sunshengxian
  */
-export function formatEast8DateTime(value?: string | null) {
+export function formatEast8DateTime(value?: string | null, options?: FormatDateTimeOptions) {
   if (!value) {
     return '-';
   }
@@ -16,6 +20,9 @@ export function formatEast8DateTime(value?: string | null) {
     return value;
   }
   const normalized = value.trim().replace(' ', 'T');
+  if (options?.naiveAsEast8 && !TIMEZONE_PATTERN.test(normalized)) {
+    return formatNaiveDateTime(normalized);
+  }
   const withTimezone = TIMEZONE_PATTERN.test(normalized) ? normalized : `${normalized}Z`;
   const parsed = new Date(withTimezone);
   if (Number.isNaN(parsed.getTime())) {
@@ -54,4 +61,12 @@ function shouldFormatAsDateTime(value: string, fieldKey?: string) {
 
 function pad(value: number) {
   return String(value).padStart(2, '0');
+}
+
+function formatNaiveDateTime(value: string) {
+  const match = value.match(/^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?/);
+  if (!match) {
+    return value;
+  }
+  return `${match[1]} ${match[2]}:${match[3]}:${match[4] || '00'}`;
 }

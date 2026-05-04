@@ -144,6 +144,7 @@ export interface PremiumCalculateResponse {
 export interface ChatSession {
   id: number;
   title: string;
+  deleted_at: string | null;
   created_at: string;
   updated_at: string;
 }

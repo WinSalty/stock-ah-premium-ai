@@ -293,9 +293,11 @@ CREATE TABLE IF NOT EXISTS `data_quality_issue` (
 CREATE TABLE IF NOT EXISTS `llm_chat_session` (
   `id` INT NOT NULL AUTO_INCREMENT COMMENT '自增主键',
   `title` VARCHAR(255) NOT NULL COMMENT '会话标题',
+  `deleted_at` DATETIME DEFAULT NULL COMMENT '逻辑删除时间，非空表示会话已删除',
   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '记录创建时间',
   `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '记录更新时间',
-  PRIMARY KEY (`id`)
+  PRIMARY KEY (`id`),
+  KEY `idx_llm_chat_session_deleted_at` (`deleted_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='LLM 问答会话表';
 
 CREATE TABLE IF NOT EXISTS `llm_chat_message` (

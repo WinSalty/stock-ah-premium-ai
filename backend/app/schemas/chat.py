@@ -27,6 +27,7 @@ class ChatSessionResponse(OrmModel):
 
     id: int
     title: str
+    deleted_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
 
