@@ -1,7 +1,8 @@
-import { Button, DatePicker, Form, Input, Select, Space, Table, Tabs, Tag, message } from 'antd';
+import { Button, DatePicker, Form, Input, Modal, Select, Space, Table, Tabs, Tag, Typography, message } from 'antd';
 import { FileUp, Play, RotateCw } from 'lucide-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import dayjs from 'dayjs';
+import { useState } from 'react';
 import PageHeader from '../components/PageHeader';
 import { createSyncRun, fetchDatasets, fetchSyncRuns } from '../api/sync';
 import type { SyncRun, SyncRunCreate } from '../types/domain';
@@ -28,6 +29,7 @@ interface ImportFormValues {
 function SyncPage() {
   const [form] = Form.useForm<SyncFormValues>();
   const [importForm] = Form.useForm<ImportFormValues>();
+  const [detailRun, setDetailRun] = useState<SyncRun | null>(null);
   const queryClient = useQueryClient();
   const datasets = useQuery({ queryKey: ['datasets'], queryFn: fetchDatasets });
   const runs = useQuery({ queryKey: ['sync-runs'], queryFn: fetchSyncRuns });
@@ -192,16 +194,87 @@ function SyncPage() {
             {
               title: '参数',
               dataIndex: 'params_json',
-              ellipsis: true,
-              render: (value) => <span className="mono-text">{value || '-'}</span>
+              width: 260,
+              render: (value) => <span className="mono-text sync-table-text">{value || '-'}</span>
             },
-            { title: '错误', dataIndex: 'error_message', ellipsis: true }
+            {
+              title: '错误',
+              dataIndex: 'error_message',
+              width: 420,
+              render: (value, record) =>
+                value ? (
+                  <div className="sync-error-cell">
+                    <Typography.Text type="danger" className="sync-table-text">
+                      {value}
+                    </Typography.Text>
+                    <Button type="link" size="small" onClick={() => setDetailRun(record)}>
+                      查看
+                    </Button>
+                  </div>
+                ) : (
+                  <Typography.Text type="secondary">-</Typography.Text>
+                )
+            }
           ]}
-          scroll={{ x: 1050 }}
+          scroll={{ x: 1280 }}
         />
       </section>
+      <Modal
+        open={Boolean(detailRun)}
+        title={detailRun ? `同步任务 ${detailRun.id} 错误详情` : '错误详情'}
+        width={820}
+        footer={[
+          <Button key="copy" onClick={() => copyRunDetail(detailRun)}>
+            复制详情
+          </Button>,
+          <Button key="close" type="primary" onClick={() => setDetailRun(null)}>
+            关闭
+          </Button>
+        ]}
+        onCancel={() => setDetailRun(null)}
+      >
+        <div className="sync-detail-grid">
+          <Typography.Text type="secondary">数据集</Typography.Text>
+          <Typography.Text>{detailRun?.dataset || '-'}</Typography.Text>
+          <Typography.Text type="secondary">状态</Typography.Text>
+          <Typography.Text>{detailRun?.status || '-'}</Typography.Text>
+          <Typography.Text type="secondary">参数</Typography.Text>
+          <pre className="sync-detail-block">{formatJson(detailRun?.params_json)}</pre>
+          <Typography.Text type="secondary">错误</Typography.Text>
+          <pre className="sync-detail-block error">{detailRun?.error_message || '-'}</pre>
+        </div>
+      </Modal>
     </main>
   );
+}
+
+function formatJson(value?: string | null) {
+  if (!value) {
+    return '-';
+  }
+  try {
+    return JSON.stringify(JSON.parse(value), null, 2);
+  } catch {
+    return value;
+  }
+}
+
+function copyRunDetail(run: SyncRun | null) {
+  if (!run) {
+    return;
+  }
+  const content = [
+    `任务ID: ${run.id}`,
+    `数据集: ${run.dataset}`,
+    `状态: ${run.status}`,
+    `行数: ${run.row_count}`,
+    `参数: ${formatJson(run.params_json)}`,
+    `错误: ${run.error_message || '-'}`
+  ].join('\n');
+  navigator.clipboard
+    .writeText(content)
+    .then(() => message.success('已复制错误详情'))
+    .catch(() => message.error('复制失败'));
 }
 
 export default SyncPage;
