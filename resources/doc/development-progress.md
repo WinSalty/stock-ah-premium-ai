@@ -114,6 +114,7 @@
   - `resources/doc/startup-guide.md`：完整启动、配置、验证和排错手册。
   - `resources/doc/phase-1-detailed-development-plan.md`：已同步当前实现口径，包括 `hk_daily` 禁用、官方 AH 比价主表、定时增量、长字段悬浮和东八区时间展示。
   - `resources/doc/ah-premium-review-and-display-design.md`：沉淀 A/H 溢价套现评审结论、官方主口径、自选股优先展示和后续落地优先级。
+  - `resources/doc/realtime-premium-and-wechat-push-plan.md`：沉淀实时 AH 溢价行情源、Qwen 联网搜索定位和个人微信推送落地方案。
   - `resources/doc/llm-knowledge/README.md`：沉淀 LLM 投资问答知识库分类、使用原则和新增材料登记方式。
 - 非真实功能测试资产：
   - 后端公式单元测试。
