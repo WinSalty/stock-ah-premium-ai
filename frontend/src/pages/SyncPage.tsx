@@ -1,8 +1,10 @@
 import {
+  Alert,
   Button,
   DatePicker,
   Form,
   Input,
+  InputNumber,
   Modal,
   Popover,
   Select,
@@ -18,12 +20,18 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import dayjs from 'dayjs';
 import { useState } from 'react';
 import PageHeader from '../components/PageHeader';
-import { createSyncRun, fetchDatasets, fetchSyncRuns } from '../api/sync';
-import type { SyncRun, SyncRunCreate } from '../types/domain';
+import {
+  createAhPremiumSyncBatch,
+  createSyncRun,
+  fetchDatasets,
+  fetchSyncRuns
+} from '../api/sync';
+import type { SyncBatchCreate, SyncRun, SyncRunCreate, SyncRunFilters } from '../types/domain';
 import { importCsv, type ImportKind } from '../api/imports';
 
 interface SyncFormValues {
   dataset: string;
+  mode?: 'manual' | 'incremental' | 'full';
   trade_date?: dayjs.Dayjs;
   range?: [dayjs.Dayjs, dayjs.Dayjs];
   ts_code?: string;
@@ -35,6 +43,18 @@ interface ImportFormValues {
   content: string;
 }
 
+interface BatchFormValues {
+  mode: 'incremental' | 'full';
+  range?: [dayjs.Dayjs, dayjs.Dayjs];
+}
+
+interface RunFilterValues {
+  dataset?: string;
+  status?: string;
+  range?: [dayjs.Dayjs, dayjs.Dayjs];
+  limit?: number;
+}
+
 /**
  * 数据同步页面。
  * 创建日期：2026-05-04
@@ -42,11 +62,19 @@ interface ImportFormValues {
  */
 function SyncPage() {
   const [form] = Form.useForm<SyncFormValues>();
+  const [batchForm] = Form.useForm<BatchFormValues>();
+  const [filterForm] = Form.useForm<RunFilterValues>();
   const [importForm] = Form.useForm<ImportFormValues>();
   const [detailRun, setDetailRun] = useState<SyncRun | null>(null);
+  const [runFilters, setRunFilters] = useState<SyncRunFilters>({ limit: 50 });
   const queryClient = useQueryClient();
   const datasets = useQuery({ queryKey: ['datasets'], queryFn: fetchDatasets });
-  const runs = useQuery({ queryKey: ['sync-runs'], queryFn: fetchSyncRuns });
+  const runs = useQuery({
+    queryKey: ['sync-runs', runFilters],
+    queryFn: () => fetchSyncRuns(runFilters)
+  });
+  const selectedDataset = Form.useWatch('dataset', form);
+  const selectedDatasetInfo = datasets.data?.find((item) => item.name === selectedDataset);
   const mutation = useMutation({
     mutationFn: createSyncRun,
     onSuccess: (run) => {
@@ -54,6 +82,15 @@ function SyncPage() {
       queryClient.invalidateQueries({ queryKey: ['sync-runs'] });
     },
     onError: (error) => message.error(error instanceof Error ? error.message : '同步失败')
+  });
+  const batchMutation = useMutation({
+    mutationFn: createAhPremiumSyncBatch,
+    onSuccess: (batchRuns) => {
+      const failedCount = batchRuns.filter((item) => item.status === 'FAILED').length;
+      message.success(`一键同步完成：${batchRuns.length} 个任务，失败 ${failedCount} 个`);
+      queryClient.invalidateQueries({ queryKey: ['sync-runs'] });
+    },
+    onError: (error) => message.error(error instanceof Error ? error.message : '一键同步失败')
   });
   const importMutation = useMutation({
     mutationFn: (values: ImportFormValues) => importCsv(values.kind, values.content),
@@ -67,6 +104,7 @@ function SyncPage() {
   const onFinish = (values: SyncFormValues) => {
     const payload: SyncRunCreate = {
       dataset: values.dataset,
+      mode: values.mode || 'manual',
       trade_date: values.trade_date?.format('YYYY-MM-DD'),
       start_date: values.range?.[0]?.format('YYYY-MM-DD'),
       end_date: values.range?.[1]?.format('YYYY-MM-DD'),
@@ -74,6 +112,25 @@ function SyncPage() {
       type: values.type
     };
     mutation.mutate(payload);
+  };
+
+  const onBatchFinish = (values: BatchFormValues) => {
+    const payload: SyncBatchCreate = {
+      mode: values.mode,
+      start_date: values.range?.[0]?.format('YYYY-MM-DD'),
+      end_date: values.range?.[1]?.format('YYYY-MM-DD')
+    };
+    batchMutation.mutate(payload);
+  };
+
+  const onFilterFinish = (values: RunFilterValues) => {
+    setRunFilters({
+      dataset: values.dataset,
+      status: values.status,
+      start_date: values.range?.[0]?.format('YYYY-MM-DD'),
+      end_date: values.range?.[1]?.format('YYYY-MM-DD'),
+      limit: values.limit || 50
+    });
   };
 
   return (
@@ -96,51 +153,111 @@ function SyncPage() {
               key: 'sync',
               label: '接口同步',
               children: (
-                <Form form={form} layout="vertical" onFinish={onFinish}>
-                  <div className="sync-form-grid">
-                    <Form.Item
-                      label="数据集"
-                      name="dataset"
-                      rules={[{ required: true, message: '请选择数据集' }]}
-                    >
-                      <Select
-                        placeholder="选择数据集"
-                        loading={datasets.isLoading}
-                        options={datasets.data?.map((item) => ({ value: item.name, label: item.label }))}
-                      />
-                    </Form.Item>
-                    <Form.Item label="交易日" name="trade_date">
-                      <DatePicker className="full-width" />
-                    </Form.Item>
-                    <Form.Item label="日期范围" name="range">
-                      <DatePicker.RangePicker className="full-width" />
-                    </Form.Item>
-                    <Form.Item label="代码" name="ts_code">
-                      <Input placeholder="如 600000.SH" />
-                    </Form.Item>
-                    <Form.Item label="通道" name="type">
-                      <Select
-                        allowClear
-                        options={[
-                          { value: 'SH_HK', label: 'SH_HK' },
-                          { value: 'SZ_HK', label: 'SZ_HK' },
-                          { value: 'HK_SH', label: 'HK_SH' },
-                          { value: 'HK_SZ', label: 'HK_SZ' }
-                        ]}
-                      />
-                    </Form.Item>
-                    <Form.Item label=" ">
-                      <Button
-                        type="primary"
-                        htmlType="submit"
-                        icon={<Play size={16} />}
-                        loading={mutation.isPending}
+                <Space direction="vertical" size={16} className="full-width">
+                  <Alert
+                    type="info"
+                    showIcon
+                    message="同步说明"
+                    description="建议先用一键增量同步补齐 AH 溢价所需数据；需要重建本地数据时选择一键全量重跑。单个数据集也支持按交易日、日期范围或代码同步，行情类全市场范围会按日拆分请求。"
+                  />
+                  <Form
+                    form={batchForm}
+                    layout="vertical"
+                    onFinish={onBatchFinish}
+                    initialValues={{ mode: 'incremental' }}
+                  >
+                    <div className="sync-batch-grid">
+                      <Form.Item label="一键模式" name="mode" rules={[{ required: true }]}>
+                        <Select
+                          options={[
+                            { value: 'incremental', label: '增量同步' },
+                            { value: 'full', label: '全量重跑' }
+                          ]}
+                        />
+                      </Form.Item>
+                      <Form.Item label="覆盖日期范围" name="range">
+                        <DatePicker.RangePicker className="full-width" />
+                      </Form.Item>
+                      <Form.Item label=" ">
+                        <Button
+                          type="primary"
+                          htmlType="submit"
+                          icon={<Play size={16} />}
+                          loading={batchMutation.isPending}
+                        >
+                          一键同步 AH 所需数据
+                        </Button>
+                      </Form.Item>
+                    </div>
+                  </Form>
+                  <Form
+                    form={form}
+                    layout="vertical"
+                    onFinish={onFinish}
+                    initialValues={{ mode: 'manual' }}
+                  >
+                    <div className="sync-form-grid">
+                      <Form.Item
+                        label="数据集"
+                        name="dataset"
+                        rules={[{ required: true, message: '请选择数据集' }]}
                       >
-                        执行同步
-                      </Button>
-                    </Form.Item>
-                  </div>
-                </Form>
+                        <Select
+                          placeholder="选择数据集"
+                          loading={datasets.isLoading}
+                          options={datasets.data?.map((item) => ({
+                            value: item.name,
+                            label: item.label
+                          }))}
+                        />
+                      </Form.Item>
+                      <Form.Item label="同步模式" name="mode">
+                        <Select
+                          options={[
+                            { value: 'manual', label: '按输入参数' },
+                            { value: 'incremental', label: '增量补齐' },
+                            { value: 'full', label: '全量重跑' }
+                          ]}
+                        />
+                      </Form.Item>
+                      <Form.Item label="交易日" name="trade_date">
+                        <DatePicker className="full-width" />
+                      </Form.Item>
+                      <Form.Item label="日期范围" name="range">
+                        <DatePicker.RangePicker className="full-width" />
+                      </Form.Item>
+                      <Form.Item label="代码" name="ts_code">
+                        <Input placeholder="如 600000.SH" />
+                      </Form.Item>
+                      <Form.Item label="通道" name="type">
+                        <Select
+                          allowClear
+                          options={[
+                            { value: 'SH_HK', label: 'SH_HK' },
+                            { value: 'SZ_HK', label: 'SZ_HK' },
+                            { value: 'HK_SH', label: 'HK_SH' },
+                            { value: 'HK_SZ', label: 'HK_SZ' }
+                          ]}
+                        />
+                      </Form.Item>
+                      <Form.Item label=" ">
+                        <Button
+                          type="primary"
+                          htmlType="submit"
+                          icon={<Play size={16} />}
+                          loading={mutation.isPending}
+                        >
+                          执行同步
+                        </Button>
+                      </Form.Item>
+                    </div>
+                    {selectedDatasetInfo ? (
+                      <Typography.Text type="secondary" className="sync-strategy-text">
+                        {selectedDatasetInfo.sync_strategy}
+                      </Typography.Text>
+                    ) : null}
+                  </Form>
+                </Space>
               )
             },
             {
@@ -188,7 +305,61 @@ function SyncPage() {
       </section>
 
       <section className="panel">
-        <div className="panel-title">任务记录</div>
+        <div className="query-result-head">
+          <div className="panel-title">任务记录</div>
+          <Button onClick={() => runs.refetch()} loading={runs.isFetching}>
+            刷新记录
+          </Button>
+        </div>
+        <Form
+          form={filterForm}
+          layout="vertical"
+          initialValues={{ limit: 50 }}
+          onFinish={onFilterFinish}
+        >
+          <div className="sync-run-filter-grid">
+            <Form.Item label="数据集" name="dataset">
+              <Select
+                allowClear
+                placeholder="全部"
+                loading={datasets.isLoading}
+                options={datasets.data?.map((item) => ({ value: item.name, label: item.label }))}
+              />
+            </Form.Item>
+            <Form.Item label="状态" name="status">
+              <Select
+                allowClear
+                placeholder="全部"
+                options={[
+                  { value: 'SUCCESS', label: 'SUCCESS' },
+                  { value: 'FAILED', label: 'FAILED' },
+                  { value: 'RUNNING', label: 'RUNNING' }
+                ]}
+              />
+            </Form.Item>
+            <Form.Item label="开始时间" name="range">
+              <DatePicker.RangePicker className="full-width" />
+            </Form.Item>
+            <Form.Item label="条数" name="limit">
+              <InputNumber min={1} max={200} className="full-width" />
+            </Form.Item>
+            <Form.Item label=" ">
+              <Space>
+                <Button type="primary" htmlType="submit">
+                  筛选
+                </Button>
+                <Button
+                  onClick={() => {
+                    filterForm.resetFields();
+                    setRunFilters({ limit: 50 });
+                  }}
+                >
+                  重置
+                </Button>
+              </Space>
+            </Form.Item>
+          </div>
+        </Form>
         <Table<SyncRun>
           rowKey="id"
           loading={runs.isLoading}

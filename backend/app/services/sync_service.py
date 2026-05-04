@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
@@ -45,6 +45,29 @@ class DatasetSpec:
     rename_map: dict[str, str] | None = None
     default_params: dict[str, Any] | None = None
     description: str = ""
+    supports_date_range: bool = False
+    split_by_trade_date: bool = False
+    full_start_date: date | None = None
+    full_end_offset_days: int = 0
+    incremental_overlap_days: int = 2
+
+
+AH_HISTORY_START = date(2025, 8, 12)
+CALENDAR_HISTORY_START = date(2025, 1, 1)
+CALENDAR_FUTURE_DAYS = 370
+CONTROL_PARAM_KEYS = {"mode"}
+CORE_SYNC_PLAN: tuple[tuple[str, dict[str, Any]], ...] = (
+    ("stock_basic", {}),
+    ("hk_basic", {}),
+    ("trade_cal", {}),
+    ("hk_tradecal", {}),
+    ("ah_comparison", {}),
+    ("stock_hsgt", {"type": "SH_HK"}),
+    ("stock_hsgt", {"type": "SZ_HK"}),
+    ("a_daily", {}),
+    ("hk_daily", {}),
+    ("fx_daily", {}),
+)
 
 
 DATASET_SPECS: dict[str, DatasetSpec] = {
@@ -81,6 +104,9 @@ DATASET_SPECS: dict[str, DatasetSpec] = {
         date_fields=("cal_date", "pretrade_date"),
         default_params={"exchange": "SSE"},
         description="同步 A 股交易日历。",
+        supports_date_range=True,
+        full_start_date=CALENDAR_HISTORY_START,
+        full_end_offset_days=CALENDAR_FUTURE_DAYS,
     ),
     "a_daily": DatasetSpec(
         name="a_daily",
@@ -114,6 +140,9 @@ DATASET_SPECS: dict[str, DatasetSpec] = {
         ),
         rename_map={"change": "change_amount"},
         description="同步 A 股未复权日线行情。",
+        supports_date_range=True,
+        split_by_trade_date=True,
+        full_start_date=AH_HISTORY_START,
     ),
     "hk_basic": DatasetSpec(
         name="hk_basic",
@@ -147,6 +176,9 @@ DATASET_SPECS: dict[str, DatasetSpec] = {
         model=HKTradeCalendar,
         date_fields=("cal_date", "pretrade_date"),
         description="同步港股交易日历。",
+        supports_date_range=True,
+        full_start_date=CALENDAR_HISTORY_START,
+        full_end_offset_days=CALENDAR_FUTURE_DAYS,
     ),
     "hk_daily": DatasetSpec(
         name="hk_daily",
@@ -180,6 +212,9 @@ DATASET_SPECS: dict[str, DatasetSpec] = {
         ),
         rename_map={"change": "change_amount"},
         description="同步港股日线行情。",
+        supports_date_range=True,
+        split_by_trade_date=True,
+        full_start_date=AH_HISTORY_START,
     ),
     "stock_hsgt": DatasetSpec(
         name="stock_hsgt",
@@ -190,6 +225,9 @@ DATASET_SPECS: dict[str, DatasetSpec] = {
         date_fields=("trade_date",),
         rename_map={"type": "connect_type"},
         description="同步沪股通、深股通、港股通名单。",
+        supports_date_range=True,
+        split_by_trade_date=True,
+        full_start_date=AH_HISTORY_START,
     ),
     "fx_daily": DatasetSpec(
         name="fx_daily",
@@ -202,6 +240,8 @@ DATASET_SPECS: dict[str, DatasetSpec] = {
         rename_map={"trade_date": "rate_date", "ts_code": "raw_ts_code"},
         default_params={"exchange": "FXCM"},
         description="同步外汇日线，默认使用 FXCM。",
+        supports_date_range=True,
+        full_start_date=AH_HISTORY_START,
     ),
     "ah_comparison": DatasetSpec(
         name="ah_comparison",
@@ -240,6 +280,9 @@ DATASET_SPECS: dict[str, DatasetSpec] = {
             "pct_chg": "a_pct_chg",
         },
         description="同步 Tushare 官方 AH 比价，用于配对和校验。",
+        supports_date_range=True,
+        split_by_trade_date=True,
+        full_start_date=AH_HISTORY_START,
     ),
 }
 
@@ -259,7 +302,7 @@ class SyncService:
         self.repository = UpsertRepository(db)
         self.client = TushareClient(get_settings())
 
-    def list_datasets(self) -> list[dict[str, str]]:
+    def list_datasets(self) -> list[dict[str, Any]]:
         """列出可同步数据集。
 
         创建日期：2026-05-04
@@ -267,7 +310,18 @@ class SyncService:
         """
 
         return [
-            {"name": spec.name, "label": spec.label, "description": spec.description}
+            {
+                "name": spec.name,
+                "label": spec.label,
+                "description": spec.description,
+                "supports_date_range": spec.supports_date_range,
+                "supports_incremental": True,
+                "supports_full_sync": True,
+                "default_full_start_date": spec.full_start_date.isoformat()
+                if spec.full_start_date
+                else None,
+                "sync_strategy": self._sync_strategy_text(spec),
+            }
             for spec in DATASET_SPECS.values()
         ]
 
@@ -281,6 +335,7 @@ class SyncService:
         if dataset not in DATASET_SPECS:
             raise ValueError(f"不支持的数据集：{dataset}")
         spec = DATASET_SPECS[dataset]
+        params = self._resolve_mode_params(spec, params)
         run = SyncRun(
             dataset=dataset,
             params_json=json.dumps(params, ensure_ascii=False, default=str),
@@ -307,6 +362,26 @@ class SyncService:
             self.db.refresh(run)
             return run
 
+    def run_core_plan(
+        self,
+        mode: str = "incremental",
+        start_date: date | None = None,
+        end_date: date | None = None,
+    ) -> list[SyncRun]:
+        """按 AH 溢价分析所需数据集执行一键同步。
+
+        创建日期：2026-05-04
+        author: sunshengxian
+        """
+
+        runs: list[SyncRun] = []
+        base_params = {"mode": mode, "start_date": start_date, "end_date": end_date}
+        for dataset, dataset_params in CORE_SYNC_PLAN:
+            params = {**base_params, **dataset_params}
+            params = {key: value for key, value in params.items() if value is not None}
+            runs.append(self.run_sync(dataset, params))
+        return runs
+
     def _sync_spec(self, spec: DatasetSpec, params: dict[str, Any]) -> int:
         merged_params = self._build_params(spec, params)
         if spec.name == "stock_hsgt" and "type" not in merged_params:
@@ -315,6 +390,14 @@ class SyncService:
             return sum(
                 self._sync_spec(spec, {**params, "ts_code": item})
                 for item in DEFAULT_FX_CODES
+            )
+        if self._should_split_by_trade_date(spec, params):
+            return sum(
+                self._sync_spec(spec, {**self._without_range_params(params), "trade_date": item})
+                for item in self._iter_dates(
+                    self._coerce_date(params.get("start_date")),
+                    self._coerce_date(params.get("end_date")),
+                )
             )
 
         result = self.client.query(spec.api_name, params=merged_params, fields=spec.fields)
@@ -333,11 +416,101 @@ class SyncService:
         for key, value in params.items():
             if value is None or value == "":
                 continue
+            if key in CONTROL_PARAM_KEYS:
+                continue
             if key in {"start_date", "end_date", "trade_date"}:
                 api_params[key] = format_tushare_date(value)
             else:
                 api_params[key] = value
         return api_params
+
+    def _resolve_mode_params(self, spec: DatasetSpec, params: dict[str, Any]) -> dict[str, Any]:
+        params = {key: value for key, value in params.items() if value is not None and value != ""}
+        mode = str(params.get("mode") or "manual")
+        params["mode"] = mode
+        if mode == "manual":
+            return params
+        if mode == "full":
+            return self._resolve_full_params(spec, params)
+        if mode == "incremental":
+            return self._resolve_incremental_params(spec, params)
+        raise ValueError(f"不支持的同步模式：{mode}")
+
+    def _resolve_full_params(self, spec: DatasetSpec, params: dict[str, Any]) -> dict[str, Any]:
+        if not spec.supports_date_range:
+            return self._without_range_params(params)
+        params = dict(params)
+        params["start_date"] = self._coerce_date(params.get("start_date")) or spec.full_start_date
+        params["end_date"] = self._coerce_date(params.get("end_date")) or self._default_end_date(
+            spec
+        )
+        params.pop("trade_date", None)
+        return params
+
+    def _resolve_incremental_params(
+        self, spec: DatasetSpec, params: dict[str, Any]
+    ) -> dict[str, Any]:
+        if not spec.supports_date_range:
+            return self._without_range_params(params)
+        params = dict(params)
+        requested_start = self._coerce_date(params.get("start_date"))
+        requested_end = self._coerce_date(params.get("end_date")) or self._default_end_date(spec)
+        checkpoint = self._get_checkpoint(spec.name, self._scope_key(params))
+        checkpoint_start = None
+        if checkpoint and checkpoint.last_success_date:
+            checkpoint_start = checkpoint.last_success_date - timedelta(
+                days=spec.incremental_overlap_days
+            )
+        params["start_date"] = requested_start or checkpoint_start or spec.full_start_date
+        params["end_date"] = requested_end
+        params.pop("trade_date", None)
+        return params
+
+    def _sync_strategy_text(self, spec: DatasetSpec) -> str:
+        if not spec.supports_date_range:
+            return "基础清单接口不带日期范围，增量和全量都会刷新当前全表。"
+        start = spec.full_start_date.isoformat() if spec.full_start_date else "自定义起点"
+        if spec.split_by_trade_date:
+            return f"支持日期范围；全量默认从 {start} 起按交易日拆分请求，避免触发单次返回上限。"
+        return f"支持日期范围；全量默认从 {start} 起按接口范围参数请求。"
+
+    def _get_checkpoint(self, dataset: str, scope_key: str) -> SyncCheckpoint | None:
+        return self.db.get(SyncCheckpoint, {"dataset": dataset, "scope_key": scope_key})
+
+    def _scope_key(self, params: dict[str, Any]) -> str:
+        return str(params.get("ts_code") or params.get("type") or "default")
+
+    def _default_end_date(self, spec: DatasetSpec) -> date:
+        return date.today() + timedelta(days=spec.full_end_offset_days)
+
+    def _without_range_params(self, params: dict[str, Any]) -> dict[str, Any]:
+        return {
+            key: value
+            for key, value in params.items()
+            if key not in {"start_date", "end_date", "trade_date"}
+        }
+
+    def _should_split_by_trade_date(self, spec: DatasetSpec, params: dict[str, Any]) -> bool:
+        if not spec.split_by_trade_date or params.get("trade_date"):
+            return False
+        start_date = self._coerce_date(params.get("start_date"))
+        end_date = self._coerce_date(params.get("end_date"))
+        if start_date is None or end_date is None:
+            return False
+        return not (spec.name in {"a_daily", "hk_daily"} and params.get("ts_code"))
+
+    def _iter_dates(self, start_date: date | None, end_date: date | None) -> list[date]:
+        if start_date is None or end_date is None or start_date > end_date:
+            return []
+        days = (end_date - start_date).days
+        return [start_date + timedelta(days=offset) for offset in range(days + 1)]
+
+    def _coerce_date(self, value: date | str | None) -> date | None:
+        if value is None or value == "":
+            return None
+        if isinstance(value, date):
+            return value
+        return parse_tushare_date(value.replace("-", ""))
 
     def _normalize_row(self, spec: DatasetSpec, row: dict[str, Any]) -> dict[str, Any]:
         rename_map = spec.rename_map or {}
@@ -390,8 +563,8 @@ class SyncService:
         trade_date = parse_tushare_date(params.get("trade_date")) or parse_tushare_date(
             params.get("end_date")
         )
-        scope_key = str(params.get("ts_code") or params.get("type") or "default")
-        checkpoint = self.db.get(SyncCheckpoint, {"dataset": dataset, "scope_key": scope_key})
+        scope_key = self._scope_key(params)
+        checkpoint = self._get_checkpoint(dataset, scope_key)
         if checkpoint is None:
             checkpoint = SyncCheckpoint(dataset=dataset, scope_key=scope_key)
             self.db.add(checkpoint)

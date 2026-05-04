@@ -2,6 +2,11 @@ export interface DatasetInfo {
   name: string;
   label: string;
   description: string;
+  supports_date_range: boolean;
+  supports_incremental: boolean;
+  supports_full_sync: boolean;
+  default_full_start_date: string | null;
+  sync_strategy: string;
 }
 
 export interface SyncRun {
@@ -17,11 +22,26 @@ export interface SyncRun {
 
 export interface SyncRunCreate {
   dataset: string;
+  mode?: 'manual' | 'incremental' | 'full';
   start_date?: string;
   end_date?: string;
   trade_date?: string;
   ts_code?: string;
   type?: string;
+}
+
+export interface SyncBatchCreate {
+  mode: 'incremental' | 'full';
+  start_date?: string;
+  end_date?: string;
+}
+
+export interface SyncRunFilters {
+  dataset?: string;
+  status?: string;
+  start_date?: string;
+  end_date?: string;
+  limit?: number;
 }
 
 export interface PremiumItem {

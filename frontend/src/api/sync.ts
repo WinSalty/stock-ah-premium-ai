@@ -1,16 +1,35 @@
 import { requestJson } from './client';
-import type { DatasetInfo, SyncRun, SyncRunCreate } from '../types/domain';
+import type {
+  DatasetInfo,
+  SyncBatchCreate,
+  SyncRun,
+  SyncRunCreate,
+  SyncRunFilters
+} from '../types/domain';
 
 export function fetchDatasets() {
   return requestJson<DatasetInfo[]>('/api/datasets');
 }
 
-export function fetchSyncRuns() {
-  return requestJson<SyncRun[]>('/api/sync/runs');
+export function fetchSyncRuns(filters: SyncRunFilters = {}) {
+  const search = new URLSearchParams();
+  Object.entries(filters).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && value !== '') {
+      search.set(key, String(value));
+    }
+  });
+  return requestJson<SyncRun[]>(`/api/sync/runs?${search.toString()}`);
 }
 
 export function createSyncRun(payload: SyncRunCreate) {
   return requestJson<SyncRun>('/api/sync/runs', {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  });
+}
+
+export function createAhPremiumSyncBatch(payload: SyncBatchCreate) {
+  return requestJson<SyncRun[]>('/api/sync/batches/ah-premium', {
     method: 'POST',
     body: JSON.stringify(payload)
   });

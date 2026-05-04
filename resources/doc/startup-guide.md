@@ -208,22 +208,34 @@ curl -X POST http://127.0.0.1:8000/api/manual-import/ah-pairs/csv \
 
 ## 11. 数据同步顺序
 
-建议先用当前 Token 验证基础接口：
+同步入口在前端“数据同步 / 接口同步”页。
+
+推荐优先使用“一键模式”：
+
+1. `增量同步`：按各数据集 checkpoint 自动补齐最近缺口，并保留 2 天重叠窗口以覆盖延迟修正。
+2. `全量重跑`：按本项目默认历史起点重新请求并 upsert，本地已有记录会被更新，不会产生重复数据。
+
+如果需要人工控制范围，可在单数据集同步里选择“按输入参数”，再填写交易日、日期范围、代码或港股通通道。行情类全市场日期范围会按交易日拆分请求；指定单个 `ts_code` 时会优先用接口原生日期范围。
+
+默认一键同步会按 AH 溢价计算所需顺序执行：
 
 1. `stock_basic`
-2. `trade_cal`
-3. `hk_basic`
+2. `hk_basic`
+3. `trade_cal`
 4. `hk_tradecal`
-
-若权限允许，再验证：
-
-1. `stock_hsgt`
-2. `a_daily`
-3. `hk_daily`
-4. `fx_daily`
 5. `ah_comparison`
+6. `stock_hsgt` 的 `SH_HK`、`SZ_HK`
+7. `a_daily`
+8. `hk_daily`
+9. `fx_daily`
 
-同步入口在前端“数据同步 / 接口同步”页。
+默认全量起点：
+
+- `ah_comparison`、`stock_hsgt`、`a_daily`、`hk_daily`、`fx_daily`：`2025-08-12`。
+- `trade_cal`、`hk_tradecal`：`2025-01-01`，并额外同步未来约 1 年日历。
+- `stock_basic`、`hk_basic`：基础清单接口不带日期范围，增量和全量都会刷新当前全表。
+
+任务记录可按数据集、状态和开始时间范围筛选；权限不足或接口失败会在记录里显示为 `FAILED`，错误详情可悬浮或点击查看。
 
 ## 12. 常见问题
 

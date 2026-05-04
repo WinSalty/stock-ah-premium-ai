@@ -124,6 +124,25 @@ body {
   align-items: end;
 }
 
+.sync-batch-grid {
+  display: grid;
+  grid-template-columns: minmax(180px, 220px) minmax(260px, 360px) auto;
+  gap: 12px;
+  align-items: end;
+}
+
+.sync-run-filter-grid {
+  display: grid;
+  grid-template-columns: minmax(160px, 220px) minmax(140px, 180px) minmax(260px, 360px) minmax(100px, 120px) auto;
+  gap: 12px;
+  align-items: end;
+  margin-bottom: 12px;
+}
+
+.sync-strategy-text {
+  display: block;
+}
+
 .manual-import-grid {
   display: grid;
   grid-template-columns: minmax(180px, 240px) minmax(300px, 1fr) auto;
@@ -327,6 +346,8 @@ body {
   }
 
   .sync-form-grid,
+  .sync-batch-grid,
+  .sync-run-filter-grid,
   .premium-filter-grid {
     grid-template-columns: repeat(2, minmax(160px, 1fr));
   }
@@ -350,6 +371,8 @@ body {
   }
 
   .sync-form-grid,
+  .sync-batch-grid,
+  .sync-run-filter-grid,
   .premium-filter-grid,
   .manual-import-grid,
   .query-filter-grid,
