@@ -11,8 +11,10 @@ from app.schemas.auth import (
     InvitationCreateRequest,
     InvitationResponse,
     LoginRequest,
+    ProfileUpdateRequest,
     RegisterRequest,
     UserResponse,
+    UserUpdateRequest,
 )
 from app.services.auth_service import AuthError, AuthService
 
@@ -62,6 +64,55 @@ def current_user(user: CurrentUser, db: DbSession) -> UserResponse:
     """
 
     return AuthService(db).user_response(user)
+
+
+@router.put("/auth/profile", response_model=UserResponse)
+def update_profile(
+    payload: ProfileUpdateRequest,
+    db: DbSession,
+    user: CurrentUser,
+) -> UserResponse:
+    """更新当前用户个人资料。
+
+    创建日期：2026-05-04
+    author: sunshengxian
+    """
+
+    service = AuthService(db)
+    return service.user_response(service.update_profile(user, payload))
+
+
+@router.get("/auth/users", response_model=list[UserResponse])
+def list_users(db: DbSession, admin_user: AdminUser) -> list[UserResponse]:
+    """管理员查询用户列表。
+
+    创建日期：2026-05-04
+    author: sunshengxian
+    """
+
+    service = AuthService(db)
+    return [service.user_response(user) for user in service.list_users()]
+
+
+@router.patch("/auth/users/{user_id}", response_model=UserResponse)
+def update_user(
+    user_id: int,
+    payload: UserUpdateRequest,
+    db: DbSession,
+    admin_user: AdminUser,
+) -> UserResponse:
+    """管理员编辑用户基础信息和菜单权限。
+
+    创建日期：2026-05-04
+    author: sunshengxian
+    """
+
+    service = AuthService(db)
+    try:
+        user = service.update_user(user_id, payload)
+    except AuthError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return service.user_response(user)
 
 
 @router.post("/invitations", response_model=InvitationResponse)

@@ -8,6 +8,7 @@ import {
   LayoutDashboard,
   LogOut,
   TableProperties,
+  UserCircle,
   Users
 } from 'lucide-react';
 import OverviewPage from './pages/OverviewPage';
@@ -17,20 +18,12 @@ import ChatPage from './pages/ChatPage';
 import DataQueryPage from './pages/DataQueryPage';
 import AuthPage from './pages/AuthPage';
 import UserAdminPage from './pages/UserAdminPage';
+import ProfilePage from './pages/ProfilePage';
 import { fetchCurrentUser } from './api/auth';
 import { clearAuthToken, getAuthToken } from './api/client';
 import type { AuthTokenResponse, UserInfo } from './types/domain';
 
-type PageKey = 'overview' | 'sync' | 'query' | 'premium' | 'chat' | 'users';
-
-const pages: Record<PageKey, ReactNode> = {
-  overview: <OverviewPage />,
-  sync: <SyncPage />,
-  query: <DataQueryPage />,
-  premium: <PremiumPage />,
-  chat: <ChatPage />,
-  users: <UserAdminPage />
-};
+type PageKey = 'overview' | 'sync' | 'query' | 'premium' | 'chat' | 'users' | 'profile';
 
 const allMenuItems = [
   { key: 'overview', icon: <LayoutDashboard size={18} />, label: '总览' },
@@ -38,7 +31,8 @@ const allMenuItems = [
   { key: 'query', icon: <TableProperties size={18} />, label: '查询' },
   { key: 'premium', icon: <BarChart3 size={18} />, label: 'AH 机会筛选' },
   { key: 'chat', icon: <Bot size={18} />, label: '问答' },
-  { key: 'users', icon: <Users size={18} />, label: '用户权限' }
+  { key: 'users', icon: <Users size={18} />, label: '用户管理' },
+  { key: 'profile', icon: <UserCircle size={18} />, label: '个人信息' }
 ];
 
 /**
@@ -51,6 +45,15 @@ function App() {
   const [page, setPage] = useState<PageKey>('overview');
   const [user, setUser] = useState<UserInfo | null>(null);
   const [isCheckingAuth, setIsCheckingAuth] = useState(Boolean(getAuthToken()));
+  const pages: Partial<Record<PageKey, ReactNode>> = {
+    overview: <OverviewPage />,
+    sync: <SyncPage />,
+    query: <DataQueryPage />,
+    premium: <PremiumPage />,
+    chat: <ChatPage />,
+    users: user ? <UserAdminPage currentUser={user} onUserUpdated={setUser} /> : null,
+    profile: user ? <ProfilePage user={user} onUserUpdated={setUser} /> : null
+  };
   const menuItems = useMemo(() => {
     const permissions = new Set(user?.permissions || []);
     return allMenuItems.filter((item) => permissions.has(item.key));
@@ -122,13 +125,15 @@ function App() {
         />
         <div className="app-user-block">
           <div>
-            <Typography.Text strong>{user.username}</Typography.Text>
+            <Typography.Text strong>{user.display_name || user.username}</Typography.Text>
             <Typography.Text type="secondary">{user.role === 'ADMIN' ? '管理员' : '普通用户'}</Typography.Text>
           </div>
           <Button type="text" icon={<LogOut size={16} />} onClick={onLogout} />
         </div>
       </Layout.Sider>
-      <Layout.Content className="app-content">{pages[permittedPage ? page : (menuItems[0]?.key as PageKey)]}</Layout.Content>
+      <Layout.Content className="app-content">
+        {menuItems.length ? pages[permittedPage ? page : (menuItems[0]?.key as PageKey)] : null}
+      </Layout.Content>
     </Layout>
   );
 }

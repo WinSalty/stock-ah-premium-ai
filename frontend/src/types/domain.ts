@@ -14,6 +14,10 @@ export interface UserInfo {
   username: string;
   role: 'ADMIN' | 'USER' | string;
   is_active: boolean;
+  display_name: string | null;
+  email: string | null;
+  phone: string | null;
+  bio: string | null;
   permissions: string[];
 }
 
@@ -45,6 +49,23 @@ export interface InvitationResponse {
   is_active: boolean;
   created_at: string;
   updated_at: string;
+}
+
+export interface UserUpdateRequest {
+  role?: 'ADMIN' | 'USER' | string;
+  is_active?: boolean;
+  display_name?: string | null;
+  email?: string | null;
+  phone?: string | null;
+  bio?: string | null;
+  permissions?: string[];
+}
+
+export interface ProfileUpdateRequest {
+  display_name?: string | null;
+  email?: string | null;
+  phone?: string | null;
+  bio?: string | null;
 }
 
 export interface SyncRun {

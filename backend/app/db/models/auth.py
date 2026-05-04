@@ -22,6 +22,11 @@ class AppUser(TimestampMixin, Base):
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     role: Mapped[str] = mapped_column(String(32), nullable=False, default="USER")
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    display_name: Mapped[str | None] = mapped_column(String(64))
+    email: Mapped[str | None] = mapped_column(String(128))
+    phone: Mapped[str | None] = mapped_column(String(32))
+    bio: Mapped[str | None] = mapped_column(Text)
+    menu_permissions_json: Mapped[str | None] = mapped_column(Text)
 
 
 class InvitationCode(TimestampMixin, Base):

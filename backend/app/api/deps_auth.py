@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.db.models.auth import AppUser
 from app.db.session import get_db
-from app.services.auth_service import ROLE_ADMIN, ROLE_PERMISSIONS, AuthError, AuthService
+from app.services.auth_service import AuthError, AuthService
 
 DbSession = Annotated[Session, Depends(get_db)]
 
@@ -39,16 +39,16 @@ def get_current_user(
 CurrentUser = Annotated[AppUser, Depends(get_current_user)]
 
 
-def require_permission(permission: str) -> Callable[[CurrentUser], AppUser]:
+def require_permission(permission: str) -> Callable[..., AppUser]:
     """构造权限依赖。
 
     创建日期：2026-05-04
     author: sunshengxian
     """
 
-    def dependency(current_user: CurrentUser) -> AppUser:
-        permissions = ROLE_PERMISSIONS.get(current_user.role, [])
-        if current_user.role != ROLE_ADMIN and permission not in permissions:
+    def dependency(current_user: CurrentUser, db: DbSession) -> AppUser:
+        permissions = AuthService(db).get_user_permissions(current_user)
+        if permission not in permissions:
             raise HTTPException(status_code=403, detail="没有访问权限")
         return current_user
 

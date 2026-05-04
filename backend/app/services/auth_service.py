@@ -13,14 +13,24 @@ from sqlalchemy.orm import Session
 
 from app.core.config import Settings, get_settings
 from app.db.models.auth import AppUser, InvitationCode
-from app.schemas.auth import UserResponse
+from app.schemas.auth import ProfileUpdateRequest, UserResponse, UserUpdateRequest
 
 ROLE_ADMIN = "ADMIN"
 ROLE_USER = "USER"
 
-ROLE_PERMISSIONS: dict[str, list[str]] = {
-    ROLE_ADMIN: ["overview", "sync", "query", "premium", "chat", "users"],
-    ROLE_USER: ["overview", "premium", "chat"],
+ALL_MENU_PERMISSIONS: dict[str, str] = {
+    "overview": "总览",
+    "sync": "同步",
+    "query": "查询",
+    "premium": "AH 机会筛选",
+    "chat": "问答",
+    "users": "用户管理",
+    "profile": "个人信息",
+}
+
+DEFAULT_ROLE_PERMISSIONS: dict[str, list[str]] = {
+    ROLE_ADMIN: ["overview", "sync", "query", "premium", "chat", "users", "profile"],
+    ROLE_USER: ["overview", "premium", "chat", "profile"],
 }
 
 PASSWORD_HASH_ITERATIONS = 120_000
@@ -61,6 +71,10 @@ class AuthService:
             password_hash=self.hash_password(self.settings.default_admin_password),
             role=ROLE_ADMIN,
             is_active=True,
+            menu_permissions_json=json.dumps(
+                DEFAULT_ROLE_PERMISSIONS[ROLE_ADMIN],
+                ensure_ascii=False,
+            ),
         )
         self.db.add(user)
         self.db.commit()
@@ -107,6 +121,10 @@ class AuthService:
             password_hash=self.hash_password(password),
             role=ROLE_USER,
             is_active=True,
+            menu_permissions_json=json.dumps(
+                DEFAULT_ROLE_PERMISSIONS[ROLE_USER],
+                ensure_ascii=False,
+            ),
         )
         self.db.add(user)
         self.db.flush()
@@ -147,6 +165,60 @@ class AuthService:
             ).all()
         )
 
+    def list_users(self) -> list[AppUser]:
+        """查询应用用户列表。
+
+        创建日期：2026-05-04
+        author: sunshengxian
+        """
+
+        return list(self.db.scalars(select(AppUser).order_by(AppUser.id)).all())
+
+    def update_user(self, user_id: int, payload: UserUpdateRequest) -> AppUser:
+        """管理员更新用户角色、状态、资料和菜单权限。
+
+        创建日期：2026-05-04
+        author: sunshengxian
+        """
+
+        user = self.db.get(AppUser, user_id)
+        if user is None:
+            raise AuthError("用户不存在")
+        values = payload.model_dump(exclude_unset=True)
+        if "role" in values and values["role"] is not None:
+            role = values["role"].strip().upper()
+            if role not in {ROLE_ADMIN, ROLE_USER}:
+                raise AuthError("角色只能是 ADMIN 或 USER")
+            user.role = role
+        if "is_active" in values and values["is_active"] is not None:
+            user.is_active = values["is_active"]
+        for field in ("display_name", "email", "phone", "bio"):
+            if field in values:
+                setattr(user, field, self._normalize_optional_text(values[field]))
+        if "permissions" in values and values["permissions"] is not None:
+            permissions = self.sanitize_permissions(values["permissions"])
+            if not permissions:
+                raise AuthError("至少保留一个菜单权限")
+            user.menu_permissions_json = json.dumps(permissions, ensure_ascii=False)
+        self.db.commit()
+        self.db.refresh(user)
+        return user
+
+    def update_profile(self, user: AppUser, payload: ProfileUpdateRequest) -> AppUser:
+        """更新当前用户个人资料。
+
+        创建日期：2026-05-04
+        author: sunshengxian
+        """
+
+        values = payload.model_dump(exclude_unset=True)
+        for field in ("display_name", "email", "phone", "bio"):
+            if field in values:
+                setattr(user, field, self._normalize_optional_text(values[field]))
+        self.db.commit()
+        self.db.refresh(user)
+        return user
+
     def create_token(self, user: AppUser) -> str:
         """生成自签登录 token。
 
@@ -177,8 +249,40 @@ class AuthService:
             username=user.username,
             role=user.role,
             is_active=user.is_active,
-            permissions=ROLE_PERMISSIONS.get(user.role, ROLE_PERMISSIONS[ROLE_USER]),
+            display_name=user.display_name,
+            email=user.email,
+            phone=user.phone,
+            bio=user.bio,
+            permissions=self.get_user_permissions(user),
         )
+
+    def get_user_permissions(self, user: AppUser) -> list[str]:
+        """读取用户粒度菜单权限，缺省时回退到角色模板。
+
+        创建日期：2026-05-04
+        author: sunshengxian
+        """
+
+        if user.menu_permissions_json:
+            try:
+                permissions = json.loads(user.menu_permissions_json)
+            except json.JSONDecodeError:
+                permissions = []
+            if isinstance(permissions, list):
+                sanitized = self.sanitize_permissions([str(item) for item in permissions])
+                if sanitized:
+                    return sanitized
+        return list(DEFAULT_ROLE_PERMISSIONS.get(user.role, DEFAULT_ROLE_PERMISSIONS[ROLE_USER]))
+
+    def sanitize_permissions(self, permissions: list[str]) -> list[str]:
+        """过滤未知菜单权限并保持前端菜单顺序。
+
+        创建日期：2026-05-04
+        author: sunshengxian
+        """
+
+        requested = set(permissions)
+        return [key for key in ALL_MENU_PERMISSIONS if key in requested]
 
     def parse_token(self, token: str) -> dict[str, Any]:
         """校验并解析 token。
@@ -222,6 +326,12 @@ class AuthService:
             int(iterations),
         ).hex()
         return hmac.compare_digest(candidate, digest)
+
+    def _normalize_optional_text(self, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        return normalized or None
 
     def _signature(self, body: str) -> str:
         digest = hmac.new(

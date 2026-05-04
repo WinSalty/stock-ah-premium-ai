@@ -4,8 +4,10 @@ import type {
   InvitationCreateRequest,
   InvitationResponse,
   LoginRequest,
+  ProfileUpdateRequest,
   RegisterRequest,
-  UserInfo
+  UserInfo,
+  UserUpdateRequest
 } from '../types/domain';
 
 export function login(payload: LoginRequest) {
@@ -35,4 +37,22 @@ export function createInvitation(payload: InvitationCreateRequest) {
 
 export function fetchInvitations() {
   return requestJson<InvitationResponse[]>('/api/invitations');
+}
+
+export function fetchUsers() {
+  return requestJson<UserInfo[]>('/api/auth/users');
+}
+
+export function updateUser(userId: number, payload: UserUpdateRequest) {
+  return requestJson<UserInfo>(`/api/auth/users/${userId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload)
+  });
+}
+
+export function updateProfile(payload: ProfileUpdateRequest) {
+  return requestJson<UserInfo>('/api/auth/profile', {
+    method: 'PUT',
+    body: JSON.stringify(payload)
+  });
 }

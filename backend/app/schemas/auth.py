@@ -39,7 +39,40 @@ class UserResponse(OrmModel):
     username: str
     role: str
     is_active: bool
+    display_name: str | None = None
+    email: str | None = None
+    phone: str | None = None
+    bio: str | None = None
     permissions: list[str] = Field(default_factory=list)
+
+
+class UserUpdateRequest(BaseModel):
+    """管理员更新用户请求。
+
+    创建日期：2026-05-04
+    author: sunshengxian
+    """
+
+    role: str | None = Field(default=None, max_length=32)
+    is_active: bool | None = None
+    display_name: str | None = Field(default=None, max_length=64)
+    email: str | None = Field(default=None, max_length=128)
+    phone: str | None = Field(default=None, max_length=32)
+    bio: str | None = Field(default=None, max_length=500)
+    permissions: list[str] | None = None
+
+
+class ProfileUpdateRequest(BaseModel):
+    """个人资料更新请求。
+
+    创建日期：2026-05-04
+    author: sunshengxian
+    """
+
+    display_name: str | None = Field(default=None, max_length=64)
+    email: str | None = Field(default=None, max_length=128)
+    phone: str | None = Field(default=None, max_length=32)
+    bio: str | None = Field(default=None, max_length=500)
 
 
 class AuthTokenResponse(BaseModel):
