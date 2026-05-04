@@ -57,6 +57,11 @@ function numberValue(value?: string | null) {
   return Number.isFinite(result) ? result : null;
 }
 
+function thresholdHelpText(direction?: PremiumDirection) {
+  const directionLabel = direction === 'AH' ? 'A/H' : 'H/A';
+  return `填写 ${directionLabel} 溢价触发线，单位为百分比，只填数字不带 %；留空则只观察不判断达阈值。系统按“当前${directionLabel}溢价 >= 目标阈值”判定达阈值，并按“目标阈值 - 当前${directionLabel}溢价”显示距阈值。`;
+}
+
 /**
  * AH 官方比价查询和官方派生指标重算页面。
  * 创建日期：2026-05-04
@@ -65,6 +70,7 @@ function numberValue(value?: string | null) {
 function PremiumPage() {
   const [form] = Form.useForm<FilterValues>();
   const [watchlistForm] = Form.useForm<WatchlistFormValues>();
+  const watchlistDirection = Form.useWatch('preferred_direction', watchlistForm);
   const [page, setPage] = useState(1);
   const [filters, setFilters] = useState<PremiumQueryParams>({
     direction: 'HA',
@@ -361,8 +367,12 @@ function PremiumPage() {
               ]}
             />
           </Form.Item>
-          <Form.Item label="目标阈值" name="target_premium_pct">
-            <InputNumber className="full-width" addonAfter="%" precision={2} />
+          <Form.Item
+            label="目标阈值"
+            name="target_premium_pct"
+            extra={thresholdHelpText(watchlistDirection)}
+          >
+            <InputNumber className="full-width" addonAfter="%" precision={2} placeholder="例如 -15 或 30" />
           </Form.Item>
           <Form.Item label="持有侧" name="holding_market" rules={[{ required: true }]}>
             <Select

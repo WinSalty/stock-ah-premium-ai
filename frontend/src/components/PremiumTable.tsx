@@ -220,7 +220,12 @@ function PremiumTable({
       render: (value) => formatPercentTag(value)
     },
     {
-      title: '距阈值',
+      title: (
+        <FormulaTitle
+          label="距阈值"
+          formula="距阈值 = 目标阈值 - 当前关注方向溢价；小于等于 0 表示已达阈值"
+        />
+      ),
       dataIndex: 'distance_to_target_pct',
       align: 'right',
       width: 100,
