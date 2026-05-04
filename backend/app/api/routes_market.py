@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy import asc, desc, func, or_, select
 from sqlalchemy.orm import Session
 
-from app.db.models.market import AHPremiumDaily, OfficialAHComparison
+from app.db.models.market import AHPremiumDaily, AHStockPair, OfficialAHComparison
 from app.db.session import get_db
 from app.schemas.imports import (
     CsvImportRequest,
@@ -164,32 +164,39 @@ def list_premium_pairs(
     author: sunshengxian
     """
 
-    latest_date = func.max(OfficialAHComparison.trade_date).label("latest_trade_date")
+    latest_official = (
+        select(
+            OfficialAHComparison.a_ts_code,
+            OfficialAHComparison.hk_ts_code,
+            func.max(OfficialAHComparison.trade_date).label("latest_trade_date"),
+        )
+        .group_by(OfficialAHComparison.a_ts_code, OfficialAHComparison.hk_ts_code)
+        .subquery()
+    )
     statement = select(
-        OfficialAHComparison.a_ts_code,
-        OfficialAHComparison.hk_ts_code,
-        OfficialAHComparison.a_name,
-        OfficialAHComparison.hk_name,
-        latest_date,
+        AHStockPair.a_ts_code,
+        AHStockPair.hk_ts_code,
+        AHStockPair.a_name,
+        AHStockPair.hk_name,
+        latest_official.c.latest_trade_date,
+    ).join(
+        latest_official,
+        (AHStockPair.a_ts_code == latest_official.c.a_ts_code)
+        & (AHStockPair.hk_ts_code == latest_official.c.hk_ts_code),
     )
     if keyword:
         like = f"%{keyword}%"
         statement = statement.where(
             or_(
-                OfficialAHComparison.a_ts_code.like(like),
-                OfficialAHComparison.hk_ts_code.like(like),
-                OfficialAHComparison.a_name.like(like),
-                OfficialAHComparison.hk_name.like(like),
+                AHStockPair.a_ts_code.like(like),
+                AHStockPair.hk_ts_code.like(like),
+                AHStockPair.a_name.like(like),
+                AHStockPair.hk_name.like(like),
             )
         )
     statement = (
-        statement.group_by(
-            OfficialAHComparison.a_ts_code,
-            OfficialAHComparison.hk_ts_code,
-            OfficialAHComparison.a_name,
-            OfficialAHComparison.hk_name,
-        )
-        .order_by(desc(latest_date), OfficialAHComparison.a_ts_code)
+        statement.where(AHStockPair.is_active.is_(True))
+        .order_by(desc(latest_official.c.latest_trade_date), AHStockPair.a_ts_code)
         .limit(limit)
     )
     return [
