@@ -21,7 +21,7 @@ cd /Users/salty/codeProject/ai/coding/stock-ah-premium-ai
 - Python：3.11+，本机已验证 `/opt/homebrew/bin/python3.13`。
 - Node.js：支持 Vite 5 的版本。
 - MySQL：本机 MySQL 5.7，连接说明见 `/Users/salty/codeProject/ai/doc/mysqluse.md`。
-- Tushare：使用 Python `tushare` SDK，默认中转地址 `http://tsy.xiaodefa.cn`，同步接口运行时读取环境变量 `TUSHARE_TOKEN` 或本机文件 `/Users/salty/codeProject/ai/doc/tushare-token.txt`。
+- Tushare：使用 Python `tushare` SDK，默认中转地址 `http://tsy.xiaodefa.cn`，同步接口运行时优先读取本机文件 `/Users/salty/codeProject/ai/doc/tushare-token.txt`，环境变量 `TUSHARE_TOKEN` 作为兜底。
 - LLM：运行智能问答时需要 `LLM_BASE_URL`、`LLM_API_KEY`、`LLM_MODEL`。
 
 启动 MySQL：
@@ -81,7 +81,7 @@ LLM_MODEL=
 APP_CORS_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
 ```
 
-不要把真实 Token、数据库密码或 LLM Key 写入仓库。
+不要把真实 Token、数据库密码或 LLM Key 写入仓库。若 shell 中残留旧 `TUSHARE_TOKEN`，项目仍会优先使用 `TUSHARE_TOKEN_FILE` 指向的文件，避免误用旧 token。
 
 Tushare 中转服务文档见 `http://tsy.xiaodefa.cn/docs`。项目后端已按其 SDK 方式设置。文档示例使用 `ts.set_token(token)`，项目实现采用 `ts.pro_api(token, timeout=...)` 直接传入 token，避免 SDK 把 token 额外写到用户目录缓存文件：
 
@@ -297,9 +297,10 @@ LLM_MODEL=
 - `./scripts/check.sh`
 - `./scripts/init-db.sh`
 - 本地 MySQL `stock_ah_ai` 表和视图创建
+- Tushare 中转 SDK `stock_basic limit=1` 最小连通性，不落库
 
 未验证：
 
-- Tushare 中转 SDK 真实接口同步
+- Tushare 中转 SDK 批量接口同步
 - LLM 真实问答
 - 真实行情数据下的端到端页面联调

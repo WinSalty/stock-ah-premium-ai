@@ -60,17 +60,18 @@ class Settings(BaseSettings):
         return value
 
     def resolve_tushare_token(self) -> str | None:
-        """按环境变量优先、本机文件兜底的顺序读取 Tushare Token。
+        """按本机文件优先、环境变量兜底的顺序读取 Tushare Token。
 
         创建日期：2026-05-04
         author: sunshengxian
         """
 
-        if self.tushare_token:
-            return self.tushare_token.strip()
         if self.tushare_token_file and self.tushare_token_file.exists():
             token = self.tushare_token_file.read_text(encoding="utf-8").strip()
-            return token or None
+            if token:
+                return token
+        if self.tushare_token:
+            return self.tushare_token.strip()
         return None
 
 

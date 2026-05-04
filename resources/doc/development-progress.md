@@ -4,7 +4,7 @@
 
 ## 当前状态
 
-已按一阶段方案完成主要代码开发和本地 MySQL 初始化验证。当前已按中转服务文档切换为 Tushare Python SDK 调用方式，默认地址为 `http://tsy.xiaodefa.cn`。LLM Key 尚未配置。
+已按一阶段方案完成主要代码开发和本地 MySQL 初始化验证。当前已按中转服务文档切换为 Tushare Python SDK 调用方式，默认地址为 `http://tsy.xiaodefa.cn`。Tushare Token 已调整为本机文件优先，避免旧环境变量干扰；LLM Key 尚未配置。
 
 ## 已完成
 
@@ -22,6 +22,7 @@
 - Tushare 同步：
   - Python SDK 客户端封装，按中转文档设置 `pro._DataApi__http_url`。
   - 使用 `ts.pro_api(token, timeout=...)` 进程内传入 token，避免 SDK 额外写入用户目录缓存文件。
+  - Token 读取策略为 `/Users/salty/codeProject/ai/doc/tushare-token.txt` 优先，`TUSHARE_TOKEN` 环境变量兜底。
   - 默认中转地址 `http://tsy.xiaodefa.cn`，支持请求间隔配置，降低触发冷却风险。
   - 数据集配置：A 股基础、A 股日线、A 股交易日历、港股基础、港股日线、港股交易日历、沪深港通名单、外汇日线、官方 AH 比价。
   - 同步任务记录、失败状态、checkpoint、MySQL upsert。
@@ -68,25 +69,26 @@
 ## 已执行的非功能性检查
 
 - `python3 -m compileall backend/app backend/tests`：通过。
-- 后端虚拟环境使用 `/opt/homebrew/bin/python3.13` 创建，`pytest`：8 个单元测试通过。
+- 后端虚拟环境使用 `/opt/homebrew/bin/python3.13` 创建，`pytest`：9 个单元测试通过。
 - `ruff check app tests`：通过。
 - `npm install`：完成，生成 `frontend/package-lock.json`。
 - `npm run build`：通过。
 - `npm audit --omit=dev`：0 个生产依赖漏洞。
 - `scripts/init-db.sh`：通过，已创建 `stock_ah_ai` 表和视图。
-- `scripts/check.sh`：已在切换 Tushare 中转 SDK 后重新通过。
+- `scripts/check.sh`：已在切换 Tushare 中转 SDK、调整 token 文件优先级后重新通过。
+- Tushare 中转 SDK 最小连通性：`stock_basic` 携带 `limit=1` 查询成功返回 1 行，未落库。
 - 敏感信息扫描：只发现文档中的 `<local-only>` 占位符，未发现真实 Token、密码或 API Key。
 
 ## 待验证事项
 
-- 当前 Tushare 中转 Token 可用接口范围。
+- 当前 Tushare 中转 Token 的完整可用接口范围。
 - `stock_hsgt`、`hk_daily`、`stk_ah_comparison`、`fx_daily` 的实际返回字段与当前字段映射是否完全一致。
 - 前后端联调、页面响应式截图和真实数据展示。
 - LLM 输出 SQL 的稳定性和问答答案质量。
 
 ## 下一步建议
 
-1. 用低权限 Tushare Token 跑 `stock_basic`、`trade_cal` 等基础接口，记录权限不足的数据集。
+1. 用当前 Tushare 中转 Token 跑 `stock_basic`、`trade_cal` 等基础接口，记录权限不足的数据集。
 2. 若 AH 官方比价或港股通接口权限不足，先导入人工 AH 配对 CSV 和汇率 CSV，完成自算链路验证。
 3. 配置 LLM Key 后验证 SQL Guard 和问答闭环。
 4. 启动前后端后做页面联调和响应式截图验证。
