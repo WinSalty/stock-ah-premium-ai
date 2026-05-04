@@ -101,6 +101,16 @@ function opportunityName(item: WatchlistOpportunity) {
   );
 }
 
+function opportunityPairKey(item: WatchlistOpportunity) {
+  const aTsCode = item.premium?.a_ts_code || item.watchlist.a_ts_code;
+  const hkTsCode = item.premium?.hk_ts_code || item.watchlist.hk_ts_code;
+  return `${aTsCode}|${hkTsCode}`;
+}
+
+function opportunityDirection(item: WatchlistOpportunity): PremiumDirection {
+  return item.premium?.metric_direction || item.watchlist.preferred_direction;
+}
+
 /**
  * 数据总览页面，默认呈现自选股机会状态。
  * 创建日期：2026-05-04
@@ -110,6 +120,7 @@ function OverviewPage() {
   const [pairKey, setPairKey] = useState(DEFAULT_PAIR_KEY);
   const [selectedWatchlistId, setSelectedWatchlistId] = useState<number | null>(null);
   const [fallbackDirection, setFallbackDirection] = useState<PremiumDirection>('HA');
+  const [isManualChart, setIsManualChart] = useState(false);
   const queryClient = useQueryClient();
   const { data, isLoading } = useQuery({
     queryKey: ['premium-summary'],
@@ -118,14 +129,12 @@ function OverviewPage() {
   const pairs = useQuery({ queryKey: ['premium-pairs'], queryFn: () => fetchPremiumPairs() });
   const watchlist = useQuery({ queryKey: ['watchlist'], queryFn: () => fetchWatchlist() });
   const opportunities = watchlist.data || [];
-  const selectedOpportunity =
-    opportunities.find((item) => item.watchlist.id === selectedWatchlistId) || opportunities[0];
-  const selectedPremium = selectedOpportunity?.premium || null;
-  const direction = selectedPremium?.metric_direction || fallbackDirection;
-  const chartPairKey = selectedPremium
-    ? `${selectedPremium.a_ts_code}|${selectedPremium.hk_ts_code}`
-    : pairKey;
-  const pair = splitPairKey(chartPairKey);
+  const selectedOpportunity = opportunities.find((item) => item.watchlist.id === selectedWatchlistId) || null;
+  const direction = fallbackDirection;
+  const pair = splitPairKey(pairKey);
+  const chartWatchlist = opportunities.find(
+    (item) => opportunityPairKey(item) === pairKey && opportunityDirection(item) === direction
+  );
   const trend = useQuery({
     queryKey: ['official-premium-trend', pair.aTsCode, pair.hkTsCode, direction],
     enabled: Boolean(pair.aTsCode && pair.hkTsCode),
@@ -148,17 +157,22 @@ function OverviewPage() {
   });
 
   useEffect(() => {
+    if (isManualChart) {
+      return;
+    }
     if (!opportunities.length) {
       setSelectedWatchlistId(null);
       return;
     }
-    if (!selectedWatchlistId || !opportunities.some((item) => item.watchlist.id === selectedWatchlistId)) {
-      setSelectedWatchlistId(opportunities[0].watchlist.id);
-    }
-  }, [opportunities, selectedWatchlistId]);
+    const nextOpportunity =
+      opportunities.find((item) => item.watchlist.id === selectedWatchlistId) || opportunities[0];
+    setSelectedWatchlistId(nextOpportunity.watchlist.id);
+    setPairKey(opportunityPairKey(nextOpportunity));
+    setFallbackDirection(opportunityDirection(nextOpportunity));
+  }, [isManualChart, opportunities, selectedWatchlistId]);
 
   useEffect(() => {
-    if (!pairs.data?.length || selectedPremium) {
+    if (!pairs.data?.length || (!isManualChart && selectedOpportunity)) {
       return;
     }
     if (pairs.data.some((item) => `${item.a_ts_code}|${item.hk_ts_code}` === pairKey)) {
@@ -169,7 +183,7 @@ function OverviewPage() {
     );
     const fallbackPair = defaultPair || pairs.data[0];
     setPairKey(`${fallbackPair.a_ts_code}|${fallbackPair.hk_ts_code}`);
-  }, [pairKey, pairs.data, selectedPremium]);
+  }, [isManualChart, pairKey, pairs.data, selectedOpportunity]);
 
   const watchlistPremiums = opportunities
     .map((item) => item.premium)
@@ -180,14 +194,33 @@ function OverviewPage() {
     return acc;
   }, {});
   const selectedPair = pairs.data?.find((item) => `${item.a_ts_code}|${item.hk_ts_code}` === pairKey);
-  const trendTitleName =
-    selectedOpportunity ? opportunityName(selectedOpportunity) : selectedPair?.a_name || pair.aTsCode;
+  const trendTitleName = chartWatchlist ? opportunityName(chartWatchlist) : selectedPair?.a_name || pair.aTsCode;
   const directionLabel = direction === 'HA' ? 'H/A' : 'A/H';
   const trendDates = useMemo(() => trend.data?.map((item) => item.trade_date) || [], [trend.data]);
   const defaultZoomStartValue = getDefaultZoomStartValue(trendDates);
   const defaultZoomEndValue = trendDates[trendDates.length - 1];
-  const minZoomValueSpan = Math.min(Math.max(trendDates.length - 1, 1), MIN_VISIBLE_POINTS);
-  const targetValue = numberValue(selectedOpportunity?.watchlist.target_premium_pct);
+  const minZoomValueSpan =
+    trendDates.length > 1 ? Math.min(Math.max(trendDates.length - 1, 1), MIN_VISIBLE_POINTS) : undefined;
+  const targetValue = numberValue(chartWatchlist?.watchlist.target_premium_pct);
+
+  const onSelectOpportunity = (item: WatchlistOpportunity) => {
+    setIsManualChart(false);
+    setSelectedWatchlistId(item.watchlist.id);
+    setPairKey(opportunityPairKey(item));
+    setFallbackDirection(opportunityDirection(item));
+  };
+
+  const onChangePair = (value: string) => {
+    setIsManualChart(true);
+    setSelectedWatchlistId(null);
+    setPairKey(value);
+  };
+
+  const onChangeDirection = (value: PremiumDirection) => {
+    setIsManualChart(true);
+    setSelectedWatchlistId(null);
+    setFallbackDirection(value);
+  };
 
   const onRemoveWatchlist = (item: PremiumItem) => {
     Modal.confirm({
@@ -326,7 +359,7 @@ function OverviewPage() {
               <button
                 key={item.watchlist.id}
                 className={`opportunity-card ${item.watchlist.id === selectedWatchlistId ? 'active' : ''}`}
-                onClick={() => setSelectedWatchlistId(item.watchlist.id)}
+                onClick={() => onSelectOpportunity(item)}
               >
                 <div className="opportunity-card-head">
                   <strong>{opportunityName(item)}</strong>
@@ -378,34 +411,37 @@ function OverviewPage() {
             <div className="panel-title">
               {trendTitleName} {directionLabel} 溢价走势
             </div>
-            {!selectedOpportunity ? (
-              <Space wrap>
-                <Select
-                  className="overview-pair-select"
-                  showSearch
-                  value={pairKey}
-                  loading={pairs.isLoading}
-                  optionFilterProp="label"
-                  options={pairs.data?.map((item) => ({
-                    value: `${item.a_ts_code}|${item.hk_ts_code}`,
-                    label: formatPairLabel(item)
-                  }))}
-                  onChange={setPairKey}
-                />
-                <Select
-                  value={fallbackDirection}
-                  className="overview-direction-select"
-                  options={[
-                    { value: 'HA', label: 'H/A' },
-                    { value: 'AH', label: 'A/H' }
-                  ]}
-                  onChange={setFallbackDirection}
-                />
-              </Space>
-            ) : null}
+            <Space wrap>
+              <Select
+                className="overview-pair-select"
+                showSearch
+                value={pairKey}
+                loading={pairs.isLoading}
+                optionFilterProp="label"
+                options={pairs.data?.map((item) => ({
+                  value: `${item.a_ts_code}|${item.hk_ts_code}`,
+                  label: formatPairLabel(item)
+                }))}
+                onChange={onChangePair}
+              />
+              <Select
+                value={direction}
+                className="overview-direction-select"
+                options={[
+                  { value: 'HA', label: 'H/A' },
+                  { value: 'AH', label: 'A/H' }
+                ]}
+                onChange={onChangeDirection}
+              />
+            </Space>
           </div>
           {trend.data?.length ? (
-            <ReactECharts option={trendChartOption} className="overview-chart" />
+            <ReactECharts
+              key={`${pair.aTsCode}-${pair.hkTsCode}-${direction}`}
+              option={trendChartOption}
+              notMerge
+              className="overview-chart"
+            />
           ) : (
             <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} />
           )}
