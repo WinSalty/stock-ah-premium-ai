@@ -245,6 +245,18 @@ curl -X POST http://127.0.0.1:8000/api/manual-import/ah-pairs/csv \
 
 任务记录可按数据集、状态和开始时间范围筛选；权限不足或接口失败会在记录里显示为 `FAILED`，错误详情可悬浮或点击查看。
 
+### Tushare 股票数据目录同步
+
+项目额外维护了 Tushare 股票数据目录 15000 积分及以下接口的同步表：
+
+- 同步数据集命名：`stock_data_<tushare_api_name>`。
+- 本地表命名：`ts_stock_<tushare_api_name>`。
+- 批量同步入口：`POST /api/sync/batches/tushare-stock-data`。
+- 表名和数据描述文档：`resources/doc/tushare-stock-data-tables.md`。
+- 带表和字段注释的建表 SQL：`resources/sql/04_tushare_stock_data_schema.sql`。
+
+该入口仍使用项目中的 Tushare SDK 客户端、`sync_run` 任务记录和 MySQL upsert 写入。部分接口按 Tushare 文档需要 `ts_code`、`type` 或 `freq`，服务会对 `type` 使用沪深港通类型循环，对必填 `ts_code` 使用本地 A 股基础表代码循环；因此全量跑批耗时会明显高于 AH 主流程同步。
+
 ### 定时增量同步
 
 后端启动时默认开启 APScheduler 后台任务，所有时间按东八区执行，可用 `SYNC_SCHEDULER_ENABLED=false` 临时关闭。

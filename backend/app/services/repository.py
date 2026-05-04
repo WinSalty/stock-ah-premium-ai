@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any
 
+from sqlalchemy import Table
 from sqlalchemy.dialects.mysql import insert as mysql_insert
 from sqlalchemy.orm import Session
 
@@ -19,7 +20,7 @@ class UpsertRepository:
     def __init__(self, db: Session) -> None:
         self.db = db
 
-    def upsert_many(self, model: type[Base], rows: Sequence[dict[str, Any]]) -> int:
+    def upsert_many(self, model: type[Base] | Table, rows: Sequence[dict[str, Any]]) -> int:
         """批量 upsert 数据。
 
         创建日期：2026-05-04
@@ -29,9 +30,10 @@ class UpsertRepository:
         if not rows:
             return 0
         statement = mysql_insert(model).values(list(rows))
+        columns = model.columns if isinstance(model, Table) else model.__table__.columns
         update_columns = {
             column.name: statement.inserted[column.name]
-            for column in model.__table__.columns
+            for column in columns
             if not column.primary_key and column.name != "created_at"
         }
         self.db.execute(statement.on_duplicate_key_update(**update_columns))

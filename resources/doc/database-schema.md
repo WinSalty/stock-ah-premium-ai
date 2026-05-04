@@ -12,6 +12,8 @@
 - `resources/sql/01_readonly_views.sql`：创建 LLM 只读查询视图。
 - `resources/sql/02_readonly_user_template.sql`：创建只读用户模板。
 - `resources/sql/03_full_schema_with_comments.sql`：当前完整 `CREATE TABLE` 参考 SQL，所有表和字段均配置 `COMMENT`。
+- `resources/sql/04_tushare_stock_data_schema.sql`：Tushare 股票数据目录 15000 积分及以下接口的 `ts_stock_*` 建表 SQL，所有表和字段均配置 `COMMENT`。
+- `resources/doc/tushare-stock-data-tables.md`：Tushare 股票数据目录接口、本地表名和数据描述映射文档。
 
 ## 当前表清单
 
@@ -41,6 +43,10 @@ A/H 溢价与可交易性：
 - `llm_chat_session`：LLM 问答会话。
 - `llm_chat_message`：LLM 问答消息。
 
+Tushare 股票数据目录补充表：
+
+- `ts_stock_*`：Tushare `doc_id=14` 股票数据目录中权限要求 15000 积分及以下的接口落库表，每个 SDK 接口单独一张表，表名和说明见 `resources/doc/tushare-stock-data-tables.md`。
+
 ## 使用建议
 
 新环境初始化优先执行：
@@ -56,3 +62,5 @@ resources/sql/03_full_schema_with_comments.sql
 ```
 
 后续新增表或字段时，需要同步更新 Alembic 迁移、SQLAlchemy 模型、`03_full_schema_with_comments.sql` 和本文档表清单。
+
+Tushare 股票数据目录的批量补充表单独维护在 `04_tushare_stock_data_schema.sql` 和 `tushare-stock-data-tables.md`，避免主业务表 SQL 过大影响日常审阅。
