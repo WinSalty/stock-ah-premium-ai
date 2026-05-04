@@ -6,6 +6,7 @@ import {
   Form,
   Input,
   InputNumber,
+  Modal,
   Select,
   Space,
   message
@@ -18,8 +19,8 @@ import dayjs from 'dayjs';
 import PageHeader from '../components/PageHeader';
 import PremiumTable from '../components/PremiumTable';
 import { calculatePremium, fetchPremiumTrend, fetchPremiums } from '../api/market';
-import { createWatchlistItem } from '../api/watchlist';
-import type { PremiumDirection, PremiumItem } from '../types/domain';
+import { createWatchlistItem, deleteWatchlistItem, updateWatchlistItem } from '../api/watchlist';
+import type { HoldingMarket, PremiumDirection, PremiumItem } from '../types/domain';
 import type { PremiumQueryParams } from '../api/market';
 
 interface FilterValues {
@@ -33,6 +34,19 @@ interface FilterValues {
   channel?: string;
   only_hk_connect?: boolean;
   only_watchlist?: boolean;
+}
+
+interface WatchlistFormValues {
+  display_name?: string;
+  preferred_direction: PremiumDirection;
+  target_premium_pct?: number | null;
+  holding_market: HoldingMarket;
+  note?: string;
+}
+
+interface WatchlistModalState {
+  mode: 'create' | 'edit';
+  item: PremiumItem;
 }
 
 function numberValue(value?: string | null) {
@@ -50,12 +64,14 @@ function numberValue(value?: string | null) {
  */
 function PremiumPage() {
   const [form] = Form.useForm<FilterValues>();
+  const [watchlistForm] = Form.useForm<WatchlistFormValues>();
   const [page, setPage] = useState(1);
   const [filters, setFilters] = useState<PremiumQueryParams>({
     direction: 'HA',
     only_hk_connect: true
   });
   const [selected, setSelected] = useState<PremiumItem | null>(null);
+  const [watchlistModal, setWatchlistModal] = useState<WatchlistModalState | null>(null);
   const queryClient = useQueryClient();
   const premiums = useQuery({
     queryKey: ['premiums', filters, page],
@@ -76,14 +92,54 @@ function PremiumPage() {
     onError: (error) => message.error(error instanceof Error ? error.message : '计算失败')
   });
   const watchlistMutation = useMutation({
-    mutationFn: createWatchlistItem,
-    onSuccess: () => {
-      message.success('已加入自选');
+    mutationFn: ({ mode, item, values }: WatchlistModalState & { values: WatchlistFormValues }) => {
+      const displayName = values.display_name?.trim();
+      const note = values.note?.trim();
+      if (mode === 'edit') {
+        if (!item.watchlist_id) {
+          throw new Error('自选股不存在');
+        }
+        return updateWatchlistItem(item.watchlist_id, {
+          display_name: displayName || null,
+          preferred_direction: values.preferred_direction,
+          target_premium_pct: values.target_premium_pct ?? null,
+          holding_market: values.holding_market
+        });
+      }
+      return createWatchlistItem({
+        a_ts_code: item.a_ts_code,
+        hk_ts_code: item.hk_ts_code,
+        display_name: displayName || undefined,
+        preferred_direction: values.preferred_direction,
+        target_premium_pct: values.target_premium_pct ?? undefined,
+        holding_market: values.holding_market,
+        note: note || undefined
+      });
+    },
+    onSuccess: (_, variables) => {
+      message.success(variables.mode === 'edit' ? '自选配置已更新' : '已加入自选');
+      setWatchlistModal(null);
+      watchlistForm.resetFields();
       queryClient.invalidateQueries({ queryKey: ['watchlist'] });
       queryClient.invalidateQueries({ queryKey: ['premiums'] });
       queryClient.invalidateQueries({ queryKey: ['premium-summary'] });
     },
-    onError: (error) => message.error(error instanceof Error ? error.message : '加入自选失败')
+    onError: (error) => message.error(error instanceof Error ? error.message : '保存自选失败')
+  });
+  const removeWatchlistMutation = useMutation({
+    mutationFn: (item: PremiumItem) => {
+      if (!item.watchlist_id) {
+        throw new Error('自选股不存在');
+      }
+      return deleteWatchlistItem(item.watchlist_id);
+    },
+    onSuccess: () => {
+      message.success('已取消自选');
+      queryClient.invalidateQueries({ queryKey: ['watchlist'] });
+      queryClient.invalidateQueries({ queryKey: ['premiums'] });
+      queryClient.invalidateQueries({ queryKey: ['premium-summary'] });
+    },
+    onError: (error) => message.error(error instanceof Error ? error.message : '取消自选失败')
   });
 
   const trendOption = useMemo(
@@ -148,12 +204,43 @@ function PremiumPage() {
   };
 
   const onAddWatchlist = (item: PremiumItem) => {
-    watchlistMutation.mutate({
-      a_ts_code: item.a_ts_code,
-      hk_ts_code: item.hk_ts_code,
+    watchlistForm.setFieldsValue({
       display_name: item.a_name || item.hk_name || undefined,
-      preferred_direction: item.metric_direction || 'HA',
-      holding_market: 'UNKNOWN'
+      preferred_direction: item.metric_direction || filters.direction || 'HA',
+      target_premium_pct: undefined,
+      holding_market: 'UNKNOWN',
+      note: undefined
+    });
+    setWatchlistModal({ mode: 'create', item });
+  };
+
+  const onEditWatchlist = (item: PremiumItem) => {
+    watchlistForm.setFieldsValue({
+      display_name: item.watchlist_display_name || item.a_name || item.hk_name || undefined,
+      preferred_direction: item.preferred_direction || item.metric_direction || 'HA',
+      target_premium_pct: numberValue(item.target_premium_pct),
+      holding_market: (item.holding_market as HoldingMarket) || 'UNKNOWN',
+      note: undefined
+    });
+    setWatchlistModal({ mode: 'edit', item });
+  };
+
+  const onSubmitWatchlist = async () => {
+    if (!watchlistModal) {
+      return;
+    }
+    const values = await watchlistForm.validateFields();
+    watchlistMutation.mutate({ ...watchlistModal, values });
+  };
+
+  const onRemoveWatchlist = (item: PremiumItem) => {
+    Modal.confirm({
+      title: '取消自选',
+      content: `${item.a_name || item.a_ts_code} / ${item.hk_name || item.hk_ts_code}`,
+      okText: '取消自选',
+      okButtonProps: { danger: true },
+      cancelText: '保留',
+      onOk: () => removeWatchlistMutation.mutateAsync(item)
     });
   };
 
@@ -236,6 +323,8 @@ function PremiumPage() {
           }}
           onTrend={setSelected}
           onAddWatchlist={onAddWatchlist}
+          onEditWatchlist={onEditWatchlist}
+          onRemoveWatchlist={onRemoveWatchlist}
         />
       </section>
 
@@ -247,6 +336,50 @@ function PremiumPage() {
       >
         <ReactECharts option={trendOption} style={{ height: 360 }} showLoading={trend.isLoading} />
       </Drawer>
+
+      <Modal
+        title={watchlistModal?.mode === 'edit' ? '编辑自选' : '加入自选'}
+        open={Boolean(watchlistModal)}
+        onOk={onSubmitWatchlist}
+        confirmLoading={watchlistMutation.isPending}
+        onCancel={() => {
+          setWatchlistModal(null);
+          watchlistForm.resetFields();
+        }}
+        okText="保存"
+        cancelText="取消"
+      >
+        <Form form={watchlistForm} layout="vertical">
+          <Form.Item label="展示名" name="display_name">
+            <Input maxLength={128} />
+          </Form.Item>
+          <Form.Item label="关注方向" name="preferred_direction" rules={[{ required: true }]}>
+            <Select
+              options={[
+                { value: 'HA', label: 'H/A' },
+                { value: 'AH', label: 'A/H' }
+              ]}
+            />
+          </Form.Item>
+          <Form.Item label="目标阈值" name="target_premium_pct">
+            <InputNumber className="full-width" addonAfter="%" precision={2} />
+          </Form.Item>
+          <Form.Item label="持有侧" name="holding_market" rules={[{ required: true }]}>
+            <Select
+              options={[
+                { value: 'UNKNOWN', label: '未设置' },
+                { value: 'A', label: 'A 股' },
+                { value: 'H', label: 'H 股' }
+              ]}
+            />
+          </Form.Item>
+          {watchlistModal?.mode === 'create' ? (
+            <Form.Item label="备注" name="note">
+              <Input.TextArea rows={3} />
+            </Form.Item>
+          ) : null}
+        </Form>
+      </Modal>
     </main>
   );
 }

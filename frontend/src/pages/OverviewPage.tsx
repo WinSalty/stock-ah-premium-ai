@@ -1,11 +1,25 @@
-import { Alert, Card, Col, Empty, Row, Select, Skeleton, Space, Statistic, Tag, Typography } from 'antd';
+import {
+  Alert,
+  Card,
+  Col,
+  Empty,
+  Modal,
+  Row,
+  Select,
+  Skeleton,
+  Space,
+  Statistic,
+  Tag,
+  Typography,
+  message
+} from 'antd';
 import ReactECharts from 'echarts-for-react';
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useMemo, useState } from 'react';
 import PageHeader from '../components/PageHeader';
 import PremiumTable from '../components/PremiumTable';
 import { fetchOfficialPremiumTrend, fetchPremiumPairs, fetchPremiumSummary } from '../api/market';
-import { fetchWatchlist } from '../api/watchlist';
+import { deleteWatchlistItem, fetchWatchlist } from '../api/watchlist';
 import type { PremiumDirection, PremiumItem, PremiumPairOption, WatchlistOpportunity } from '../types/domain';
 import { formatEast8DateTime } from '../utils/datetime';
 
@@ -96,6 +110,7 @@ function OverviewPage() {
   const [pairKey, setPairKey] = useState(DEFAULT_PAIR_KEY);
   const [selectedWatchlistId, setSelectedWatchlistId] = useState<number | null>(null);
   const [fallbackDirection, setFallbackDirection] = useState<PremiumDirection>('HA');
+  const queryClient = useQueryClient();
   const { data, isLoading } = useQuery({
     queryKey: ['premium-summary'],
     queryFn: fetchPremiumSummary
@@ -116,9 +131,28 @@ function OverviewPage() {
     enabled: Boolean(pair.aTsCode && pair.hkTsCode),
     queryFn: () => fetchOfficialPremiumTrend(pair.aTsCode, pair.hkTsCode, direction)
   });
+  const removeWatchlistMutation = useMutation({
+    mutationFn: (item: PremiumItem) => {
+      if (!item.watchlist_id) {
+        throw new Error('自选股不存在');
+      }
+      return deleteWatchlistItem(item.watchlist_id);
+    },
+    onSuccess: () => {
+      message.success('已取消自选');
+      queryClient.invalidateQueries({ queryKey: ['watchlist'] });
+      queryClient.invalidateQueries({ queryKey: ['premium-summary'] });
+      queryClient.invalidateQueries({ queryKey: ['premiums'] });
+    },
+    onError: (error) => message.error(error instanceof Error ? error.message : '取消自选失败')
+  });
 
   useEffect(() => {
-    if (!selectedWatchlistId && opportunities.length) {
+    if (!opportunities.length) {
+      setSelectedWatchlistId(null);
+      return;
+    }
+    if (!selectedWatchlistId || !opportunities.some((item) => item.watchlist.id === selectedWatchlistId)) {
       setSelectedWatchlistId(opportunities[0].watchlist.id);
     }
   }, [opportunities, selectedWatchlistId]);
@@ -154,6 +188,17 @@ function OverviewPage() {
   const defaultZoomEndValue = trendDates[trendDates.length - 1];
   const minZoomValueSpan = Math.min(Math.max(trendDates.length - 1, 1), MIN_VISIBLE_POINTS);
   const targetValue = numberValue(selectedOpportunity?.watchlist.target_premium_pct);
+
+  const onRemoveWatchlist = (item: PremiumItem) => {
+    Modal.confirm({
+      title: '取消自选',
+      content: `${item.a_name || item.a_ts_code} / ${item.hk_name || item.hk_ts_code}`,
+      okText: '取消自选',
+      okButtonProps: { danger: true },
+      cancelText: '保留',
+      onOk: () => removeWatchlistMutation.mutateAsync(item)
+    });
+  };
 
   const trendChartOption = useMemo(
     () => ({
@@ -370,7 +415,7 @@ function OverviewPage() {
           {watchlist.isLoading ? (
             <Skeleton active />
           ) : watchlistPremiums.length ? (
-            <PremiumTable data={watchlistPremiums} pagination={false} />
+            <PremiumTable data={watchlistPremiums} pagination={false} onRemoveWatchlist={onRemoveWatchlist} />
           ) : data?.top_premiums.length ? (
             <PremiumTable data={data.top_premiums} pagination={false} />
           ) : (

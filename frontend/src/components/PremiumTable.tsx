@@ -1,5 +1,5 @@
 import { Button, Space, Table, Tag, Tooltip } from 'antd';
-import { Info, LineChart, Star } from 'lucide-react';
+import { Info, LineChart, Settings, Star, StarOff } from 'lucide-react';
 import type { ColumnsType } from 'antd/es/table';
 import type { PremiumItem } from '../types/domain';
 import { formatEast8DateTime } from '../utils/datetime';
@@ -10,6 +10,8 @@ interface PremiumTableProps {
   pagination?: false | { current: number; pageSize: number; total: number; onChange: (page: number) => void };
   onTrend?: (item: PremiumItem) => void;
   onAddWatchlist?: (item: PremiumItem) => void;
+  onEditWatchlist?: (item: PremiumItem) => void;
+  onRemoveWatchlist?: (item: PremiumItem) => void;
 }
 
 function formatNumber(value: string | null, digits = 2) {
@@ -96,7 +98,15 @@ function StockCell({ name, code }: { name: string | null; code: string }) {
  * 创建日期：2026-05-04
  * author: sunshengxian
  */
-function PremiumTable({ data, loading, pagination, onTrend, onAddWatchlist }: PremiumTableProps) {
+function PremiumTable({
+  data,
+  loading,
+  pagination,
+  onTrend,
+  onAddWatchlist,
+  onEditWatchlist,
+  onRemoveWatchlist
+}: PremiumTableProps) {
   const columns: ColumnsType<PremiumItem> = [
     {
       title: '关注',
@@ -235,7 +245,7 @@ function PremiumTable({ data, loading, pagination, onTrend, onAddWatchlist }: Pr
     },
     {
       title: '',
-      width: 88,
+      width: 132,
       fixed: 'right',
       render: (_, record) => (
         <Space>
@@ -246,7 +256,29 @@ function PremiumTable({ data, loading, pagination, onTrend, onAddWatchlist }: Pr
             icon={<LineChart size={16} />}
             onClick={() => onTrend?.(record)}
           />
-          {onAddWatchlist && !record.is_watchlist ? (
+          {record.is_watchlist ? (
+            <>
+              {onEditWatchlist ? (
+                <Button
+                  aria-label="编辑自选"
+                  title="编辑自选"
+                  type="text"
+                  icon={<Settings size={16} />}
+                  onClick={() => onEditWatchlist(record)}
+                />
+              ) : null}
+              {onRemoveWatchlist ? (
+                <Button
+                  aria-label="取消自选"
+                  title="取消自选"
+                  type="text"
+                  danger
+                  icon={<StarOff size={16} />}
+                  onClick={() => onRemoveWatchlist(record)}
+                />
+              ) : null}
+            </>
+          ) : onAddWatchlist ? (
             <Button
               aria-label="加入自选"
               title="加入自选"
@@ -267,7 +299,7 @@ function PremiumTable({ data, loading, pagination, onTrend, onAddWatchlist }: Pr
       dataSource={data}
       loading={loading}
       pagination={pagination}
-      scroll={{ x: 1680 }}
+      scroll={{ x: 1724 }}
       size="middle"
     />
   );
