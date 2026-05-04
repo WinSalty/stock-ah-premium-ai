@@ -251,6 +251,65 @@ class WatchlistStock(TimestampMixin, Base):
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
 
 
+class StockSelectionFactorSnapshot(TimestampMixin, Base):
+    """A 股选股因子快照宽表。
+
+    创建日期：2026-05-04
+    author: sunshengxian
+    """
+
+    __tablename__ = "stock_selection_factor_snapshot"
+    __table_args__ = (
+        UniqueConstraint("factor_date", "ts_code", name="uk_stock_selection_factor"),
+        Index("idx_selection_factor_date_score", "factor_date", "selection_score"),
+        Index("idx_selection_factor_tags", "selection_tags"),
+        Index("idx_selection_factor_industry", "industry"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    factor_date: Mapped[date] = mapped_column(Date, nullable=False)
+    ts_code: Mapped[str] = mapped_column(String(16), nullable=False)
+    symbol: Mapped[str | None] = mapped_column(String(16))
+    name: Mapped[str] = mapped_column(String(64), nullable=False)
+    industry: Mapped[str | None] = mapped_column(String(128))
+    area: Mapped[str | None] = mapped_column(String(64))
+    market: Mapped[str | None] = mapped_column(String(64))
+    selection_tags: Mapped[str] = mapped_column(String(128), nullable=False)
+    selection_score: Mapped[Decimal | None] = mapped_column(DECIMAL(20, 8))
+    selection_reason: Mapped[str | None] = mapped_column(Text)
+    is_hs300: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    is_sse50: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    is_csi300_value: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    is_csi_dividend: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    is_sse_dividend: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    is_sz_dividend: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    close: Mapped[Decimal | None] = mapped_column(DECIMAL(20, 6))
+    pct_chg: Mapped[Decimal | None] = mapped_column(DECIMAL(12, 6))
+    turnover_rate: Mapped[Decimal | None] = mapped_column(DECIMAL(20, 8))
+    pe_ttm: Mapped[Decimal | None] = mapped_column(DECIMAL(20, 8))
+    pb: Mapped[Decimal | None] = mapped_column(DECIMAL(20, 8))
+    ps_ttm: Mapped[Decimal | None] = mapped_column(DECIMAL(20, 8))
+    dividend_yield_ttm: Mapped[Decimal | None] = mapped_column(DECIMAL(20, 8))
+    total_mv: Mapped[Decimal | None] = mapped_column(DECIMAL(24, 6))
+    circ_mv: Mapped[Decimal | None] = mapped_column(DECIMAL(24, 6))
+    roe: Mapped[Decimal | None] = mapped_column(DECIMAL(20, 8))
+    grossprofit_margin: Mapped[Decimal | None] = mapped_column(DECIMAL(20, 8))
+    netprofit_margin: Mapped[Decimal | None] = mapped_column(DECIMAL(20, 8))
+    debt_to_assets: Mapped[Decimal | None] = mapped_column(DECIMAL(20, 8))
+    revenue_yoy: Mapped[Decimal | None] = mapped_column(DECIMAL(20, 8))
+    latest_report_period: Mapped[date | None] = mapped_column(Date)
+    return_20d: Mapped[Decimal | None] = mapped_column(DECIMAL(20, 8))
+    return_60d: Mapped[Decimal | None] = mapped_column(DECIMAL(20, 8))
+    return_120d: Mapped[Decimal | None] = mapped_column(DECIMAL(20, 8))
+    latest_dividend_year: Mapped[str | None] = mapped_column(String(16))
+    latest_cash_div_tax: Mapped[Decimal | None] = mapped_column(DECIMAL(20, 8))
+    latest_dividend_proc: Mapped[str | None] = mapped_column(String(64))
+    forecast_type: Mapped[str | None] = mapped_column(String(64))
+    forecast_summary: Mapped[str | None] = mapped_column(Text)
+    data_source: Mapped[str] = mapped_column(String(32), nullable=False, default="TUSHARE")
+    source_trade_date: Mapped[date | None] = mapped_column(Date)
+
+
 class OfficialAHComparison(TimestampMixin, Base):
     """Tushare 官方 AH 比价快照表。
 

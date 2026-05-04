@@ -33,6 +33,10 @@ A/H 溢价与可交易性：
 - `ah_premium_daily`：自算港股通 AH 溢价结果，当前仅作实时、扩展和校验口径保留。
 - `watchlist_stock`：用户自选 AH 股票。
 
+A 股选股因子：
+
+- `stock_selection_factor_snapshot`：LLM 选股用核心宽表，保存蓝筹、低估值、红利和质量因子候选股票快照。
+
 任务、质量与问答：
 
 - `sync_run`：数据同步任务运行记录。

@@ -245,6 +245,20 @@ curl -X POST http://127.0.0.1:8000/api/manual-import/ah-pairs/csv \
 
 任务记录可按数据集、状态和开始时间范围筛选；权限不足或接口失败会在记录里显示为 `FAILED`，错误详情可悬浮或点击查看。
 
+### A 股选股因子同步
+
+LLM 选股不再同步 Tushare 股票目录原始大表，而是维护核心宽表 `stock_selection_factor_snapshot`。
+
+同步入口：
+
+```bash
+curl -X POST "http://127.0.0.1:8000/api/sync/batches/stock-selection-factors" \
+  -H "Content-Type: application/json" \
+  -d '{"mode":"full"}'
+```
+
+该任务会联网读取 Tushare 最新 `daily_basic`、指数成分、财务指标、分红、业绩预告和日线行情，筛选几十只蓝筹、低估值和红利候选股票。LLM 只读视图为 `v_stock_selection_latest`、`v_stock_selection_history` 和 `v_stock_factor_dictionary`。
+
 ### 定时增量同步
 
 后端启动时默认开启 APScheduler 后台任务，所有时间按东八区执行，可用 `SYNC_SCHEDULER_ENABLED=false` 临时关闭。

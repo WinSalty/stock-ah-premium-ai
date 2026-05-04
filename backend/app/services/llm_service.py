@@ -114,6 +114,11 @@ class LlmService:
             "v_official_ah_premium_trend": "官方 AH/H/A 溢价历史趋势",
             "v_latest_hk_connect_official_ah_premium": "最新交易日且港股通可操作的官方溢价结果",
             "v_watchlist_opportunity": "自选股机会状态，含阈值、距离、通道和来源",
+            "v_stock_selection_latest": (
+                "最新 A 股选股因子宽表，含蓝筹、低估值、红利、质量和动量标签"
+            ),
+            "v_stock_selection_history": "A 股选股因子历史快照",
+            "v_stock_factor_dictionary": "选股因子字段字典和适用说明",
             "v_latest_ah_premium": "兼容旧名称，实际同最新官方 AH/H/A 溢价结果",
             "v_ah_premium_trend": "兼容旧名称，实际同官方 AH/H/A 溢价历史趋势",
             "v_sync_health": "数据同步运行状态",
@@ -125,11 +130,14 @@ class LlmService:
             default=str,
         )
         return (
-            "你只负责生成只读 MySQL SELECT SQL，必须返回 JSON：{\"sql\":\"...\"}。"
+            '你只负责生成只读 MySQL SELECT SQL，必须返回 JSON：{"sql":"..."}。'
             "只能查询这些视图："
             f"{json.dumps(schema, ensure_ascii=False)}。"
             "默认使用官方 AH 比价口径；H/A 字段由官方 A/H 反推；"
             "涉及可操作性时优先查询含 hk_connect 或 watchlist 的视图。"
+            "涉及 A 股选股、低估值、红利、蓝筹、ROE、PE、PB、股息率时"
+            "优先查询 v_stock_selection_latest，"
+            "并可用 v_stock_factor_dictionary 解释字段含义。"
             "不要使用写入、DDL、多语句。问题与上下文如下："
             f"{context_json}"
         )

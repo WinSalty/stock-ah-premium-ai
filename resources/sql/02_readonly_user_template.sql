@@ -6,6 +6,9 @@ GRANT SELECT ON stock_ah_ai.v_latest_official_ah_premium TO '<readonly_user>'@'l
 GRANT SELECT ON stock_ah_ai.v_official_ah_premium_trend TO '<readonly_user>'@'localhost';
 GRANT SELECT ON stock_ah_ai.v_latest_hk_connect_official_ah_premium TO '<readonly_user>'@'localhost';
 GRANT SELECT ON stock_ah_ai.v_watchlist_opportunity TO '<readonly_user>'@'localhost';
+GRANT SELECT ON stock_ah_ai.v_stock_selection_latest TO '<readonly_user>'@'localhost';
+GRANT SELECT ON stock_ah_ai.v_stock_selection_history TO '<readonly_user>'@'localhost';
+GRANT SELECT ON stock_ah_ai.v_stock_factor_dictionary TO '<readonly_user>'@'localhost';
 GRANT SELECT ON stock_ah_ai.v_sync_health TO '<readonly_user>'@'localhost';
 GRANT SELECT ON stock_ah_ai.v_data_quality_issues TO '<readonly_user>'@'localhost';
 FLUSH PRIVILEGES;

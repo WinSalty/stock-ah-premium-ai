@@ -11,6 +11,7 @@ from app.db.models.market import (
     HKTradeCalendar,
     HsgtConstituent,
     OfficialAHComparison,
+    StockSelectionFactorSnapshot,
     WatchlistStock,
 )
 from app.db.models.sync import DataQualityIssue, SyncCheckpoint, SyncRun
@@ -30,6 +31,7 @@ __all__ = [
     "LlmChatMessage",
     "LlmChatSession",
     "OfficialAHComparison",
+    "StockSelectionFactorSnapshot",
     "SyncCheckpoint",
     "SyncRun",
     "WatchlistStock",

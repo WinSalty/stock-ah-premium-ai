@@ -149,3 +149,28 @@ SELECT
   resolved_at,
   updated_at
 FROM data_quality_issue;
+
+CREATE OR REPLACE VIEW v_stock_selection_latest AS
+SELECT *
+FROM stock_selection_factor_snapshot
+WHERE factor_date = (
+  SELECT MAX(factor_date)
+  FROM stock_selection_factor_snapshot
+);
+
+CREATE OR REPLACE VIEW v_stock_selection_history AS
+SELECT *
+FROM stock_selection_factor_snapshot;
+
+CREATE OR REPLACE VIEW v_stock_factor_dictionary AS
+SELECT 'selection_tags' AS field_name, 'BLUE_CHIP/LOW_VALUATION/DIVIDEND/QUALITY 等筛选标签' AS description
+UNION ALL SELECT 'selection_score', '综合筛选分，结合蓝筹指数、估值、红利和质量指标'
+UNION ALL SELECT 'pe_ttm', '滚动市盈率，越低通常估值越便宜，但需结合行业和盈利稳定性'
+UNION ALL SELECT 'pb', '市净率，金融、周期和资产型公司常用估值指标'
+UNION ALL SELECT 'dividend_yield_ttm', '滚动股息率，衡量红利属性'
+UNION ALL SELECT 'roe', '最近报告期净资产收益率，衡量盈利能力'
+UNION ALL SELECT 'debt_to_assets', '资产负债率，衡量杠杆和财务风险'
+UNION ALL SELECT 'return_20d/60d/120d', '近 20/60/120 个交易日涨跌幅，用于识别趋势和拥挤度'
+UNION ALL SELECT 'is_hs300/is_sse50', '蓝筹代表性指数成分标记'
+UNION ALL SELECT 'is_csi_dividend/is_sse_dividend/is_sz_dividend', '红利指数成分标记'
+UNION ALL SELECT 'is_csi300_value', '沪深300价值指数成分标记';

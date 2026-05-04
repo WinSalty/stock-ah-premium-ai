@@ -65,6 +65,11 @@
   - 支持 A 股/港股基础信息、交易日历、日线行情、沪深港通名单、外汇、AH 配对、官方 AH 比价、自算 AH 溢价、同步任务记录。
   - 支持关键词、日期范围、分页和字段列定义返回。
   - 官方 AH 比价表增加 H/A 比价和 H/A 溢价查询字段。
+- A 股选股因子：
+  - 新增 `stock_selection_factor_snapshot` 核心宽表，用于 LLM 按蓝筹、低估值、红利和质量指标选股。
+  - 新增 `v_stock_selection_latest`、`v_stock_selection_history` 和 `v_stock_factor_dictionary` 只读视图，并纳入 SQL Guard 白名单。
+  - 新增 `POST /api/sync/batches/stock-selection-factors`，基于 Tushare 最新估值、指数成分、财务指标、分红和行情表现联网筛选候选池。
+  - 已同步 60 只候选股票，因子日期 `2026-04-30`，落库到核心宽表。
 - 前端 React 项目：
   - 总览页已调整为自选机会台：指标、自选机会卡片、自选趋势图和自选明细。
   - 总览页新增官方 AH/H/A 溢价趋势折线图，默认跟随自选股，并始终支持手动选择股票和 A/H、H/A 方向。
@@ -111,6 +116,9 @@
 - 新增数据查询后，`scripts/check.sh` 已重新通过。
 - 新增数据集说明、长字段悬浮、东八区时间展示和定时增量任务后，`scripts/check.sh` 已重新通过。
 - 新增官方口径闭环、港股通可操作性、自选股和决策指标后，`scripts/check.sh` 已重新通过，当前 13 个单元测试通过。
+- 已移除 Tushare 股票目录全量同步方案及 100 张 `ts_stock_*` 表，切换为选股因子宽表方案。
+- `scripts/init-db.sh`：已应用新的 `20260504_0005`，创建 `stock_selection_factor_snapshot`，并重建 LLM 选股视图。
+- `stock_selection_factors` 同步验证：成功写入 60 只候选股票。
 - Tushare 中转 SDK 最小连通性：`stock_basic` 携带 `limit=1` 查询成功返回 1 行，未落库。
 - 敏感信息扫描：只发现文档中的 `<local-only>` 占位符，未发现真实 Token、密码或 API Key。
 

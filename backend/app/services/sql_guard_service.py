@@ -41,6 +41,9 @@ class SqlGuardService:
         "v_official_ah_premium_trend",
         "v_latest_hk_connect_official_ah_premium",
         "v_watchlist_opportunity",
+        "v_stock_selection_latest",
+        "v_stock_selection_history",
+        "v_stock_factor_dictionary",
         "v_sync_health",
         "v_data_quality_issues",
     }

@@ -60,6 +60,21 @@ def create_ah_premium_sync_batch(payload: SyncBatchCreate, db: DbSession) -> lis
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+@router.post("/sync/batches/stock-selection-factors", response_model=SyncRunResponse)
+def create_stock_selection_factor_sync_batch(payload: SyncBatchCreate, db: DbSession) -> SyncRun:
+    """同步 A 股选股因子核心宽表。
+
+    创建日期：2026-05-04
+    author: sunshengxian
+    """
+
+    params = payload.model_dump(exclude_none=True)
+    try:
+        return SyncService(db).run_sync("stock_selection_factors", params)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @router.get("/sync/runs", response_model=list[SyncRunResponse])
 def list_sync_runs(
     db: DbSession,

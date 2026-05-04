@@ -24,6 +24,7 @@ from app.db.models.sync import SyncCheckpoint, SyncRun
 from app.services.date_utils import format_tushare_date, parse_tushare_date
 from app.services.decimal_utils import quantize_decimal, to_decimal
 from app.services.repository import UpsertRepository
+from app.services.stock_selection_factor_service import StockSelectionFactorService
 from app.services.tushare_client import TushareClient
 
 
@@ -68,6 +69,7 @@ CORE_SYNC_PLAN: tuple[tuple[str, dict[str, Any]], ...] = (
     ("fx_daily", {}),
 )
 DISABLED_INTERFACE_DATASETS = {"hk_daily"}
+STOCK_SELECTION_FACTOR_DATASET = "stock_selection_factors"
 
 
 DATASET_SPECS: dict[str, DatasetSpec] = {
@@ -309,9 +311,20 @@ class SyncService:
         author: sunshengxian
         """
 
-        return [
-            self._dataset_info(spec)
-            for spec in DATASET_SPECS.values()
+        return [self._dataset_info(spec) for spec in DATASET_SPECS.values()] + [
+            {
+                "name": STOCK_SELECTION_FACTOR_DATASET,
+                "label": "A 股选股因子宽表",
+                "description": "联网筛选蓝筹、低估值和红利股候选池，并同步 LLM 选股用核心宽表。",
+                "supports_date_range": False,
+                "supports_incremental": True,
+                "supports_full_sync": True,
+                "default_full_start_date": None,
+                "sync_strategy": (
+                    "基于 Tushare 最新 daily_basic、指数成分、财务指标、分红"
+                    "和行情表现生成几十只候选股票快照。"
+                ),
+            }
         ]
 
     def run_sync(self, dataset: str, params: dict[str, Any]) -> SyncRun:
@@ -321,12 +334,12 @@ class SyncService:
         author: sunshengxian
         """
 
-        if dataset not in DATASET_SPECS:
+        if dataset not in DATASET_SPECS and dataset != STOCK_SELECTION_FACTOR_DATASET:
             raise ValueError(f"不支持的数据集：{dataset}")
         if dataset in DISABLED_INTERFACE_DATASETS:
             raise ValueError("当前 token 无法请求 hk_daily，已按要求禁用该接口同步。")
-        spec = DATASET_SPECS[dataset]
-        params = self._resolve_mode_params(spec, params)
+        spec = DATASET_SPECS.get(dataset)
+        params = self._resolve_mode_params(spec, params) if spec else self._normalize_params(params)
         run = SyncRun(
             dataset=dataset,
             params_json=json.dumps(params, ensure_ascii=False, default=str),
@@ -337,7 +350,11 @@ class SyncService:
         self.db.commit()
         self.db.refresh(run)
         try:
-            row_count = self._sync_spec(spec, params)
+            row_count = (
+                self._sync_spec(spec, params)
+                if spec
+                else StockSelectionFactorService(self.db).sync_curated_factors()
+            )
             run.status = "SUCCESS"
             run.row_count = row_count
             run.finished_at = datetime.now(UTC).replace(tzinfo=None)
@@ -379,8 +396,7 @@ class SyncService:
             return sum(self._sync_spec(spec, {**params, "type": item}) for item in HSGT_TYPES)
         if spec.name == "fx_daily" and "ts_code" not in merged_params:
             return sum(
-                self._sync_spec(spec, {**params, "ts_code": item})
-                for item in DEFAULT_FX_CODES
+                self._sync_spec(spec, {**params, "ts_code": item}) for item in DEFAULT_FX_CODES
             )
         if self._should_split_by_trade_date(spec, params):
             return sum(
@@ -414,6 +430,11 @@ class SyncService:
             else:
                 api_params[key] = value
         return api_params
+
+    def _normalize_params(self, params: dict[str, Any]) -> dict[str, Any]:
+        params = {key: value for key, value in params.items() if value is not None and value != ""}
+        params.setdefault("mode", "manual")
+        return params
 
     def _resolve_mode_params(self, spec: DatasetSpec, params: dict[str, Any]) -> dict[str, Any]:
         params = {key: value for key, value in params.items() if value is not None and value != ""}
