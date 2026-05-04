@@ -86,7 +86,55 @@ RealtimeQuoteProvider
 
 **建议**：工程上先支持 `provider=mock/http` 两类配置，后续把券商 API、公开接口或手工 HTTP 源都接入同一个 provider 协议。
 
-### 4.3 Qwen 联网搜索的定位
+### 4.3 低价或免费行情源候选
+
+按“个人低门槛、能覆盖 A 股 + 港股 + 汇率、适合阈值提醒”的目标，当前可考虑这些来源。
+
+| 来源 | 覆盖 | 成本线索 | 适合程度 | 备注 |
+| --- | --- | --- | --- | --- |
+| 富途 OpenAPI | 港股、美股、A 股等 | OpenAPI 本身可用，但行情权限和 App 权限不完全共享；未开户或总资产较低也有订阅额度 | 高，若已有富途账户 | 适合做主源；需要本机运行 OpenD，且确认港股/A 股权限和延迟等级 |
+| 老虎 Tiger OpenAPI | 港股、美股等，SDK 文档列出实时行情和 WebSocket 推送 | 开户并入金后 OpenAPI 可免费使用 | 高，若已有老虎账户 | 适合主源；需确认 A 股/港股通对应标的权限和所在地区账户能力 |
+| Longbridge OpenAPI | 文档称实时报价 API 支持证券；可混查美股、港股等 | 基础行情权可能赠送，高级行情需在 Quote Store 购买行情卡 | 中高，若已有长桥账户 | OpenAPI 行情权限与 App/PC/Web 不共享；需确认港股 LV1 权限成本 |
+| QOS | A 股、港股、外汇、WebSocket、实时快照 | 免费档 3 只交易产品、每分钟 5 次；100 只自由组合约 88 USDT/月起 | 高，适合先试点 | 最贴合“少量自选 + 实时提醒”；如果只盯 1-2 对 AH + HKD/CNY，可先用免费档验证 |
+| iTick | 港股、美股、热门 A 股、外汇等 | 免费档 5 calls/min、1 个 WebSocket、3 个订阅；个人 Basic 约 79 美元/月 | 中高 | 覆盖面好，但免费档只够很少标的；付费后适合中等自选池 |
+| TickDB | A 股、港股、美股、外汇、加密等 | 页面说明有免费有限额，付费解锁全部；未在首页展示明确价格 | 中 | 适合作备选统一行情 API，需要进一步试用确认 A/H 标的和 HKD/CNY |
+| AllTick | 港股、中国 A 股、外汇等 | 提供 Start Free Usage；公开页未展示清晰价格 | 中 | 技术上覆盖 AH + FX，但需要试用确认免费额度和稳定性 |
+| 必盈 API | 沪深 A 股、港股实时行情、港股通等 | 免费版每日 200 次，包年约 688 元，三年约 1088 元 | 中 | 成本低，但网站声明不保证准确性、及时性等；适合低频校验或备源 |
+| AKShare | A 股实时聚合、港股聚合等 | 开源免费 | 低到中 | 适合实验和兜底；港股接口文档标注 15 分钟延时，不适合强实时触发 |
+| fxapi.app | HKD/CNY 可通过外汇交叉汇率计算 | 免费、免认证，约 5 分钟更新 | 高，适合汇率源 | 汇率可单独使用；若行情源自带 HKD/CNY，也可与其互校 |
+
+推荐优先级：
+
+1. **已有券商账户优先**：如果本机已有富途、老虎或长桥账户，并能接受本机常驻网关/SDK，优先用券商 OpenAPI 做主源。真实报价、权限边界和合规性会比网页聚合更清楚。
+2. **无券商账户先试 QOS 免费档**：先选 1-2 对最关注 AH 标的，加 `HKD/CNY` 汇率，跑通实时溢价和 pushplus 提醒闭环。如果自选池扩大，再考虑 88 USDT/月的 100 只组合档。
+3. **汇率独立走 fxapi.app**：即使股票行情来自券商或 QOS，也建议保留独立汇率 provider，做交叉校验和故障兜底。
+4. **AKShare 只做实验兜底**：A 股可用于低门槛试跑，港股延迟口径不适合作“实时触达阈值”强提醒。
+5. **TickDB、AllTick、iTick 做备选统一源**：如果希望一个服务覆盖 A/H/FX，并愿意接受美元月费或试用额度，可进入第二轮 PoC。
+
+实现上建议新增这些 provider key：
+
+```text
+REALTIME_PROVIDER=qos
+REALTIME_PROVIDER_FALLBACK=fxapi,akshare
+REALTIME_SYMBOL_LIMIT=20
+REALTIME_REFRESH_SECONDS=60
+REALTIME_REQUIRE_REALTIME_FOR_ALERT=true
+```
+
+并在 `realtime_quote_snapshot.source` 中记录具体来源，例如 `FUTU_OPENAPI`、`QOS`、`ITICK`、`AKSHARE`、`FXAPI`。
+
+### 4.4 合规与许可边界
+
+港交所实时行情存在明确的数据许可和非展示使用边界。若系统用港股实时行情自动计算派生指标、触发提醒或未来辅助交易，就已经不只是“人工看盘”。个人本地自用通常风险较低，但仍应避免：
+
+- 对外提供实时行情看板。
+- 转发第三方原始报价给多人使用。
+- 把延迟或 Basic Market Prices 伪装成实时行情。
+- 用未授权网页接口做商业化或高频抓取。
+
+本项目应在数据质量字段中明确标注 `REALTIME`、`DELAYED`、`STALE_FX`，提醒内容也带上行情来源和报价时间。
+
+### 4.5 Qwen 联网搜索的定位
 
 阿里云百炼文档显示，OpenAI 兼容 Chat Completions 可通过 `enable_search: true` 启用联网搜索；可通过 `search_options.search_strategy` 选择 `turbo`、`max`、`agent` 等策略，也可配置 `forced_search` 强制搜索、`freshness` 限定新近内容、`assigned_site_list` 限定来源站点。文档也说明联网搜索适用于股票价格、天气等实时问题，但这是“模型检索并生成回答”，不是可审计的行情数据 API。
 
@@ -348,13 +396,27 @@ WECHAT_WORK_TO_USER=@all
 
 1. 先做 pushplus 测试推送，立刻验证个人微信通知链路。
 2. 加 `RealtimeQuoteProvider` 抽象和 mock provider，用假数据跑通实时溢价、阈值和推送闭环。
-3. 接入一个真实行情源，只服务自选股。
-4. 加页面实时标签和手动刷新。
-5. 最后再把 Qwen 联网搜索接到问答页，用于解释异动和排查数据源，不参与阈值计算。
+3. 用 QOS 免费档或已有券商 OpenAPI 接入 1-2 对 AH 标的，只服务自选股。
+4. 独立接入 `fxapi.app` 汇率源，并与行情源自带汇率互校。
+5. 加页面实时标签和手动刷新。
+6. 自选池扩大后，再评估 QOS 100 只组合档、iTick Basic、TickDB 或 AllTick。
+7. 最后再把 Qwen 联网搜索接到问答页，用于解释异动和排查数据源，不参与阈值计算。
 
 ## 11. 参考资料
 
 - 阿里云百炼联网搜索文档：`https://help.aliyun.com/zh/model-studio/web-search`
+- 富途 OpenAPI 权限与额度：`https://openapi.futunn.com/futu-api-doc/intro/authority.html`
+- Longbridge 实时报价 API：`https://open.longbridge.com/docs/quote/pull/quote`
+- Longbridge 行情权限说明：`https://open.longbridge.com/docs/qa/broker`
+- Tiger OpenAPI Python SDK：`https://pypi.org/project/tigeropen/`
+- QOS 行情 API：`https://qos.hk/`
+- iTick 行情 API：`https://itick.io/en`
+- TickDB 实时行情 API：`https://tickdb.ai/`
+- AllTick 股票 API：`https://api.alltick.co/stock-api`
+- 必盈 API：`https://www.biyingapi.com/`
+- AKShare 股票数据文档：`https://akshare.akfamily.xyz/data/stock/stock.html`
+- fxapi.app 汇率 API：`https://fxapi.app/`
+- HKEX 市场数据许可说明：`https://www.hkex.com.hk/Services/Market-Data-Services/Real-Time-Data-Services/Data-Licensing/HKEX-IS-%28China%29/Market-Data-Vendor-Licence/Licence-Agreements_Guiding-Notes/Licence-Agreement?sc_lang=zh-HK`
 - pushplus 消息接口文档：`https://h5.pushplus.plus/doc/guide/api.html`
 - pushplus GitHub 介绍：`https://github.com/pushplus/pushplus`
 - 企业微信发送应用消息 API：`https://s.apifox.cn/apidoc/docs-site/406014/api-10061693`
