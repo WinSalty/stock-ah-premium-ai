@@ -354,9 +354,9 @@ LLM_API_KEY=
 LLM_MODEL=deepseek-v4-flash
 ```
 
-问答页面使用流式响应，输入框按 Enter 发送，Shift+Enter 换行。若页面一直没有响应，先确认后端 `/api/health` 正常，再查看后端日志中是否有 LLM 生成 SQL 字段名或数据库执行错误。
+问答页面使用流式响应，输入框按 Enter 发送，Shift+Enter 换行。空会话会从 LLM 投资知识库主题中随机展示投研问题，便于直接生成更完整的投资分析报告。若页面一直没有响应，先确认后端 `/api/health` 正常，再查看后端日志中是否有 LLM 生成 SQL 字段名或数据库执行错误。
 
-AH 溢价、折价和套利相关问题会自动补充本地候选池、市场分布、自选机会，以及 `resources/doc/llm-knowledge/ah-premium/` 中的研究片段，避免只基于单行 SQL 结果作答。银行/非银、五粮液、宏观地产金融推演等问题会按关键词读取 `resources/doc/llm-knowledge/` 对应子目录中的投研报告片段。
+AH 溢价、折价和套利相关问题会自动补充本地候选池、市场分布、自选机会，以及 `resources/doc/llm-knowledge/ah-premium/` 中的研究片段，避免只基于单行 SQL 结果作答。银行/非银、五粮液、宏观地产金融推演等问题会按关键词读取 `resources/doc/llm-knowledge/` 对应子目录中的投研报告片段。回答提示词允许 LLM 给出评级口径、配置倾向、优先级、仓位思路和触发条件，但仍禁止收益承诺、内幕信息和违规交易建议。
 
 ## 14. 当前验证状态
 

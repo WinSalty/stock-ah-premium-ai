@@ -132,6 +132,35 @@ const markdownComponents: Components = {
   }
 };
 
+const PRESET_QUESTION_COUNT = 4;
+
+const REPORT_BASED_PRESET_QUESTIONS = [
+  '五粮液当前更应按修复股还是价值股定价？请给出评级口径、核心假设和跟踪指标',
+  '五粮液 2026 年投资报告里最需要验证的三个风险是什么？',
+  '招商银行现在还适合作为长期核心银行持仓吗？请和宁波银行、江苏银行做对比',
+  '银行与非银长期投资中，哪些资产更适合防御底仓，哪些更适合弹性配置？',
+  '日本地产金融调整对中国银行、地产链和高股息资产配置有什么启示？',
+  '参考日本经验，中国房地产出清阶段哪些行业可能更受益，哪些行业需要回避？',
+  '如果地产长期出清，A 股长期投资应优先关注哪些现金流资产？',
+  'A/H 溢价候选里，哪些标的更像跨市场替代机会而不是套利机会？',
+  '请给出 A/H 价差策略的保守、中性、进取三种配置框架',
+  '低估值、高股息、ROE 稳定的 A 股候选，如何结合银行和红利资产筛选？',
+  '五粮液、贵州茅台和高股息央企分别适合什么风险偏好的组合？',
+  '在宏观低收益环境下，银行、白酒、公用事业和高端制造应如何分层配置？'
+];
+
+function randomPresetQuestions(previous: string[] = []) {
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    const nextQuestions = [...REPORT_BASED_PRESET_QUESTIONS]
+      .sort(() => Math.random() - 0.5)
+      .slice(0, PRESET_QUESTION_COUNT);
+    if (nextQuestions.some((item, index) => item !== previous[index])) {
+      return nextQuestions;
+    }
+  }
+  return [...REPORT_BASED_PRESET_QUESTIONS].slice(0, PRESET_QUESTION_COUNT);
+}
+
 /**
  * 智能问答页面。
  * 创建日期：2026-05-04
@@ -142,6 +171,7 @@ function ChatPage() {
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [session, setSession] = useState<ChatSession | null>(null);
   const [turns, setTurns] = useState<ChatTurn[]>([]);
+  const [presetQuestions, setPresetQuestions] = useState(randomPresetQuestions);
   const [isSending, setIsSending] = useState(false);
   const [isLoadingSessions, setIsLoadingSessions] = useState(false);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
@@ -209,6 +239,7 @@ function ChatPage() {
       setTurns([]);
       setSessions((items) => [created, ...items]);
       window.localStorage.setItem(LAST_SESSION_KEY, String(created.id));
+      setPresetQuestions((items) => randomPresetQuestions(items));
       form.resetFields();
     } catch (error) {
       message.error(error instanceof Error ? error.message : '新建会话失败');
@@ -231,6 +262,7 @@ function ChatPage() {
         } else {
           setSession(null);
           setTurns([]);
+          setPresetQuestions((items) => randomPresetQuestions(items));
           window.localStorage.removeItem(LAST_SESSION_KEY);
         }
       } else if (Number(window.localStorage.getItem(LAST_SESSION_KEY)) === sessionId) {
@@ -395,11 +427,7 @@ function ChatPage() {
             {!isLoadingHistory && turns.length === 0 && !isSending ? (
               <div className="chat-empty-state">
                 <div className="question-bank">
-                  {[
-                    '我关注的股票里，最近一个交易日哪些 H/A 折价最明显？',
-                    '哪些自选股已经达到我设置的阈值？',
-                    '请筛选低估值、高股息且 ROE 稳定的 A 股候选'
-                  ].map((item) => (
+                  {presetQuestions.map((item) => (
                     <Button key={item} onClick={() => form.setFieldValue('question', item)}>
                       {item}
                     </Button>

@@ -7,7 +7,11 @@ from unittest.mock import Mock
 
 from app.core.config import Settings
 from app.services.investment_knowledge_service import InvestmentKnowledgeService
-from app.services.llm_service import OUT_OF_SCOPE_MESSAGE, LlmService
+from app.services.llm_service import (
+    INVESTMENT_ADVISOR_SYSTEM_PROMPT,
+    OUT_OF_SCOPE_MESSAGE,
+    LlmService,
+)
 
 
 def test_llm_service_rejects_non_investment_question_before_api_call() -> None:
@@ -70,6 +74,18 @@ def test_preamble_cleaner_removes_json_process_language() -> None:
     )
 
     assert cleaned.startswith("## 结论")
+
+
+def test_investment_advisor_prompt_allows_professional_opinions() -> None:
+    """确认投资顾问提示词允许输出明确研究判断。
+
+    创建日期：2026-05-04
+    author: sunshengxian
+    """
+
+    assert "评级口径" in INVESTMENT_ADVISOR_SYSTEM_PROMPT
+    assert "配置倾向" in INVESTMENT_ADVISOR_SYSTEM_PROMPT
+    assert "不承诺收益" in INVESTMENT_ADVISOR_SYSTEM_PROMPT
 
 
 def test_investment_knowledge_selects_stock_factor_category() -> None:
