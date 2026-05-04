@@ -74,6 +74,7 @@
   - `Makefile`：提供 `make bootstrap/check/init-db/backend/frontend` 快捷入口。
   - `resources/doc/startup-guide.md`：完整启动、配置、验证和排错手册。
   - `resources/doc/phase-1-detailed-development-plan.md`：已同步当前实现口径，包括 `hk_daily` 禁用、官方 AH 比价主表、定时增量、长字段悬浮和东八区时间展示。
+  - `resources/doc/ah-premium-review-and-display-design.md`：沉淀 A/H 溢价套现评审结论、官方主口径、自选股优先展示和后续落地优先级。
 - 非真实功能测试资产：
   - 后端公式单元测试。
   - SQL Guard 单元测试。
@@ -111,7 +112,8 @@
 
 ## 下一步建议
 
-1. 用当前 Tushare 中转 Token 跑 `stock_basic`、`trade_cal` 等基础接口，记录权限不足的数据集。
-2. 若 AH 官方比价或港股通接口权限不足，先导入人工 AH 配对 CSV 和汇率 CSV，完成自算链路验证。
-3. 配置 LLM Key 后验证 SQL Guard 和问答闭环。
-4. 启动前后端后做页面联调和响应式截图验证。
+1. 将 LLM 只读视图切换到 `official_ah_comparison` 官方主口径，避免智能问答继续读取已废弃的自算表。
+2. `/api/ah-premiums` 关联 `hsgt_constituent`，返回港股通可操作性和 `connect_channels`，并支持按通道筛选。
+3. 新增自选股能力，让首页默认展示用户关注股票的阈值、分位、通道和数据更新时间。
+4. 实时接口修复前，先将“刷新实时”语义降级为“重算派生指标”或在页面注明当前限制。
+5. 配置 LLM Key 后验证 SQL Guard、官方口径问答和前后端联调效果。

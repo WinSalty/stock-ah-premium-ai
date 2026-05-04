@@ -9,6 +9,7 @@
 ## 当前产出
 
 - 一阶段详细开发方案：[phase-1-detailed-development-plan.md](./resources/doc/phase-1-detailed-development-plan.md)
+- A/H 溢价套现评审与展示设计：[ah-premium-review-and-display-design.md](./resources/doc/ah-premium-review-and-display-design.md)
 - 开发进度记录：[development-progress.md](./resources/doc/development-progress.md)
 - 项目启动手册：[startup-guide.md](./resources/doc/startup-guide.md)
 - 数据库初始化 SQL：[00_create_database.sql](./resources/sql/00_create_database.sql)
