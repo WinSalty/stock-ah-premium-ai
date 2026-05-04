@@ -26,6 +26,10 @@ import { fetchOfficialPremiumTrend, fetchPremiumPairs, fetchPremiumSummary } fro
 import { deleteWatchlistItem, fetchWatchlist, updateWatchlistItem } from '../api/watchlist';
 import type { PremiumDirection, PremiumItem, PremiumPairOption, WatchlistOpportunity } from '../types/domain';
 import { formatEast8DateTime } from '../utils/datetime';
+import {
+  getCachedThresholdRecommendation,
+  setCachedThresholdRecommendation
+} from '../utils/thresholdRecommendationCache';
 
 const DEFAULT_PAIR_KEY = '600036.SH|03968.HK';
 const DEFAULT_VISIBLE_MONTHS = 3;
@@ -184,7 +188,7 @@ function buildThresholdRecommendationPrompt(item: WatchlistOpportunity) {
   const directionLabel = direction === 'AH' ? 'A/H' : 'H/A';
   return [
     `请为自选股“${opportunityName(item)}”推荐一个 ${directionLabel} 目标阈值。`,
-    '你是 A/H 跨市场价差研究助手，请基于下面页面数据和可观察历史分位做判断，不要把它描述为无风险套利。',
+    '你是 A/H 跨市场价差研究助手，请优先按知识库中的“自选阈值推荐逻辑”给出稳定、可复核的建议。',
     '',
     '页面数据：',
     `- A 股 / H 股代码：${item.watchlist.a_ts_code} / ${item.watchlist.hk_ts_code}`,
@@ -201,15 +205,23 @@ function buildThresholdRecommendationPrompt(item: WatchlistOpportunity) {
     `- 当前 60 日分位：${promptValue(premium?.premium_percentile_60, '%')}`,
     `- 港股通通道：${premium?.connect_channels || '不可通过港股通操作或缺失'}`,
     '',
-    '请严格输出中文 Markdown，并包含以下三个小节：',
+    '请严格输出中文 Markdown，并包含以下三个小节。不要输出“不构成投资建议”等免责句。',
     '## 最终答案',
-    `用一句话给出建议阈值，格式必须包含“建议将 ${directionLabel} 目标阈值设为 X%”。如果数据不足，也要给出保守值。`,
+    `用一句话给出建议阈值，格式必须包含“建议将 ${directionLabel} 目标阈值设为 X%”。`,
     '## 推荐理由',
-    '用 3-5 条说明分位、当前价差、持有侧、通道可操作性和安全边际。',
-    '## 使用提醒',
-    '说明这只是阈值提醒，不是收益承诺；提示交易成本、流动性、汇率、额度和停牌风险。'
+    '用 3-5 条说明采用的分位、当前价差、持有侧、通道可操作性和阈值缓冲。',
+    '## 执行条件',
+    '给出何时触发、何时上调/下调阈值、需要复核的成交活跃度、汇率和基本面条件。'
   ].join('\n');
 }
+
+function buildThresholdDisplayQuestion(item: WatchlistOpportunity) {
+  const direction = opportunityDirection(item);
+  const directionLabel = direction === 'AH' ? 'A/H' : 'H/A';
+  return `为${opportunityName(item)}推荐 ${directionLabel} 目标阈值`;
+}
+
+type RecommendationSource = 'fresh' | 'cached';
 
 /**
  * 数据总览页面，默认呈现自选股机会状态。
@@ -228,6 +240,7 @@ function OverviewPage() {
   const [orderedOpportunities, setOrderedOpportunities] = useState<WatchlistOpportunity[]>([]);
   const [draggingWatchlistId, setDraggingWatchlistId] = useState<number | null>(null);
   const [aiRecommendation, setAiRecommendation] = useState('');
+  const [aiRecommendationSource, setAiRecommendationSource] = useState<RecommendationSource>('fresh');
   const queryClient = useQueryClient();
   const { data, isLoading } = useQuery({
     queryKey: ['premium-summary'],
@@ -306,15 +319,30 @@ function OverviewPage() {
   });
   const aiRecommendationMutation = useMutation({
     mutationFn: async (item: WatchlistOpportunity) => {
+      const direction = opportunityDirection(item);
+      const cacheInput = {
+        aTsCode: item.watchlist.a_ts_code,
+        hkTsCode: item.watchlist.hk_ts_code,
+        direction
+      };
+      const cached = getCachedThresholdRecommendation(cacheInput);
+      if (cached) {
+        return { answer: cached.answer, source: 'cached' as RecommendationSource };
+      }
       const session = await createChatSession(`阈值建议：${opportunityName(item)}`);
       const result = await sendChatMessage(session.id, {
         question: buildThresholdRecommendationPrompt(item),
+        display_question: buildThresholdDisplayQuestion(item),
         only_watchlist: true,
         ts_code: item.watchlist.a_ts_code
       });
-      return result.answer;
+      setCachedThresholdRecommendation(cacheInput, result.answer);
+      return { answer: result.answer, source: 'fresh' as RecommendationSource };
     },
-    onSuccess: (answer) => setAiRecommendation(answer),
+    onSuccess: (result) => {
+      setAiRecommendation(result.answer);
+      setAiRecommendationSource(result.source);
+    },
     onError: (error) => message.error(error instanceof Error ? error.message : 'AI 推荐失败')
   });
 
@@ -400,6 +428,7 @@ function OverviewPage() {
     setPairKey(opportunityPairKey(item));
     setFallbackDirection(opportunityDirection(item));
     setAiRecommendation('');
+    setAiRecommendationSource('fresh');
   };
 
   const onChangePair = (value: string) => {
@@ -442,6 +471,7 @@ function OverviewPage() {
       return;
     }
     setAiRecommendation('');
+    setAiRecommendationSource('fresh');
     aiRecommendationMutation.mutate(selectedOpportunity);
   };
 
@@ -747,7 +777,7 @@ function OverviewPage() {
           <div className="ai-recommendation-box">
             <div className="ai-recommendation-head">
               <Bot size={16} />
-              <strong>AI 阈值建议</strong>
+              <strong>{aiRecommendationSource === 'cached' ? '之前 AI 推荐信息' : 'AI 阈值建议'}</strong>
             </div>
             {aiRecommendation ? (
               <div className="markdown-answer">

@@ -164,6 +164,7 @@ export interface ChatSessionDetail extends ChatSession {
 
 export interface ChatMessageRequest {
   question: string;
+  display_question?: string;
   start_date?: string;
   end_date?: string;
   ts_code?: string;

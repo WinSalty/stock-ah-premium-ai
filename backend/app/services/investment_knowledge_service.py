@@ -57,6 +57,8 @@ class InvestmentKnowledgeService:
                 "折价",
                 "套利",
                 "价差",
+                "阈值",
+                "目标",
                 "港股通",
                 "a股",
                 "h股",
@@ -64,11 +66,12 @@ class InvestmentKnowledgeService:
                 "互联互通",
             ),
             documents=(
+                "ah-premium/threshold-recommendation-logic.md",
                 "ah-premium/ah-premium-cross-market.md",
                 "ah-premium/ah-arbitrage-principle-and-llm-guide.md",
                 "ah-premium/ah-premium-arbitrage-research-2026.md",
             ),
-            max_chunks=8,
+            max_chunks=9,
         ),
         InvestmentKnowledgeCategory(
             key="stock_selection",

@@ -65,6 +65,7 @@ class ChatMessageCreate(BaseModel):
     """
 
     question: str
+    display_question: str | None = Field(default=None, max_length=256)
     start_date: date | None = None
     end_date: date | None = None
     ts_code: str | None = None

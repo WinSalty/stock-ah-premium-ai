@@ -22,7 +22,7 @@ cd /Users/salty/codeProject/ai/coding/stock-ah-premium-ai
 - Node.js：支持 Vite 5 的版本。
 - MySQL：本机 MySQL 5.7，连接说明见 `/Users/salty/codeProject/ai/doc/mysqluse.md`。
 - Tushare：使用 Python `tushare` SDK，默认中转地址 `http://tsy.xiaodefa.cn`，同步接口运行时优先读取本机文件 `/Users/salty/codeProject/ai/doc/tushare-token.txt`，环境变量 `TUSHARE_TOKEN` 作为兜底。
-- LLM：运行智能问答时默认接入 DeepSeek OpenAI-compatible API，优先读取本机文件 `/Users/salty/codeProject/ai/doc/deepseek-apikey.txt`，环境变量 `LLM_API_KEY` 作为兜底，默认模型 `deepseek-v4-flash`。
+- LLM：运行智能问答时默认接入 DeepSeek OpenAI-compatible API，优先读取本机文件 `/Users/salty/codeProject/ai/doc/deepseek-apikey.txt`，环境变量 `LLM_API_KEY` 作为兜底，默认模型 `deepseek-v4-pro[1m]`。
 
 启动 MySQL：
 
@@ -80,7 +80,7 @@ SYNC_SCHEDULER_TIMEZONE=Asia/Shanghai
 LLM_BASE_URL=https://api.deepseek.com
 LLM_API_KEY_FILE=/Users/salty/codeProject/ai/doc/deepseek-apikey.txt
 LLM_API_KEY=
-LLM_MODEL=deepseek-v4-flash
+LLM_MODEL=deepseek-v4-pro[1m]
 APP_CORS_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
 ```
 
@@ -351,12 +351,12 @@ curl http://127.0.0.1:8000/api/health
 LLM_BASE_URL=https://api.deepseek.com
 LLM_API_KEY_FILE=/Users/salty/codeProject/ai/doc/deepseek-apikey.txt
 LLM_API_KEY=
-LLM_MODEL=deepseek-v4-flash
+LLM_MODEL=deepseek-v4-pro[1m]
 ```
 
 问答页面使用流式响应，输入框按 Enter 发送，Shift+Enter 换行。空会话会从 LLM 投资知识库主题中随机展示投研问题，便于直接生成更完整的投资分析报告。若页面一直没有响应，先确认后端 `/api/health` 正常，再查看后端日志中是否有 LLM 生成 SQL 字段名或数据库执行错误。
 
-AH 溢价、折价和套利相关问题会自动补充本地候选池、市场分布、自选机会，以及 `resources/doc/llm-knowledge/ah-premium/` 中的研究片段，避免只基于单行 SQL 结果作答。银行/非银、五粮液、宏观地产金融推演等问题会按关键词读取 `resources/doc/llm-knowledge/` 对应子目录中的投研报告片段。回答提示词允许 LLM 给出评级口径、配置倾向、优先级、仓位思路和触发条件，但仍禁止收益承诺、内幕信息和违规交易建议。
+AH 溢价、折价和套利相关问题会自动补充本地候选池、市场分布、自选机会，以及 `resources/doc/llm-knowledge/ah-premium/` 中的研究片段，避免只基于单行 SQL 结果作答。银行/非银、五粮液、宏观地产金融推演等问题会按关键词读取 `resources/doc/llm-knowledge/` 对应子目录中的投研报告片段。回答提示词要求 LLM 给出评级口径、配置倾向、优先级、仓位思路、阈值和触发条件，并避免输出模板化免责句。
 
 ## 14. 当前验证状态
 

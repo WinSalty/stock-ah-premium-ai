@@ -25,6 +25,10 @@ import { calculatePremium, fetchPremiumTrend, fetchPremiums } from '../api/marke
 import { createWatchlistItem, deleteWatchlistItem, updateWatchlistItem } from '../api/watchlist';
 import type { HoldingMarket, PremiumDirection, PremiumItem } from '../types/domain';
 import type { PremiumQueryParams } from '../api/market';
+import {
+  getCachedThresholdRecommendation,
+  setCachedThresholdRecommendation
+} from '../utils/thresholdRecommendationCache';
 
 const AH_COLOR = '#2563eb';
 const HA_COLOR = '#0f766e';
@@ -90,7 +94,7 @@ function buildModalThresholdPrompt(item: PremiumItem, values: WatchlistFormValue
   const metricPremium = direction === 'AH' ? item.ah_premium_pct : item.ha_premium_pct;
   return [
     `请为“${values.display_name || item.a_name || item.hk_name || item.a_ts_code}”推荐一个 ${directionLabel} 目标阈值。`,
-    '场景是用户正在设置自选股提醒阈值。请只在用户手动点击后给出建议；不要假设后续会自动交易。',
+    '场景是用户正在设置自选股提醒阈值。请优先按知识库中的“自选阈值推荐逻辑”给出稳定、可复核的建议。',
     '',
     '当前页面数据：',
     `- A 股 / H 股代码：${item.a_ts_code} / ${item.hk_ts_code}`,
@@ -106,15 +110,23 @@ function buildModalThresholdPrompt(item: PremiumItem, values: WatchlistFormValue
     `- 当前 60 日分位：${promptValue(item.premium_percentile_60, '%')}`,
     `- 港股通通道：${item.connect_channels || '不可通过港股通操作或缺失'}`,
     '',
-    '请严格输出中文 Markdown，并包含：',
+    '请严格输出中文 Markdown，并包含以下三个小节。不要输出“不构成投资建议”等免责句。',
     '## 最终答案',
     `一句话给出“建议将 ${directionLabel} 目标阈值设为 X%”。`,
     '## 推荐理由',
-    '3-5 条，必须覆盖历史分位、当前价差、持有侧、港股通可操作性和风险缓冲。',
-    '## 使用提醒',
-    '说明阈值只是提醒，不是收益承诺；提醒成本、流动性、汇率、额度和停牌风险。'
+    '3-5 条，必须覆盖历史分位、当前价差、持有侧、港股通可操作性和阈值缓冲。',
+    '## 执行条件',
+    '给出何时触发、何时上调/下调阈值、需要复核的成交活跃度、汇率和基本面条件。'
   ].join('\n');
 }
+
+function buildModalThresholdDisplayQuestion(item: PremiumItem, values: WatchlistFormValues) {
+  const direction = values.preferred_direction || item.metric_direction || 'HA';
+  const directionLabel = direction === 'AH' ? 'A/H' : 'H/A';
+  return `为${values.display_name || item.a_name || item.hk_name || item.a_ts_code}推荐 ${directionLabel} 目标阈值`;
+}
+
+type RecommendationSource = 'fresh' | 'cached';
 
 /**
  * AH 官方比价查询和官方派生指标重算页面。
@@ -133,6 +145,8 @@ function PremiumPage() {
   const [selected, setSelected] = useState<PremiumItem | null>(null);
   const [watchlistModal, setWatchlistModal] = useState<WatchlistModalState | null>(null);
   const [thresholdRecommendation, setThresholdRecommendation] = useState('');
+  const [thresholdRecommendationSource, setThresholdRecommendationSource] =
+    useState<RecommendationSource>('fresh');
   const queryClient = useQueryClient();
   const premiums = useQuery({
     queryKey: ['premiums', filters, page],
@@ -208,17 +222,32 @@ function PremiumPage() {
         throw new Error('请选择股票');
       }
       const values = watchlistForm.getFieldsValue();
+      const direction = values.preferred_direction || watchlistModal.item.metric_direction || 'HA';
+      const cacheInput = {
+        aTsCode: watchlistModal.item.a_ts_code,
+        hkTsCode: watchlistModal.item.hk_ts_code,
+        direction
+      };
+      const cached = getCachedThresholdRecommendation(cacheInput);
+      if (cached) {
+        return { answer: cached.answer, source: 'cached' as RecommendationSource };
+      }
       const session = await createChatSession(
         `阈值建议：${values.display_name || watchlistModal.item.a_name || watchlistModal.item.a_ts_code}`
       );
       const result = await sendChatMessage(session.id, {
         question: buildModalThresholdPrompt(watchlistModal.item, values),
+        display_question: buildModalThresholdDisplayQuestion(watchlistModal.item, values),
         only_watchlist: true,
         ts_code: watchlistModal.item.a_ts_code
       });
-      return result.answer;
+      setCachedThresholdRecommendation(cacheInput, result.answer);
+      return { answer: result.answer, source: 'fresh' as RecommendationSource };
     },
-    onSuccess: (answer) => setThresholdRecommendation(answer),
+    onSuccess: (result) => {
+      setThresholdRecommendation(result.answer);
+      setThresholdRecommendationSource(result.source);
+    },
     onError: (error) => message.error(error instanceof Error ? error.message : 'AI 推荐失败')
   });
 
@@ -305,6 +334,7 @@ function PremiumPage() {
       note: undefined
     });
     setThresholdRecommendation('');
+    setThresholdRecommendationSource('fresh');
     setWatchlistModal({ mode: 'create', item });
   };
 
@@ -317,6 +347,7 @@ function PremiumPage() {
       note: undefined
     });
     setThresholdRecommendation('');
+    setThresholdRecommendationSource('fresh');
     setWatchlistModal({ mode: 'edit', item });
   };
 
@@ -441,6 +472,7 @@ function PremiumPage() {
           setWatchlistModal(null);
           watchlistForm.resetFields();
           setThresholdRecommendation('');
+          setThresholdRecommendationSource('fresh');
         }}
         okText="保存"
         cancelText="取消"
@@ -471,6 +503,7 @@ function PremiumPage() {
                 loading={thresholdRecommendationMutation.isPending}
                 onClick={() => {
                   setThresholdRecommendation('');
+                  setThresholdRecommendationSource('fresh');
                   thresholdRecommendationMutation.mutate();
                 }}
               >
@@ -482,7 +515,9 @@ function PremiumPage() {
             <div className="ai-recommendation-box modal-ai-recommendation">
               <div className="ai-recommendation-head">
                 <Bot size={16} />
-                <strong>AI 阈值建议</strong>
+                <strong>
+                  {thresholdRecommendationSource === 'cached' ? '之前 AI 推荐信息' : 'AI 阈值建议'}
+                </strong>
               </div>
               {thresholdRecommendation ? (
                 <div className="markdown-answer">

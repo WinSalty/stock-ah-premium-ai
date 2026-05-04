@@ -38,7 +38,7 @@ class Settings(BaseSettings):
         default=Path("/Users/salty/codeProject/ai/doc/deepseek-apikey.txt"),
         alias="LLM_API_KEY_FILE",
     )
-    llm_model: str | None = Field(default="deepseek-v4-flash", alias="LLM_MODEL")
+    llm_model: str | None = Field(default="deepseek-v4-pro[1m]", alias="LLM_MODEL")
     cors_origins: list[str] = Field(default=["http://localhost:5173"], alias="APP_CORS_ORIGINS")
     query_limit_default: int = 200
     query_limit_max: int = 1000

@@ -74,6 +74,16 @@ def _session_title(question: str) -> str:
     return title[:48] or "新的投资问答"
 
 
+def _visible_question(payload: ChatMessageCreate) -> str:
+    """读取可展示和落库的问题，避免暴露内部提示词。
+
+    创建日期：2026-05-04
+    author: sunshengxian
+    """
+
+    return (payload.display_question or payload.question).strip()[:256] or payload.question
+
+
 def _parse_rows(message: LlmChatMessage) -> list[dict[str, object]]:
     """解析消息中保存的数据预览。
 
@@ -240,17 +250,18 @@ def create_message(
     session = _active_session_or_404(db, session_id)
     history = _recent_history(db, session_id)
     now = _now_east8()
+    visible_question = _visible_question(payload)
     user_message = LlmChatMessage(
         session_id=session_id,
         role="user",
-        content=payload.question,
+        content=visible_question,
         created_at=now,
         updated_at=now,
     )
     db.add(user_message)
-    context = payload.model_dump(exclude={"question"}, exclude_none=True)
+    context = payload.model_dump(exclude={"question", "display_question"}, exclude_none=True)
     context["conversation_history"] = history
-    _touch_session(session, payload.question, has_history=bool(history))
+    _touch_session(session, visible_question, has_history=bool(history))
     db.commit()
     answer = LlmService(db).answer(payload.question, context)
     assistant_message = LlmChatMessage(
@@ -263,7 +274,7 @@ def create_message(
         updated_at=_now_east8(),
     )
     db.add(assistant_message)
-    _touch_session(session, payload.question, has_history=True)
+    _touch_session(session, visible_question, has_history=True)
     db.commit()
     return ChatMessageResponse(answer=answer.answer, rows=answer.rows)
 
@@ -283,17 +294,18 @@ def create_message_stream(
     session = _active_session_or_404(db, session_id)
     history = _recent_history(db, session_id)
     now = _now_east8()
+    visible_question = _visible_question(payload)
     user_message = LlmChatMessage(
         session_id=session_id,
         role="user",
-        content=payload.question,
+        content=visible_question,
         created_at=now,
         updated_at=now,
     )
     db.add(user_message)
-    _touch_session(session, payload.question, has_history=bool(history))
+    _touch_session(session, visible_question, has_history=bool(history))
     db.commit()
-    context = payload.model_dump(exclude={"question"}, exclude_none=True)
+    context = payload.model_dump(exclude={"question", "display_question"}, exclude_none=True)
     context["conversation_history"] = history
 
     def stream() -> Iterator[str]:
@@ -317,7 +329,7 @@ def create_message_stream(
                 updated_at=_now_east8(),
             )
             db.add(assistant_message)
-            _touch_session(session, payload.question, has_history=True)
+            _touch_session(session, visible_question, has_history=True)
             db.commit()
             yield _json_line({"type": "done", "answer": answer_text, "rows": rows})
         except Exception:
@@ -334,7 +346,7 @@ def create_message_stream(
                 updated_at=_now_east8(),
             )
             db.add(assistant_message)
-            _touch_session(session, payload.question, has_history=True)
+            _touch_session(session, visible_question, has_history=True)
             db.commit()
             yield _json_line({"type": "error", "answer": answer_text, "rows": rows})
 

@@ -85,7 +85,8 @@ def test_investment_advisor_prompt_allows_professional_opinions() -> None:
 
     assert "评级口径" in INVESTMENT_ADVISOR_SYSTEM_PROMPT
     assert "配置倾向" in INVESTMENT_ADVISOR_SYSTEM_PROMPT
-    assert "不承诺收益" in INVESTMENT_ADVISOR_SYSTEM_PROMPT
+    assert "阈值和触发条件" in INVESTMENT_ADVISOR_SYSTEM_PROMPT
+    assert "不要输出“不构成投资建议”" in INVESTMENT_ADVISOR_SYSTEM_PROMPT
 
 
 def test_investment_knowledge_selects_stock_factor_category() -> None:
@@ -140,6 +141,19 @@ def test_default_sql_uses_watchlist_and_correct_ha_discount_direction() -> None:
     assert sql is not None
     assert "v_watchlist_opportunity" in sql
     assert "ORDER BY ha_premium_pct ASC" in sql
+
+
+def test_investment_knowledge_selects_threshold_recommendation_logic() -> None:
+    """确认阈值推荐问题命中稳定推荐逻辑文档。
+
+    创建日期：2026-05-04
+    author: sunshengxian
+    """
+
+    selection = InvestmentKnowledgeService().select("招商银行 H/A 目标阈值应该设多少？")
+
+    assert "A/H 溢价与跨市场价差" in selection.categories
+    assert any("统一计算框架" in chunk["content"] for chunk in selection.chunks)
 
 
 def _write_minimal_docx(path: Path, paragraphs: tuple[str, ...]) -> None:

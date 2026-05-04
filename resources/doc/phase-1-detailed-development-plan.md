@@ -71,7 +71,7 @@ SYNC_SCHEDULER_TIMEZONE=Asia/Shanghai
 LLM_BASE_URL=https://api.deepseek.com
 LLM_API_KEY_FILE=/Users/salty/codeProject/ai/doc/deepseek-apikey.txt
 LLM_API_KEY=<local-only-fallback>
-LLM_MODEL=deepseek-v4-flash
+LLM_MODEL=deepseek-v4-pro[1m]
 ```
 
 ## 3. Tushare 接口范围
