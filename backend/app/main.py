@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes_chat import router as chat_router
 from app.api.routes_market import router as market_router
+from app.api.routes_query import router as query_router
 from app.api.routes_settings import router as settings_router
 from app.api.routes_sync import router as sync_router
 from app.core.config import get_settings
@@ -31,6 +32,7 @@ def create_app() -> FastAPI:
     app.include_router(settings_router, prefix="/api", tags=["settings"])
     app.include_router(sync_router, prefix="/api", tags=["sync"])
     app.include_router(market_router, prefix="/api", tags=["market"])
+    app.include_router(query_router, prefix="/api", tags=["query"])
     app.include_router(chat_router, prefix="/api", tags=["chat"])
     return app
 

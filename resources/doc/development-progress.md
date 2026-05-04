@@ -43,9 +43,14 @@
   - OpenAI-compatible Chat API 封装。
   - 只读 SQL Guard：只允许 SELECT、禁止多语句和写库操作、限制白名单视图、自动 limit。
   - 会话与消息落库。
+- 统一数据查询：
+  - 后端新增 `/api/query/datasets` 和 `/api/query/rows`，按白名单查询已同步数据。
+  - 支持 A 股/港股基础信息、交易日历、日线行情、沪深港通名单、外汇、AH 配对、官方 AH 比价、自算 AH 溢价、同步任务记录。
+  - 支持关键词、日期范围、分页和字段列定义返回。
 - 前端 React 项目：
   - 总览页：指标、溢价榜、Top 10 图表。
   - 数据同步页：数据集、日期、代码、通道、任务记录。
+  - 数据查询页：切换查看不同同步数据，支持关键词、日期范围和分页。
   - AH 溢价页：筛选、分页表格、计算入口、趋势抽屉。
   - 智能问答页：会话、问题输入、SQL 预览和结果表格。
 - 本地运行与验收脚本：
@@ -69,13 +74,14 @@
 ## 已执行的非功能性检查
 
 - `python3 -m compileall backend/app backend/tests`：通过。
-- 后端虚拟环境使用 `/opt/homebrew/bin/python3.13` 创建，`pytest`：9 个单元测试通过。
+- 后端虚拟环境使用 `/opt/homebrew/bin/python3.13` 创建，`pytest`：10 个单元测试通过。
 - `ruff check app tests`：通过。
 - `npm install`：完成，生成 `frontend/package-lock.json`。
 - `npm run build`：通过。
 - `npm audit --omit=dev`：0 个生产依赖漏洞。
 - `scripts/init-db.sh`：通过，已创建 `stock_ah_ai` 表和视图。
 - `scripts/check.sh`：已在切换 Tushare 中转 SDK、调整 token 文件优先级后重新通过。
+- 新增数据查询后，`scripts/check.sh` 已重新通过。
 - Tushare 中转 SDK 最小连通性：`stock_basic` 携带 `limit=1` 查询成功返回 1 行，未落库。
 - 敏感信息扫描：只发现文档中的 `<local-only>` 占位符，未发现真实 Token、密码或 API Key。
 

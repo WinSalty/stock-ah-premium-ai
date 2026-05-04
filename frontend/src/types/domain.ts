@@ -92,3 +92,37 @@ export interface ChatMessageResponse {
 export interface ImportResponse {
   imported_rows: number;
 }
+
+export interface QueryColumn {
+  key: string;
+  label: string;
+  width: number | null;
+}
+
+export interface QueryDatasetInfo {
+  name: string;
+  label: string;
+  description: string;
+  date_field: string | null;
+  columns: QueryColumn[];
+}
+
+export type QueryCellValue = string | number | boolean | null;
+
+export interface DataQueryResponse {
+  dataset: string;
+  total: number;
+  page: number;
+  page_size: number;
+  columns: QueryColumn[];
+  rows: Record<string, QueryCellValue>[];
+}
+
+export interface DataQueryParams {
+  dataset: string;
+  keyword?: string;
+  start_date?: string;
+  end_date?: string;
+  page: number;
+  page_size: number;
+}

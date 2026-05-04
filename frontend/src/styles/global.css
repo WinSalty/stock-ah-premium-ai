@@ -118,6 +118,33 @@ body {
   align-items: end;
 }
 
+.query-filter-grid {
+  display: grid;
+  grid-template-columns: minmax(180px, 260px) minmax(180px, 280px) minmax(260px, 360px) auto;
+  gap: 12px;
+  align-items: end;
+}
+
+.field-label {
+  display: block;
+  margin-bottom: 8px;
+  color: #475569;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.query-actions {
+  padding-bottom: 0;
+}
+
+.query-result-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 14px;
+}
+
 .chat-form-grid {
   display: grid;
   grid-template-columns: minmax(240px, 420px) minmax(160px, 260px);
@@ -211,6 +238,10 @@ body {
   .manual-import-grid {
     grid-template-columns: 1fr;
   }
+
+  .query-filter-grid {
+    grid-template-columns: repeat(2, minmax(160px, 1fr));
+  }
 }
 
 @media (max-width: 720px) {
@@ -221,6 +252,7 @@ body {
   .sync-form-grid,
   .premium-filter-grid,
   .manual-import-grid,
+  .query-filter-grid,
   .chat-form-grid {
     grid-template-columns: 1fr;
   }

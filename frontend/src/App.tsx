@@ -1,16 +1,18 @@
 import { useMemo, useState, type ReactNode } from 'react';
 import { Layout, Menu, Typography } from 'antd';
-import { BarChart3, Bot, DatabaseZap, LayoutDashboard } from 'lucide-react';
+import { BarChart3, Bot, DatabaseZap, LayoutDashboard, TableProperties } from 'lucide-react';
 import OverviewPage from './pages/OverviewPage';
 import SyncPage from './pages/SyncPage';
 import PremiumPage from './pages/PremiumPage';
 import ChatPage from './pages/ChatPage';
+import DataQueryPage from './pages/DataQueryPage';
 
-type PageKey = 'overview' | 'sync' | 'premium' | 'chat';
+type PageKey = 'overview' | 'sync' | 'query' | 'premium' | 'chat';
 
 const pages: Record<PageKey, ReactNode> = {
   overview: <OverviewPage />,
   sync: <SyncPage />,
+  query: <DataQueryPage />,
   premium: <PremiumPage />,
   chat: <ChatPage />
 };
@@ -26,6 +28,7 @@ function App() {
     () => [
       { key: 'overview', icon: <LayoutDashboard size={18} />, label: '总览' },
       { key: 'sync', icon: <DatabaseZap size={18} />, label: '同步' },
+      { key: 'query', icon: <TableProperties size={18} />, label: '查询' },
       { key: 'premium', icon: <BarChart3 size={18} />, label: '溢价' },
       { key: 'chat', icon: <Bot size={18} />, label: '问答' }
     ],
