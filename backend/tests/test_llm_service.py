@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import zipfile
+from pathlib import Path
 from unittest.mock import Mock
 
 from app.core.config import Settings
@@ -83,6 +85,28 @@ def test_investment_knowledge_selects_stock_factor_category() -> None:
     assert selection.chunks
 
 
+def test_investment_knowledge_reads_docx_reports(tmp_path: Path) -> None:
+    """确认 LLM 知识服务可以读取分类目录中的 docx 投研报告。
+
+    创建日期：2026-05-04
+    author: sunshengxian
+    """
+
+    report_path = tmp_path / "company-research" / "五粮液股票投资报告_2026.docx"
+    _write_minimal_docx(
+        report_path,
+        paragraphs=(
+            "五粮液（000858.SZ）股票投资报告",
+            "投资结论：公司处于信任修复期，需要跟踪批价、库存和现金流。",
+        ),
+    )
+
+    selection = InvestmentKnowledgeService(doc_root=tmp_path).select("五粮液当前投资价值如何")
+
+    assert "个股深度投资报告" in selection.categories
+    assert any("信任修复期" in chunk["content"] for chunk in selection.chunks)
+
+
 def test_default_sql_uses_watchlist_and_correct_ha_discount_direction() -> None:
     """确认关注股票的 H/A 折价问题按 H 股折价方向排序。
 
@@ -100,3 +124,18 @@ def test_default_sql_uses_watchlist_and_correct_ha_discount_direction() -> None:
     assert sql is not None
     assert "v_watchlist_opportunity" in sql
     assert "ORDER BY ha_premium_pct ASC" in sql
+
+
+def _write_minimal_docx(path: Path, paragraphs: tuple[str, ...]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    body = "".join(
+        f"<w:p><w:r><w:t>{paragraph}</w:t></w:r></w:p>" for paragraph in paragraphs
+    )
+    document_xml = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+        f"<w:body>{body}</w:body>"
+        "</w:document>"
+    )
+    with zipfile.ZipFile(path, "w") as docx_file:
+        docx_file.writestr("word/document.xml", document_xml)

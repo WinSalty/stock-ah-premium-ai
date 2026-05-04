@@ -58,12 +58,12 @@
   - API Key 优先读取 `/Users/salty/codeProject/ai/doc/deepseek-apikey.txt`，`LLM_API_KEY` 仅作兜底，不把密钥暴露给前端。
   - 已将 LLM 系统角色升级为专业金融投资分析顾问，仅允许股票、估值、A/H 溢价、港股通、组合配置和风险控制等投资研究相关问题。
   - 已新增回答约束：直接输出专业报告，不输出寒暄、JSON/SQL/底层数据来源等过程说明，不把 A/H 价差描述为无风险套利。
-  - 新增投资知识分类目录 `resources/doc/investment/`，按 A/H 跨市场价差、A 股选股估值、组合风险与报告框架分组，问答时按问题和上下文选择性读取。
+  - 新增 LLM 专用投资知识库 `resources/doc/llm-knowledge/`，按 A/H 跨市场价差、A 股选股估值、银行与非银、个股研究、宏观产业推演、组合风险与报告框架分组；问答时按问题和上下文选择性读取 Markdown 与 DOCX 片段。
   - 问答页面支持流式响应、Enter 发送和 Shift+Enter 换行。
   - 消息提交后立即清空输入框；数据查询准备失败时降级为无精确数据回答，避免整轮问答直接失败。
   - LLM SQL 生成后会按本地视图字段清单校验并在字段名执行错误时自动修复重试一次。
   - 关注/自选股的 H/A 折价、H/A 溢价问题已按对应方向排序，避免把 H 股折价和 H 股溢价混用。
-  - AH 溢价、折价和套利类问题会追加候选池、市场分布、自选机会和投资研究片段。
+  - AH 溢价、折价和套利类问题会追加候选池、市场分布、自选机会和 `llm-knowledge/ah-premium/` 中的投资研究片段。
   - 只读 SQL Guard：只允许 SELECT、禁止多语句和写库操作、限制白名单视图、自动 limit。
   - 默认 schema 已切换为官方 AH 比价、自选机会和港股通可操作性视图。
   - 会话与消息落库；提交新问题时会读取最近会话历史作为上下文记忆。
@@ -98,7 +98,7 @@
   - `resources/doc/startup-guide.md`：完整启动、配置、验证和排错手册。
   - `resources/doc/phase-1-detailed-development-plan.md`：已同步当前实现口径，包括 `hk_daily` 禁用、官方 AH 比价主表、定时增量、长字段悬浮和东八区时间展示。
   - `resources/doc/ah-premium-review-and-display-design.md`：沉淀 A/H 溢价套现评审结论、官方主口径、自选股优先展示和后续落地优先级。
-  - `resources/doc/ah-premium-arbitrage-research-2026.md`：沉淀 2026 AH 溢价套利研究、当前候选池和 LLM 回答框架。
+  - `resources/doc/llm-knowledge/README.md`：沉淀 LLM 投资问答知识库分类、使用原则和新增材料登记方式。
 - 非真实功能测试资产：
   - 后端公式单元测试。
   - SQL Guard 单元测试。
