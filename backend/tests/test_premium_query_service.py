@@ -90,3 +90,55 @@ def test_premium_query_filters_hk_connect_and_returns_metrics() -> None:
     assert item.metric_direction == "HA"
     assert item.premium_percentile_60 is not None
     assert item.opportunity_status == "REACHED"
+
+
+def test_list_pairs_deduplicates_ex_right_names() -> None:
+    """确认 AH 配对下拉按代码去重，并优先展示非除权除息临时名称。
+
+    创建日期：2026-05-04
+    author: sunshengxian
+    """
+
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    latest = date(2026, 5, 4)
+    with Session(engine) as db:
+        db.add_all(
+            [
+                OfficialAHComparison(
+                    trade_date=latest,
+                    a_ts_code="600036.SH",
+                    hk_ts_code="03968.HK",
+                    a_name="XD招商银",
+                    hk_name="招商银行",
+                    ah_comparison=Decimal("1.20"),
+                    ah_premium=Decimal("20"),
+                    ha_comparison=Decimal("0.83333333"),
+                    ha_premium=Decimal("-16.67"),
+                    is_realtime=False,
+                    data_source="TUSHARE_OFFICIAL",
+                ),
+                OfficialAHComparison(
+                    trade_date=latest - timedelta(days=1),
+                    a_ts_code="600036.SH",
+                    hk_ts_code="03968.HK",
+                    a_name="招商银行",
+                    hk_name="招商银行",
+                    ah_comparison=Decimal("1.18"),
+                    ah_premium=Decimal("18"),
+                    ha_comparison=Decimal("0.84745763"),
+                    ha_premium=Decimal("-15.25"),
+                    is_realtime=False,
+                    data_source="TUSHARE_OFFICIAL",
+                ),
+            ]
+        )
+        db.commit()
+
+        pairs = PremiumQueryService(db).list_pairs(limit=10)
+
+    assert len(pairs) == 1
+    assert pairs[0].a_ts_code == "600036.SH"
+    assert pairs[0].hk_ts_code == "03968.HK"
+    assert pairs[0].a_name == "招商银行"
+    assert pairs[0].latest_trade_date == latest

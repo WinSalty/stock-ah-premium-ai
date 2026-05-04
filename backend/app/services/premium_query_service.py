@@ -21,6 +21,7 @@ CONNECT_TYPES = ("SH_HK", "SZ_HK")
 DEFAULT_METRIC_DIRECTION = "HA"
 NEAR_TARGET_DISTANCE_PCT = Decimal("3")
 ROLLING_WINDOWS = (20, 60, 120)
+EX_RIGHT_PREFIXES = ("XD", "XR", "DR")
 
 
 @dataclass(frozen=True)
@@ -171,13 +172,12 @@ class PremiumQueryService:
         author: sunshengxian
         """
 
-        latest_date = func.max(OfficialAHComparison.trade_date).label("latest_trade_date")
         statement = select(
             OfficialAHComparison.a_ts_code,
             OfficialAHComparison.hk_ts_code,
             OfficialAHComparison.a_name,
             OfficialAHComparison.hk_name,
-            latest_date,
+            OfficialAHComparison.trade_date,
         )
         if keyword:
             like = f"%{keyword.strip()}%"
@@ -189,25 +189,37 @@ class PremiumQueryService:
                     OfficialAHComparison.hk_name.like(like),
                 )
             )
-        statement = (
-            statement.group_by(
+        rows = self.db.execute(
+            statement.order_by(
+                desc(OfficialAHComparison.trade_date),
                 OfficialAHComparison.a_ts_code,
                 OfficialAHComparison.hk_ts_code,
-                OfficialAHComparison.a_name,
-                OfficialAHComparison.hk_name,
             )
-            .order_by(desc(latest_date), OfficialAHComparison.a_ts_code)
-            .limit(limit)
-        )
+        ).all()
+        pair_map: dict[tuple[str, str], dict[str, object]] = {}
+        for row in rows:
+            key = (row.a_ts_code, row.hk_ts_code)
+            current = pair_map.get(key)
+            if current is None:
+                pair_map[key] = {
+                    "a_ts_code": row.a_ts_code,
+                    "hk_ts_code": row.hk_ts_code,
+                    "a_name": row.a_name,
+                    "hk_name": row.hk_name,
+                    "latest_trade_date": row.trade_date,
+                }
+                continue
+            if self._prefer_display_name(current.get("a_name"), row.a_name):
+                current["a_name"] = row.a_name
+            if current.get("hk_name") is None and row.hk_name is not None:
+                current["hk_name"] = row.hk_name
         return [
-            PremiumPairOption(
-                a_ts_code=row.a_ts_code,
-                hk_ts_code=row.hk_ts_code,
-                a_name=row.a_name,
-                hk_name=row.hk_name,
-                latest_trade_date=row.latest_trade_date,
-            )
-            for row in self.db.execute(statement).all()
+            PremiumPairOption(**value)
+            for value in sorted(
+                pair_map.values(),
+                key=lambda item: item["latest_trade_date"] or date.min,
+                reverse=True,
+            )[:limit]
         ]
 
     def trend(
@@ -520,6 +532,16 @@ class PremiumQueryService:
 
     def _normalize_direction(self, value: str | None) -> str:
         return "AH" if str(value or "").upper() == "AH" else "HA"
+
+    def _prefer_display_name(self, current: object, candidate: str | None) -> bool:
+        if not candidate:
+            return False
+        if not current:
+            return True
+        return self._is_ex_right_name(str(current)) and not self._is_ex_right_name(candidate)
+
+    def _is_ex_right_name(self, value: str) -> bool:
+        return value.strip().upper().startswith(EX_RIGHT_PREFIXES)
 
     def _average(self, values: list[Decimal]) -> Decimal | None:
         if not values:

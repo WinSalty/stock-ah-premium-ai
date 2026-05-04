@@ -40,7 +40,7 @@ function splitPairKey(value: string) {
 
 function formatPairLabel(item: PremiumPairOption) {
   const rawAName = item.a_name?.trim();
-  const exRightMatch = rawAName?.match(/^(XD|XR|DR)(.+)$/);
+  const exRightMatch = exRightNameMatch(rawAName);
   const exRightLabelMap: Record<string, string> = {
     XD: '除息',
     XR: '除权',
@@ -58,6 +58,14 @@ function formatPairLabel(item: PremiumPairOption) {
   }
 
   return `${aDisplayName} / ${hkName} (${codeLabel})`;
+}
+
+function exRightNameMatch(value?: string | null) {
+  return value?.trim().match(/^(XD|XR|DR)(.+)$/);
+}
+
+function shouldReplacePairOption(current: PremiumPairOption, candidate: PremiumPairOption) {
+  return Boolean(exRightNameMatch(current.a_name)) && !exRightNameMatch(candidate.a_name);
 }
 
 function getDefaultZoomStartValue(tradeDates: string[]) {
@@ -161,6 +169,29 @@ function OverviewPage() {
   });
   const pairs = useQuery({ queryKey: ['premium-pairs'], queryFn: () => fetchPremiumPairs() });
   const watchlist = useQuery({ queryKey: ['watchlist'], queryFn: () => fetchWatchlist() });
+  const pairOptions = useMemo(() => {
+    const optionMap = new Map<string, PremiumPairOption>();
+    pairs.data?.forEach((item) => {
+      const key = `${item.a_ts_code}|${item.hk_ts_code}`;
+      const current = optionMap.get(key);
+      if (!current) {
+        optionMap.set(key, item);
+        return;
+      }
+      if (shouldReplacePairOption(current, item)) {
+        optionMap.set(key, {
+          ...item,
+          latest_trade_date:
+            current.latest_trade_date && item.latest_trade_date
+              ? current.latest_trade_date > item.latest_trade_date
+                ? current.latest_trade_date
+                : item.latest_trade_date
+              : current.latest_trade_date || item.latest_trade_date
+        });
+      }
+    });
+    return Array.from(optionMap.values());
+  }, [pairs.data]);
   const opportunities = watchlist.data || [];
   const selectedOpportunity = opportunities.find((item) => item.watchlist.id === selectedWatchlistId) || null;
   const direction = fallbackDirection;
@@ -205,18 +236,18 @@ function OverviewPage() {
   }, [isManualChart, opportunities, selectedWatchlistId]);
 
   useEffect(() => {
-    if (!pairs.data?.length || (!isManualChart && selectedOpportunity)) {
+    if (!pairOptions.length || (!isManualChart && selectedOpportunity)) {
       return;
     }
-    if (pairs.data.some((item) => `${item.a_ts_code}|${item.hk_ts_code}` === pairKey)) {
+    if (pairOptions.some((item) => `${item.a_ts_code}|${item.hk_ts_code}` === pairKey)) {
       return;
     }
-    const defaultPair = pairs.data.find(
+    const defaultPair = pairOptions.find(
       (item) => item.a_ts_code === '600036.SH' && item.hk_ts_code === '03968.HK'
     );
-    const fallbackPair = defaultPair || pairs.data[0];
+    const fallbackPair = defaultPair || pairOptions[0];
     setPairKey(`${fallbackPair.a_ts_code}|${fallbackPair.hk_ts_code}`);
-  }, [isManualChart, pairKey, pairs.data, selectedOpportunity]);
+  }, [isManualChart, pairKey, pairOptions, selectedOpportunity]);
 
   const watchlistPremiums = opportunities
     .map((item) => item.premium)
@@ -226,7 +257,7 @@ function OverviewPage() {
     acc[key] = (acc[key] || 0) + 1;
     return acc;
   }, {});
-  const selectedPair = pairs.data?.find((item) => `${item.a_ts_code}|${item.hk_ts_code}` === pairKey);
+  const selectedPair = pairOptions.find((item) => `${item.a_ts_code}|${item.hk_ts_code}` === pairKey);
   const trendTitleName = chartWatchlist ? opportunityName(chartWatchlist) : selectedPair?.a_name || pair.aTsCode;
   const directionLabel = direction === 'HA' ? 'H/A' : 'A/H';
   const premiumColor = direction === 'HA' ? HA_COLOR : AH_COLOR;
@@ -555,7 +586,7 @@ function OverviewPage() {
                 value={pairKey}
                 loading={pairs.isLoading}
                 optionFilterProp="label"
-                options={pairs.data?.map((item) => ({
+                options={pairOptions.map((item) => ({
                   value: `${item.a_ts_code}|${item.hk_ts_code}`,
                   label: formatPairLabel(item)
                 }))}
