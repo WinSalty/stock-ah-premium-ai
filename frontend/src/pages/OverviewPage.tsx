@@ -15,7 +15,7 @@ import {
 } from 'antd';
 import ReactECharts from 'echarts-for-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type WheelEvent } from 'react';
 import PageHeader from '../components/PageHeader';
 import PremiumTable from '../components/PremiumTable';
 import { fetchOfficialPremiumTrend, fetchPremiumPairs, fetchPremiumSummary } from '../api/market';
@@ -26,6 +26,7 @@ import { formatEast8DateTime } from '../utils/datetime';
 const DEFAULT_PAIR_KEY = '600036.SH|03968.HK';
 const DEFAULT_VISIBLE_MONTHS = 3;
 const MIN_VISIBLE_POINTS = 20;
+const TRACKPAD_WHEEL_UNIT = 80;
 
 function splitPairKey(value: string) {
   const [aTsCode, hkTsCode] = value.split('|');
@@ -66,6 +67,21 @@ function numberValue(value?: string | null) {
   }
   const result = Number(value);
   return Number.isFinite(result) ? result : null;
+}
+
+function clamp(value: number, min: number, max: number) {
+  return Math.min(Math.max(value, min), max);
+}
+
+function dataZoomValueIndex(value: string | number | undefined, dates: string[], fallback: number) {
+  if (value === undefined) {
+    return fallback;
+  }
+  if (typeof value === 'number' && Number.isInteger(value) && value >= 0 && value < dates.length) {
+    return value;
+  }
+  const index = dates.indexOf(String(value));
+  return index >= 0 ? index : fallback;
 }
 
 function formatPercent(value?: string | null) {
@@ -117,6 +133,10 @@ function opportunityDirection(item: WatchlistOpportunity): PremiumDirection {
  * author: sunshengxian
  */
 function OverviewPage() {
+  const chartRef = useRef<ReactECharts | null>(null);
+  const wheelDeltaRef = useRef(0);
+  const wheelFrameRef = useRef<number | null>(null);
+  const zoomRangeRef = useRef({ key: '', start: 0, end: 0 });
   const [pairKey, setPairKey] = useState(DEFAULT_PAIR_KEY);
   const [selectedWatchlistId, setSelectedWatchlistId] = useState<number | null>(null);
   const [fallbackDirection, setFallbackDirection] = useState<PremiumDirection>('HA');
@@ -199,9 +219,33 @@ function OverviewPage() {
   const trendDates = useMemo(() => trend.data?.map((item) => item.trade_date) || [], [trend.data]);
   const defaultZoomStartValue = getDefaultZoomStartValue(trendDates);
   const defaultZoomEndValue = trendDates[trendDates.length - 1];
+  const chartKey = `${pair.aTsCode}-${pair.hkTsCode}-${direction}`;
+  const defaultZoomStartIndex = defaultZoomStartValue ? trendDates.indexOf(defaultZoomStartValue) : 0;
   const minZoomValueSpan =
     trendDates.length > 1 ? Math.min(Math.max(trendDates.length - 1, 1), MIN_VISIBLE_POINTS) : undefined;
   const targetValue = numberValue(chartWatchlist?.watchlist.target_premium_pct);
+
+  useEffect(() => {
+    zoomRangeRef.current = {
+      key: chartKey,
+      start: Math.max(defaultZoomStartIndex, 0),
+      end: Math.max(trendDates.length - 1, 0)
+    };
+    wheelDeltaRef.current = 0;
+    if (wheelFrameRef.current !== null) {
+      window.cancelAnimationFrame(wheelFrameRef.current);
+      wheelFrameRef.current = null;
+    }
+  }, [chartKey, defaultZoomStartIndex, trendDates.length]);
+
+  useEffect(
+    () => () => {
+      if (wheelFrameRef.current !== null) {
+        window.cancelAnimationFrame(wheelFrameRef.current);
+      }
+    },
+    []
+  );
 
   const onSelectOpportunity = (item: WatchlistOpportunity) => {
     setIsManualChart(false);
@@ -233,6 +277,76 @@ function OverviewPage() {
     });
   };
 
+  const onChartDataZoom = useCallback(
+    (params: {
+      batch?: Array<{
+        start?: number;
+        end?: number;
+        startValue?: string | number;
+        endValue?: string | number;
+      }>;
+    }) => {
+      const payload = params.batch?.[0];
+      if (!payload || trendDates.length < 2) {
+        return;
+      }
+      const maxIndex = trendDates.length - 1;
+      const start =
+        payload.startValue !== undefined
+          ? dataZoomValueIndex(payload.startValue, trendDates, 0)
+          : Math.round((maxIndex * Number(payload.start ?? 0)) / 100);
+      const end =
+        payload.endValue !== undefined
+          ? dataZoomValueIndex(payload.endValue, trendDates, maxIndex)
+          : Math.round((maxIndex * Number(payload.end ?? 100)) / 100);
+      zoomRangeRef.current = {
+        key: chartKey,
+        start: clamp(start >= 0 ? start : 0, 0, maxIndex),
+        end: clamp(end >= 0 ? end : maxIndex, 0, maxIndex)
+      };
+    },
+    [chartKey, trendDates]
+  );
+
+  const chartEvents = useMemo(() => ({ datazoom: onChartDataZoom }), [onChartDataZoom]);
+
+  // 触摸板横向滚动由外层节流接管，避免 ECharts inside dataZoom 高频 wheel 抖动。
+  const onChartWheel = useCallback(
+    (event: WheelEvent<HTMLDivElement>) => {
+      if (trendDates.length < 2 || Math.abs(event.deltaX) <= Math.abs(event.deltaY)) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      wheelDeltaRef.current += event.deltaX;
+      if (wheelFrameRef.current !== null) {
+        return;
+      }
+      wheelFrameRef.current = window.requestAnimationFrame(() => {
+        wheelFrameRef.current = null;
+        const delta = wheelDeltaRef.current;
+        wheelDeltaRef.current = 0;
+        const maxIndex = trendDates.length - 1;
+        const currentRange =
+          zoomRangeRef.current.key === chartKey
+            ? zoomRangeRef.current
+            : { key: chartKey, start: Math.max(defaultZoomStartIndex, 0), end: maxIndex };
+        const span = Math.max(currentRange.end - currentRange.start, 1);
+        const step = Math.max(1, Math.round(Math.abs(delta) / TRACKPAD_WHEEL_UNIT));
+        const nextStart = clamp(currentRange.start + Math.sign(delta) * step, 0, maxIndex - span);
+        const nextEnd = nextStart + span;
+        zoomRangeRef.current = { key: chartKey, start: nextStart, end: nextEnd };
+        chartRef.current?.getEchartsInstance().dispatchAction({
+          type: 'dataZoom',
+          dataZoomIndex: 0,
+          startValue: trendDates[nextStart],
+          endValue: trendDates[nextEnd]
+        });
+      });
+    },
+    [chartKey, defaultZoomStartIndex, trendDates]
+  );
+
   const trendChartOption = useMemo(
     () => ({
       tooltip: { trigger: 'axis', valueFormatter: (value: number) => `${value.toFixed(2)}%` },
@@ -245,9 +359,10 @@ function OverviewPage() {
           startValue: defaultZoomStartValue,
           endValue: defaultZoomEndValue,
           minValueSpan: minZoomValueSpan,
-          zoomOnMouseWheel: 'shift',
-          moveOnMouseWheel: true,
-          moveOnMouseMove: false
+          zoomOnMouseWheel: false,
+          moveOnMouseWheel: false,
+          moveOnMouseMove: true,
+          preventDefaultMouseMove: true
         },
         {
           type: 'slider',
@@ -437,9 +552,12 @@ function OverviewPage() {
           </div>
           {trend.data?.length ? (
             <ReactECharts
+              ref={chartRef}
               key={`${pair.aTsCode}-${pair.hkTsCode}-${direction}`}
               option={trendChartOption}
               notMerge
+              onEvents={chartEvents}
+              onWheelCapture={onChartWheel}
               className="overview-chart"
             />
           ) : (
