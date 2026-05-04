@@ -207,7 +207,8 @@ function SyncPage() {
                           loading={datasets.isLoading}
                           options={datasets.data?.map((item) => ({
                             value: item.name,
-                            label: item.label
+                            label: item.supports_full_sync ? item.label : `${item.label}（已禁用）`,
+                            disabled: !item.supports_full_sync
                           }))}
                         />
                       </Form.Item>

@@ -65,9 +65,9 @@ CORE_SYNC_PLAN: tuple[tuple[str, dict[str, Any]], ...] = (
     ("stock_hsgt", {"type": "SH_HK"}),
     ("stock_hsgt", {"type": "SZ_HK"}),
     ("a_daily", {}),
-    ("hk_daily", {}),
     ("fx_daily", {}),
 )
+DISABLED_INTERFACE_DATASETS = {"hk_daily"}
 
 
 DATASET_SPECS: dict[str, DatasetSpec] = {
@@ -310,18 +310,7 @@ class SyncService:
         """
 
         return [
-            {
-                "name": spec.name,
-                "label": spec.label,
-                "description": spec.description,
-                "supports_date_range": spec.supports_date_range,
-                "supports_incremental": True,
-                "supports_full_sync": True,
-                "default_full_start_date": spec.full_start_date.isoformat()
-                if spec.full_start_date
-                else None,
-                "sync_strategy": self._sync_strategy_text(spec),
-            }
+            self._dataset_info(spec)
             for spec in DATASET_SPECS.values()
         ]
 
@@ -334,6 +323,8 @@ class SyncService:
 
         if dataset not in DATASET_SPECS:
             raise ValueError(f"不支持的数据集：{dataset}")
+        if dataset in DISABLED_INTERFACE_DATASETS:
+            raise ValueError("当前 token 无法请求 hk_daily，已按要求禁用该接口同步。")
         spec = DATASET_SPECS[dataset]
         params = self._resolve_mode_params(spec, params)
         run = SyncRun(
@@ -473,6 +464,32 @@ class SyncService:
         if spec.split_by_trade_date:
             return f"支持日期范围；全量默认从 {start} 起按交易日拆分请求，避免触发单次返回上限。"
         return f"支持日期范围；全量默认从 {start} 起按接口范围参数请求。"
+
+    def _dataset_info(self, spec: DatasetSpec) -> dict[str, Any]:
+        disabled = spec.name in DISABLED_INTERFACE_DATASETS
+        if disabled:
+            return {
+                "name": spec.name,
+                "label": spec.label,
+                "description": "当前 token 无法请求，已禁用接口同步。",
+                "supports_date_range": False,
+                "supports_incremental": False,
+                "supports_full_sync": False,
+                "default_full_start_date": None,
+                "sync_strategy": "已按要求禁用，不会在一键同步中请求 hk_daily。",
+            }
+        return {
+            "name": spec.name,
+            "label": spec.label,
+            "description": spec.description,
+            "supports_date_range": spec.supports_date_range,
+            "supports_incremental": True,
+            "supports_full_sync": True,
+            "default_full_start_date": spec.full_start_date.isoformat()
+            if spec.full_start_date
+            else None,
+            "sync_strategy": self._sync_strategy_text(spec),
+        }
 
     def _get_checkpoint(self, dataset: str, scope_key: str) -> SyncCheckpoint | None:
         return self.db.get(SyncCheckpoint, {"dataset": dataset, "scope_key": scope_key})

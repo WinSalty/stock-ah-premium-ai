@@ -226,8 +226,9 @@ curl -X POST http://127.0.0.1:8000/api/manual-import/ah-pairs/csv \
 5. `ah_comparison`
 6. `stock_hsgt` 的 `SH_HK`、`SZ_HK`
 7. `a_daily`
-8. `hk_daily`
-9. `fx_daily`
+8. `fx_daily`
+
+`hk_daily` 当前 token 无法请求，已禁用接口同步，一键同步不会再尝试该接口。若后续有可用权限，再重新启用。
 
 默认全量起点：
 
