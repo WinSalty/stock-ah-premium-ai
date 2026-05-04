@@ -4,7 +4,7 @@
 
 ## 当前状态
 
-已按一阶段方案完成主要代码开发和本地 MySQL 初始化验证。当前仍未执行 Tushare 与 LLM 真实接口验证，原因是当前 Tushare Token 权限较低，且 LLM Key 尚未配置。
+已按一阶段方案完成主要代码开发和本地 MySQL 初始化验证。当前已按中转服务文档切换为 Tushare Python SDK 调用方式，默认地址为 `http://tsy.xiaodefa.cn`。LLM Key 尚未配置。
 
 ## 已完成
 
@@ -20,7 +20,9 @@
   - LLM 只读视图和只读用户模板 SQL。
   - 已在本地 MySQL 5.7 完成建库、Alembic 迁移和只读视图创建验证。
 - Tushare 同步：
-  - HTTP 客户端封装。
+  - Python SDK 客户端封装，按中转文档设置 `pro._DataApi__http_url`。
+  - 使用 `ts.pro_api(token, timeout=...)` 进程内传入 token，避免 SDK 额外写入用户目录缓存文件。
+  - 默认中转地址 `http://tsy.xiaodefa.cn`，支持请求间隔配置，降低触发冷却风险。
   - 数据集配置：A 股基础、A 股日线、A 股交易日历、港股基础、港股日线、港股交易日历、沪深港通名单、外汇日线、官方 AH 比价。
   - 同步任务记录、失败状态、checkpoint、MySQL upsert。
   - 官方 AH 比价同步后维护 AH 配对。
@@ -58,25 +60,26 @@
 
 ## 暂未执行
 
-- 未读取 `/Users/salty/codeProject/ai/doc/tushare-token.txt` 内容。
-- 未调用 Tushare 接口。
+- 启动服务前不会在文档或代码中写入 `/Users/salty/codeProject/ai/doc/tushare-token.txt` 内容。
+- 尚未执行批量 Tushare 数据同步。
 - 未调用 LLM API。
 - 未执行依赖 Tushare 或 LLM 的端到端功能测试。
 
 ## 已执行的非功能性检查
 
 - `python3 -m compileall backend/app backend/tests`：通过。
-- 后端虚拟环境使用 `/opt/homebrew/bin/python3.13` 创建，`pytest`：7 个单元测试通过。
+- 后端虚拟环境使用 `/opt/homebrew/bin/python3.13` 创建，`pytest`：8 个单元测试通过。
 - `ruff check app tests`：通过。
 - `npm install`：完成，生成 `frontend/package-lock.json`。
 - `npm run build`：通过。
 - `npm audit --omit=dev`：0 个生产依赖漏洞。
 - `scripts/init-db.sh`：通过，已创建 `stock_ah_ai` 表和视图。
+- `scripts/check.sh`：已在切换 Tushare 中转 SDK 后重新通过。
 - 敏感信息扫描：只发现文档中的 `<local-only>` 占位符，未发现真实 Token、密码或 API Key。
 
 ## 待验证事项
 
-- Tushare 低权限 Token 可用接口范围。
+- 当前 Tushare 中转 Token 可用接口范围。
 - `stock_hsgt`、`hk_daily`、`stk_ah_comparison`、`fx_daily` 的实际返回字段与当前字段映射是否完全一致。
 - 前后端联调、页面响应式截图和真实数据展示。
 - LLM 输出 SQL 的稳定性和问答答案质量。

@@ -21,13 +21,17 @@ class Settings(BaseSettings):
         default="mysql+pymysql://root@127.0.0.1:3306/stock_ah_ai?charset=utf8mb4",
         alias="STOCK_AH_DB_URL",
     )
-    tushare_api_url: str = Field(default="http://api.tushare.pro", alias="TUSHARE_API_URL")
+    tushare_api_url: str = Field(default="http://tsy.xiaodefa.cn", alias="TUSHARE_API_URL")
     tushare_token: str | None = Field(default=None, alias="TUSHARE_TOKEN")
     tushare_token_file: Path | None = Field(
         default=Path("/Users/salty/codeProject/ai/doc/tushare-token.txt"),
         alias="TUSHARE_TOKEN_FILE",
     )
     tushare_timeout_seconds: float = Field(default=30.0, alias="TUSHARE_TIMEOUT_SECONDS")
+    tushare_request_interval_seconds: float = Field(
+        default=0.6,
+        alias="TUSHARE_REQUEST_INTERVAL_SECONDS",
+    )
     llm_base_url: str = Field(default="https://api.openai.com/v1", alias="LLM_BASE_URL")
     llm_api_key: str | None = Field(default=None, alias="LLM_API_KEY")
     llm_model: str | None = Field(default=None, alias="LLM_MODEL")

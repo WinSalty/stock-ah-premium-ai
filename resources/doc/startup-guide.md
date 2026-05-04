@@ -21,7 +21,7 @@ cd /Users/salty/codeProject/ai/coding/stock-ah-premium-ai
 - Python：3.11+，本机已验证 `/opt/homebrew/bin/python3.13`。
 - Node.js：支持 Vite 5 的版本。
 - MySQL：本机 MySQL 5.7，连接说明见 `/Users/salty/codeProject/ai/doc/mysqluse.md`。
-- Tushare Token：运行同步接口时读取环境变量 `TUSHARE_TOKEN` 或本机文件 `/Users/salty/codeProject/ai/doc/tushare-token.txt`。
+- Tushare：使用 Python `tushare` SDK，默认中转地址 `http://tsy.xiaodefa.cn`，同步接口运行时读取环境变量 `TUSHARE_TOKEN` 或本机文件 `/Users/salty/codeProject/ai/doc/tushare-token.txt`。
 - LLM：运行智能问答时需要 `LLM_BASE_URL`、`LLM_API_KEY`、`LLM_MODEL`。
 
 启动 MySQL：
@@ -73,6 +73,8 @@ STOCK_AH_DB_URL=mysql+pymysql://root@127.0.0.1:3306/stock_ah_ai?charset=utf8mb4
 ```bash
 TUSHARE_TOKEN=
 TUSHARE_TOKEN_FILE=/Users/salty/codeProject/ai/doc/tushare-token.txt
+TUSHARE_API_URL=http://tsy.xiaodefa.cn
+TUSHARE_REQUEST_INTERVAL_SECONDS=0.6
 LLM_BASE_URL=https://api.openai.com/v1
 LLM_API_KEY=
 LLM_MODEL=
@@ -80,6 +82,17 @@ APP_CORS_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
 ```
 
 不要把真实 Token、数据库密码或 LLM Key 写入仓库。
+
+Tushare 中转服务文档见 `http://tsy.xiaodefa.cn/docs`。项目后端已按其 SDK 方式设置。文档示例使用 `ts.set_token(token)`，项目实现采用 `ts.pro_api(token, timeout=...)` 直接传入 token，避免 SDK 把 token 额外写到用户目录缓存文件：
+
+```python
+import tushare as ts
+
+pro = ts.pro_api(token, timeout=30)
+pro._DataApi__http_url = "http://tsy.xiaodefa.cn"
+```
+
+如中转服务返回超时或冷却提示，优先调大 `TUSHARE_REQUEST_INTERVAL_SECONDS`，不要高频重试。
 
 ## 5. 初始化数据库
 
@@ -195,7 +208,7 @@ curl -X POST http://127.0.0.1:8000/api/manual-import/ah-pairs/csv \
 
 ## 11. 数据同步顺序
 
-建议先用低权限 Token 验证基础接口：
+建议先用当前 Token 验证基础接口：
 
 1. `stock_basic`
 2. `trade_cal`
@@ -287,6 +300,6 @@ LLM_MODEL=
 
 未验证：
 
-- Tushare 真实接口同步
+- Tushare 中转 SDK 真实接口同步
 - LLM 真实问答
 - 真实行情数据下的端到端页面联调

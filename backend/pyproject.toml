@@ -15,6 +15,7 @@ dependencies = [
   "python-dateutil>=2.9.0,<3.0",
   "sqlalchemy>=2.0.34,<3.0",
   "sqlglot>=25.20.0,<26.0",
+  "tushare>=1.4.21,<2.0",
   "uvicorn[standard]>=0.30.6,<1.0"
 ]
 

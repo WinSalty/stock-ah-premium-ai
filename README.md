@@ -4,7 +4,7 @@
 
 本项目用于通过 Tushare 拉取 A 股、港股通、港股行情和汇率数据，持久化到本地 MySQL，并计算港股通标的中的 A/H 溢价率。后续提供一个简洁前端页面用于查看同步状态、溢价榜单和趋势，并通过 LLM API 对本地数据进行问答分析。
 
-当前已进入一阶段代码开发，完成后端 FastAPI 服务、数据库迁移、Tushare 同步服务、A/H 溢价计算、LLM 问答 API、React 前端页面和开发进度文档。按用户要求，暂不进行需要真实 Tushare 权限、LLM Key 或本地 MySQL 的功能测试。
+当前已进入一阶段代码开发，完成后端 FastAPI 服务、数据库迁移、Tushare SDK 同步服务、A/H 溢价计算、LLM 问答 API、React 前端页面和开发进度文档。Tushare 默认使用中转服务 `http://tsy.xiaodefa.cn`，Token 从本机文件或环境变量读取。
 
 ## 当前产出
 
@@ -28,7 +28,7 @@
 ## 关键约束
 
 - 本地 MySQL 连接信息按需读取 `/Users/salty/codeProject/ai/doc/mysqluse.md`，项目文档和代码中不写入密码、Token 或 LLM API Key。
-- Tushare Token、LLM API Key、数据库账号密码均通过环境变量或本机未入库配置注入。
+- Tushare 默认通过 Python SDK 调用，接口地址为 `http://tsy.xiaodefa.cn`；Token、LLM API Key、数据库账号密码均通过环境变量或本机未入库配置注入。
 - 一阶段目标数据库名为 `stock_ah_ai`，建库 SQL 放在 `resources/sql/00_create_database.sql`，表结构由 Alembic 迁移创建。
 
 ## 本地启动
