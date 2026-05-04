@@ -280,7 +280,7 @@ class SyncService:
         spec = DATASET_SPECS[dataset]
         run = SyncRun(
             dataset=dataset,
-            params_json=json.dumps(params, ensure_ascii=False),
+            params_json=json.dumps(params, ensure_ascii=False, default=str),
             status="RUNNING",
             started_at=datetime.now(UTC).replace(tzinfo=None),
         )
