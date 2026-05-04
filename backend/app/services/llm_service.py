@@ -18,6 +18,9 @@ from app.services.sql_guard_service import SqlGuardError, SqlGuardService
 
 logger = logging.getLogger(__name__)
 
+LLM_CHAT_TIMEOUT_SECONDS = 90.0
+LLM_STREAM_TIMEOUT_SECONDS = 240.0
+
 INVESTMENT_ADVISOR_SYSTEM_PROMPT = """你是专业、有独立观点、注重证据链的金融投资分析顾问。
 这是用户自己的本地投资评估项目，用户需要明确、可执行、可复核的真实建议。
 
@@ -341,13 +344,13 @@ class LlmService:
             messages.append({"role": "system", "content": system_prompt})
         messages.append({"role": "user", "content": prompt})
         payload = {
-            "model": self.settings.llm_model,
+            "model": self._api_model_name(),
             "messages": messages,
             "temperature": 0.1,
         }
-        with httpx.Client(timeout=60.0) as client:
+        with httpx.Client(timeout=LLM_CHAT_TIMEOUT_SECONDS) as client:
             response = client.post(url, headers=headers, json=payload)
-        response.raise_for_status()
+        self._raise_for_status(response)
         body = response.json()
         return body["choices"][0]["message"]["content"]
 
@@ -366,14 +369,14 @@ class LlmService:
             messages.append({"role": "system", "content": system_prompt})
         messages.append({"role": "user", "content": prompt})
         payload = {
-            "model": self.settings.llm_model,
+            "model": self._api_model_name(),
             "messages": messages,
             "temperature": 0.1,
             "stream": True,
         }
-        with httpx.Client(timeout=120.0) as client:
+        with httpx.Client(timeout=LLM_STREAM_TIMEOUT_SECONDS) as client:
             with client.stream("POST", url, headers=headers, json=payload) as response:
-                response.raise_for_status()
+                self._raise_for_status(response)
                 for line in response.iter_lines():
                     if not line.startswith("data:"):
                         continue
@@ -385,6 +388,38 @@ class LlmService:
                     content = delta.get("content")
                     if content:
                         yield content
+
+    def _api_model_name(self) -> str | None:
+        """转换为 DeepSeek API 支持的模型名。
+
+        创建日期：2026-05-04
+        author: sunshengxian
+        """
+
+        model = self.settings.llm_model
+        if not model:
+            return model
+        normalized = model.strip()
+        if normalized.startswith("deepseek-v4-pro"):
+            return "deepseek-v4-pro"
+        if normalized.startswith("deepseek-v4-flash"):
+            return "deepseek-v4-flash"
+        return normalized
+
+    def _raise_for_status(self, response: httpx.Response) -> None:
+        try:
+            response.raise_for_status()
+        except httpx.HTTPStatusError:
+            try:
+                body = response.text
+            except httpx.ResponseNotRead:
+                body = response.read().decode("utf-8", errors="replace")
+            logger.error(
+                "DeepSeek API 请求失败 status=%s body=%s",
+                response.status_code,
+                body[:2000],
+            )
+            raise
 
     def _sql_prompt(self, question: str, context: dict[str, Any]) -> str:
         context_json = json.dumps(

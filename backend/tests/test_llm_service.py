@@ -156,6 +156,53 @@ def test_investment_knowledge_selects_threshold_recommendation_logic() -> None:
     assert any("统一计算框架" in chunk["content"] for chunk in selection.chunks)
 
 
+def test_deepseek_model_alias_uses_supported_api_name(monkeypatch) -> None:
+    """确认 DeepSeek 历史模型别名会转换为 API 支持的模型名。
+
+    创建日期：2026-05-04
+    author: sunshengxian
+    """
+
+    captured_payload: dict[str, object] = {}
+
+    class FakeResponse:
+        status_code = 200
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, object]:
+            return {"choices": [{"message": {"content": "ok"}}]}
+
+    class FakeClient:
+        def __init__(self, timeout: float) -> None:
+            self.timeout = timeout
+
+        def __enter__(self) -> FakeClient:
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+        def post(self, url: str, headers: dict[str, str], json: dict[str, object]) -> FakeResponse:
+            captured_payload.update(json)
+            return FakeResponse()
+
+    monkeypatch.setattr("app.services.llm_service.httpx.Client", FakeClient)
+    service = LlmService(
+        Mock(),
+        settings=Settings(
+            llm_api_key="test-key",
+            llm_api_key_file=None,
+            llm_model="deepseek-v4-pro[1m]",
+        ),
+    )
+
+    assert service._chat_completion("招商银行阈值建议") == "ok"
+    assert captured_payload["model"] == "deepseek-v4-pro"
+    assert "reasoning_effort" not in captured_payload
+
+
 def _write_minimal_docx(path: Path, paragraphs: tuple[str, ...]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     body = "".join(

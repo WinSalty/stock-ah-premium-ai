@@ -295,7 +295,15 @@ def create_message(
     context["conversation_history"] = history
     _touch_session(session, visible_question, has_history=bool(history))
     db.commit()
-    answer = LlmService(db).answer(payload.question, context)
+    try:
+        answer = LlmService(db).answer(payload.question, context)
+    except Exception as exc:
+        db.rollback()
+        logger.error("LLM 非流式问答失败", exc_info=True)
+        raise HTTPException(
+            status_code=502,
+            detail="智能分析服务暂时不可用，请稍后重试。",
+        ) from exc
     assistant_message = LlmChatMessage(
         session_id=session_id,
         role="assistant",

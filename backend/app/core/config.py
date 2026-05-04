@@ -38,7 +38,7 @@ class Settings(BaseSettings):
         default=Path("/Users/salty/codeProject/ai/doc/deepseek-apikey.txt"),
         alias="LLM_API_KEY_FILE",
     )
-    llm_model: str | None = Field(default="deepseek-v4-pro[1m]", alias="LLM_MODEL")
+    llm_model: str | None = Field(default="deepseek-v4-pro", alias="LLM_MODEL")
     auth_secret_key: str = Field(default="stock-ah-premium-local-secret", alias="AUTH_SECRET_KEY")
     auth_token_expire_hours: int = Field(default=168, alias="AUTH_TOKEN_EXPIRE_HOURS")
     default_admin_username: str = Field(default="admin", alias="DEFAULT_ADMIN_USERNAME")

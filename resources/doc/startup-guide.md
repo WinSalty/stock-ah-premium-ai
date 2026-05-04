@@ -22,7 +22,7 @@ cd /Users/salty/codeProject/ai/coding/stock-ah-premium-ai
 - Node.js：支持 Vite 5 的版本。
 - MySQL：本机 MySQL 5.7，连接说明见 `/Users/salty/codeProject/ai/doc/mysqluse.md`。
 - Tushare：使用 Python `tushare` SDK，默认中转地址 `http://tsy.xiaodefa.cn`，同步接口运行时优先读取本机文件 `/Users/salty/codeProject/ai/doc/tushare-token.txt`，环境变量 `TUSHARE_TOKEN` 作为兜底。
-- LLM：运行智能问答时默认接入 DeepSeek OpenAI-compatible API，优先读取本机文件 `/Users/salty/codeProject/ai/doc/deepseek-apikey.txt`，环境变量 `LLM_API_KEY` 作为兜底，默认模型 `deepseek-v4-pro[1m]`。
+- LLM：运行智能问答时默认接入 DeepSeek OpenAI-compatible API，优先读取本机文件 `/Users/salty/codeProject/ai/doc/deepseek-apikey.txt`，环境变量 `LLM_API_KEY` 作为兜底，默认 API 模型 `deepseek-v4-pro`。
 
 启动 MySQL：
 
@@ -80,13 +80,13 @@ SYNC_SCHEDULER_TIMEZONE=Asia/Shanghai
 LLM_BASE_URL=https://api.deepseek.com
 LLM_API_KEY_FILE=/Users/salty/codeProject/ai/doc/deepseek-apikey.txt
 LLM_API_KEY=
-LLM_MODEL=deepseek-v4-pro[1m]
+LLM_MODEL=deepseek-v4-pro
 APP_CORS_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
 ```
 
 不要把真实 Token、数据库密码或 LLM Key 写入仓库。若 shell 中残留旧 `TUSHARE_TOKEN`，项目仍会优先使用 `TUSHARE_TOKEN_FILE` 指向的文件，避免误用旧 token；LLM 同理优先使用 `LLM_API_KEY_FILE` 指向的本机文件。
 
-智能问答仅面向投资研究问题。后端会为 LLM 注入专业金融投资分析顾问角色、最近会话上下文和分类投资知识片段；前端只展示报告和数据摘要表格，不展示 SQL 或底层查询过程。
+智能问答仅面向投资研究问题。后端会为 LLM 注入专业金融投资分析顾问角色、最近会话上下文和分类投资知识片段；前端只展示报告和数据摘要表格，不展示 SQL 或底层查询过程。若历史环境中仍配置 `deepseek-v4-pro[1m]`，后端会在请求 DeepSeek 时自动归一化为 API 支持的 `deepseek-v4-pro`；当前不额外传 `reasoning_effort`。
 
 Tushare 中转服务文档见 `http://tsy.xiaodefa.cn/docs`。项目后端已按其 SDK 方式设置。文档示例使用 `ts.set_token(token)`，项目实现采用 `ts.pro_api(token, timeout=...)` 直接传入 token，避免 SDK 把 token 额外写到用户目录缓存文件：
 
@@ -351,7 +351,7 @@ curl http://127.0.0.1:8000/api/health
 LLM_BASE_URL=https://api.deepseek.com
 LLM_API_KEY_FILE=/Users/salty/codeProject/ai/doc/deepseek-apikey.txt
 LLM_API_KEY=
-LLM_MODEL=deepseek-v4-pro[1m]
+LLM_MODEL=deepseek-v4-pro
 ```
 
 问答页面使用流式响应，输入框按 Enter 发送，Shift+Enter 换行。空会话会从 LLM 投资知识库主题中随机展示投研问题，便于直接生成更完整的投资分析报告。若页面一直没有响应，先确认后端 `/api/health` 正常，再查看后端日志中是否有 LLM 生成 SQL 字段名或数据库执行错误。
