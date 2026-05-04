@@ -101,17 +101,7 @@ function OverviewPage() {
         </Col>
       </Row>
 
-      <div className="content-grid">
-        <section className="panel panel-wide">
-          <div className="panel-title">溢价榜</div>
-          {isLoading ? (
-            <Skeleton active />
-          ) : data?.top_premiums.length ? (
-            <PremiumTable data={data.top_premiums} pagination={false} />
-          ) : (
-            <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} />
-          )}
-        </section>
+      <div className="content-grid overview-grid">
         <section className="panel">
           <div className="overview-chart-head">
             <div className="panel-title">{trendTitleName} {directionLabel} 溢价走势</div>
@@ -141,6 +131,16 @@ function OverviewPage() {
           </div>
           {trend.data?.length ? (
             <ReactECharts option={trendChartOption} style={{ height: 360 }} />
+          ) : (
+            <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} />
+          )}
+        </section>
+        <section className="panel">
+          <div className="panel-title">溢价榜</div>
+          {isLoading ? (
+            <Skeleton active />
+          ) : data?.top_premiums.length ? (
+            <PremiumTable data={data.top_premiums} pagination={false} />
           ) : (
             <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} />
           )}

@@ -89,6 +89,10 @@ body {
   margin-top: 16px;
 }
 
+.overview-grid {
+  grid-template-columns: minmax(420px, 1fr) minmax(420px, 1fr);
+}
+
 .panel {
   padding: 18px;
   border: 1px solid #e5ebf3;
