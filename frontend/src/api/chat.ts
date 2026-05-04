@@ -1,4 +1,4 @@
-import { API_BASE_URL, ApiError, requestJson } from './client';
+import { API_BASE_URL, ApiError, getAuthToken, requestJson } from './client';
 import type {
   ChatMessageRequest,
   ChatMessageResponse,
@@ -21,9 +21,15 @@ export function getChatSession(sessionId: number) {
   return requestJson<ChatSessionDetail>(`/api/chat/sessions/${sessionId}`);
 }
 
+function authHeaders(): Record<string, string> {
+  const token = getAuthToken();
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
 export function deleteChatSession(sessionId: number) {
   return fetch(`${API_BASE_URL}/api/chat/sessions/${sessionId}`, {
-    method: 'DELETE'
+    method: 'DELETE',
+    headers: authHeaders()
   }).then(async (response) => {
     if (!response.ok) {
       const body = await response.json().catch(() => ({}));
@@ -65,7 +71,7 @@ export async function sendChatMessageStream(
 ) {
   const response = await fetch(`${API_BASE_URL}/api/chat/sessions/${sessionId}/messages/stream`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify(payload)
   });
   if (!response.ok) {
