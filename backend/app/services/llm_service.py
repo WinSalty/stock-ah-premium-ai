@@ -50,17 +50,30 @@ SQL_SYSTEM_PROMPT = """你是只读金融数据查询规划器。只生成可执
 禁止输出解释、Markdown、代码块或多余文本。禁止写入、DDL、多语句和非白名单对象。
 """
 
-QUESTION_CLASSIFIER_SYSTEM_PROMPT = """你是投资问答边界分类器，只判断用户问题是否属于投资研究范围。
+QUESTION_CLASSIFIER_SYSTEM_PROMPT = """你是投资问答边界分类器。
+只判断用户问题是否允许由本投资助手回答。
 投资研究范围包括股票、基金、指数、行业、估值、财报、红利、仓位、风险、
 组合配置、A/H 溢价、港股通、宏观与投资策略相关问题；股票代码、公司投研、
 阈值建议和投资报告写作也属于范围。
-闲聊、编程、娱乐、日常生活、账号操作、违法违规交易和与投资研究无关的问题不属于范围。
+用户询问“你好”“你是谁”“你能做什么”“你可以帮我什么”等问候、角色身份和能力介绍问题也属于允许范围。
+编程、娱乐、日常生活、账号操作、违法违规交易和与投资研究无关的开放闲聊不属于范围。
 只返回 JSON，不要输出解释。格式：{"is_investment_related":true或false}
 """
 
 OUT_OF_SCOPE_MESSAGE = (
-    "这个问题超出了投资研究范围。我可以分析股票、行业、估值、A/H 溢价、"
-    "港股通、红利、组合配置和风险控制等投资相关问题。"
+    "我现在主要负责投资研究和本项目里的 A/H 溢价分析，这个问题暂时不太在我的工作范围里。"
+    "你可以问我股票、行业、估值、A/H 溢价、港股通、自选股阈值、红利、组合配置或风险控制相关问题。"
+)
+
+SERVICE_INTRO_MESSAGE = (
+    "你好，我是这个 A/H 溢价投资助手里的智能问答。"
+    "我主要帮你做几类事情：分析 A/H 与 H/A 溢价机会、查看港股通和自选股阈值、"
+    "解释股票和行业估值、整理投研报告要点、比较候选标的，并把风险、触发条件和反证条件说清楚。"
+    "\n\n你可以直接问："
+    "\n\n- 最近哪些 AH 标的接近我的阈值？"
+    "\n- 招商银行现在更适合持有 A 股还是 H 股？"
+    "\n- 帮我用红利、ROE、估值筛一批 A 股候选。"
+    "\n- 某只股票当前的核心风险和跟踪指标是什么？"
 )
 
 INVESTMENT_KEYWORDS = (
@@ -226,6 +239,8 @@ class LlmService:
         selected_model = self._normalize_chat_model(model or self.settings.llm_model)
         if not self._is_investment_related_question(question):
             return ChatAnswer(answer=OUT_OF_SCOPE_MESSAGE, sql=None, rows=[])
+        if self._is_service_intro_question(question):
+            return ChatAnswer(answer=SERVICE_INTRO_MESSAGE, sql=None, rows=[])
         endpoint = self._model_endpoint(selected_model)
         if not endpoint.api_key or not endpoint.model:
             return ChatAnswer(
@@ -260,6 +275,8 @@ class LlmService:
         selected_model = self._normalize_chat_model(model or self.settings.llm_model)
         if not self._is_investment_related_question(question):
             return None, [], iter([OUT_OF_SCOPE_MESSAGE])
+        if self._is_service_intro_question(question):
+            return None, [], iter([SERVICE_INTRO_MESSAGE])
         endpoint = self._model_endpoint(selected_model)
         if not endpoint.api_key or not endpoint.model:
             message = (
@@ -718,6 +735,36 @@ class LlmService:
         except (ValueError, KeyError, TypeError, json.JSONDecodeError, httpx.HTTPError):
             logger.error("Qwen 投资问题边界判定失败", exc_info=True)
             return False
+
+    def _is_service_intro_question(self, question: str) -> bool:
+        """识别问候、角色身份和能力介绍类问题。
+
+        创建日期：2026-05-04
+        author: sunshengxian
+        """
+
+        normalized = question.lower().replace(" ", "")
+        intro_keywords = (
+            "你好",
+            "您好",
+            "你是谁",
+            "你是啥",
+            "你是什么",
+            "你可以干嘛",
+            "你能干嘛",
+            "你会干嘛",
+            "你可以做什么",
+            "你能做什么",
+            "你有什么用",
+            "介绍一下你",
+            "介绍你自己",
+            "你的角色",
+            "你的身份",
+            "help",
+            "whoareyou",
+            "whatcanyoudo",
+        )
+        return any(keyword in normalized for keyword in intro_keywords)
 
     def _should_query_data(self, question: str, context: dict[str, Any]) -> bool:
         if any(context.get(key) for key in ("start_date", "end_date", "ts_code", "only_watchlist")):

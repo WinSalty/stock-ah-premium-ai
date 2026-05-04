@@ -10,6 +10,7 @@ from app.services.investment_knowledge_service import InvestmentKnowledgeService
 from app.services.llm_service import (
     INVESTMENT_ADVISOR_SYSTEM_PROMPT,
     OUT_OF_SCOPE_MESSAGE,
+    SERVICE_INTRO_MESSAGE,
     LlmService,
 )
 
@@ -328,6 +329,54 @@ def test_question_scope_uses_qwen_flash_classifier(monkeypatch) -> None:
 
     assert service._is_investment_related_question("帮我判断这家公司还能不能继续持有")
     assert captured_payload["model"] == "qwen3.5-flash"
+
+
+def test_service_intro_question_uses_qwen_classifier_and_returns_role_intro(monkeypatch) -> None:
+    """确认问候和能力介绍类问题可回答，且边界判定仍走 Qwen Flash。
+
+    创建日期：2026-05-04
+    author: sunshengxian
+    """
+
+    captured_models: list[str | None] = []
+
+    def fake_chat_completion(
+        self: LlmService,
+        prompt: str,
+        system_prompt: str | None = None,
+        model: str | None = None,
+        temperature: float = 0.1,
+    ) -> str:
+        captured_models.append(model)
+        return '{"is_investment_related":true}'
+
+    monkeypatch.setattr(LlmService, "_chat_completion", fake_chat_completion)
+    service = LlmService(
+        Mock(),
+        settings=Settings(
+            llm_api_key=None,
+            llm_api_key_file=None,
+            qwen_api_key="qwen-key",
+            qwen_api_key_file=None,
+        ),
+    )
+
+    answer = service.answer("你好，你可以干嘛")
+
+    assert answer.answer == SERVICE_INTRO_MESSAGE
+    assert answer.rows == []
+    assert captured_models == ["qwen3.5-flash"]
+
+
+def test_out_of_scope_message_is_soft_and_actionable() -> None:
+    """确认越界问题响应更自然，并提示可改问方向。
+
+    创建日期：2026-05-04
+    author: sunshengxian
+    """
+
+    assert "不太在我的工作范围里" in OUT_OF_SCOPE_MESSAGE
+    assert "你可以问我" in OUT_OF_SCOPE_MESSAGE
 
 
 def _write_minimal_docx(path: Path, paragraphs: tuple[str, ...]) -> None:
