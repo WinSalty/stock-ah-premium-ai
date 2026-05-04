@@ -73,7 +73,7 @@ function PremiumTable({ data, loading, pagination, onTrend }: PremiumTableProps)
       render: (value) => formatNumber(value, 4)
     },
     {
-      title: '溢价率',
+      title: 'A/H 溢价',
       dataIndex: 'ah_premium_pct',
       align: 'right',
       width: 110,
@@ -84,15 +84,15 @@ function PremiumTable({ data, loading, pagination, onTrend }: PremiumTableProps)
       }
     },
     {
-      title: '官方比价',
-      dataIndex: 'official_ah_ratio',
+      title: 'H/A 比价',
+      dataIndex: 'ha_ratio',
       align: 'right',
       width: 112,
-      render: (value) => formatNumber(value, 2)
+      render: (value) => formatNumber(value, 4)
     },
     {
-      title: '官方溢价',
-      dataIndex: 'official_ah_premium_pct',
+      title: 'H/A 溢价',
+      dataIndex: 'ha_premium_pct',
       align: 'right',
       width: 112,
       render: (value) => {
@@ -102,10 +102,53 @@ function PremiumTable({ data, loading, pagination, onTrend }: PremiumTableProps)
       }
     },
     {
-      title: '差异',
+      title: '官方 A/H 比价',
+      dataIndex: 'official_ah_ratio',
+      align: 'right',
+      width: 132,
+      render: (value) => formatNumber(value, 2)
+    },
+    {
+      title: '官方 A/H 溢价',
+      dataIndex: 'official_ah_premium_pct',
+      align: 'right',
+      width: 132,
+      render: (value) => {
+        const number = Number(value);
+        const color = number >= 0 ? 'red' : 'green';
+        return value === null ? '-' : <Tag color={color}>{number.toFixed(2)}%</Tag>;
+      }
+    },
+    {
+      title: 'A/H 差异',
       dataIndex: 'diff_from_official_pct',
       align: 'right',
-      width: 100,
+      width: 112,
+      render: (value) => formatNumber(value)
+    },
+    {
+      title: '官方 H/A 比价',
+      dataIndex: 'official_ha_ratio',
+      align: 'right',
+      width: 132,
+      render: (value) => formatNumber(value, 4)
+    },
+    {
+      title: '官方 H/A 溢价',
+      dataIndex: 'official_ha_premium_pct',
+      align: 'right',
+      width: 132,
+      render: (value) => {
+        const number = Number(value);
+        const color = number >= 0 ? 'red' : 'green';
+        return value === null ? '-' : <Tag color={color}>{number.toFixed(2)}%</Tag>;
+      }
+    },
+    {
+      title: 'H/A 差异',
+      dataIndex: 'diff_from_official_ha_pct',
+      align: 'right',
+      width: 112,
       render: (value) => formatNumber(value)
     },
     {
@@ -143,7 +186,7 @@ function PremiumTable({ data, loading, pagination, onTrend }: PremiumTableProps)
       dataSource={data}
       loading={loading}
       pagination={pagination}
-      scroll={{ x: 1470 }}
+      scroll={{ x: 1980 }}
       size="middle"
     />
   );

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
+from decimal import Decimal
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -21,7 +22,7 @@ from app.db.models.market import (
 )
 from app.db.models.sync import SyncCheckpoint, SyncRun
 from app.services.date_utils import format_tushare_date, parse_tushare_date
-from app.services.decimal_utils import to_decimal
+from app.services.decimal_utils import quantize_decimal, to_decimal
 from app.services.repository import UpsertRepository
 from app.services.tushare_client import TushareClient
 
@@ -228,6 +229,8 @@ DATASET_SPECS: dict[str, DatasetSpec] = {
             "hk_pct_chg",
             "ah_comparison",
             "ah_premium",
+            "ha_comparison",
+            "ha_premium",
         ),
         rename_map={
             "hk_code": "hk_ts_code",
@@ -345,6 +348,8 @@ class SyncService:
             normalized[field] = parse_tushare_date(normalized.get(field))
         for field in spec.decimal_fields:
             normalized[field] = to_decimal(normalized.get(field))
+        if spec.name == "ah_comparison":
+            self._normalize_official_ha_row(normalized)
         model_columns = set(spec.model.__table__.columns.keys())
         return {key: value for key, value in normalized.items() if key in model_columns}
 
@@ -365,6 +370,21 @@ class SyncService:
             if bid_close is not None and ask_close is not None
             else bid_close
         )
+
+    def _normalize_official_ha_row(self, row: dict[str, Any]) -> None:
+        ah_ratio = row.get("ah_comparison")
+        ha_ratio = self._reverse_ratio(ah_ratio)
+        row["ha_comparison"] = ha_ratio
+        row["ha_premium"] = (
+            quantize_decimal((ha_ratio - Decimal("1")) * Decimal("100"))
+            if ha_ratio is not None
+            else None
+        )
+
+    def _reverse_ratio(self, value: Decimal | None) -> Decimal | None:
+        if value is None or value == Decimal("0"):
+            return None
+        return quantize_decimal(Decimal("1") / value)
 
     def _update_checkpoint(self, dataset: str, params: dict[str, Any], run_id: int) -> None:
         trade_date = parse_tushare_date(params.get("trade_date")) or parse_tushare_date(

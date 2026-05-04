@@ -36,13 +36,18 @@ export interface PremiumItem {
   h_close_cny: string | null;
   ah_ratio: string | null;
   ah_premium_pct: string | null;
+  ha_ratio: string | null;
+  ha_premium_pct: string | null;
   connect_channels: string | null;
   calc_status: string;
   rate_source: string | null;
   rate_fallback: boolean;
   official_ah_ratio: string | null;
   official_ah_premium_pct: string | null;
+  official_ha_ratio: string | null;
+  official_ha_premium_pct: string | null;
   diff_from_official_pct: string | null;
+  diff_from_official_ha_pct: string | null;
 }
 
 export interface PremiumListResponse {

@@ -241,6 +241,8 @@ class OfficialAHComparison(TimestampMixin, Base):
     hk_pct_chg: Mapped[Decimal | None] = mapped_column(DECIMAL(12, 6))
     ah_comparison: Mapped[Decimal | None] = mapped_column(DECIMAL(20, 8))
     ah_premium: Mapped[Decimal | None] = mapped_column(DECIMAL(20, 8))
+    ha_comparison: Mapped[Decimal | None] = mapped_column(DECIMAL(20, 8))
+    ha_premium: Mapped[Decimal | None] = mapped_column(DECIMAL(20, 8))
 
 
 class AHPremiumDaily(TimestampMixin, Base):
@@ -270,6 +272,8 @@ class AHPremiumDaily(TimestampMixin, Base):
     h_close_cny: Mapped[Decimal | None] = mapped_column(DECIMAL(20, 6))
     ah_ratio: Mapped[Decimal | None] = mapped_column(DECIMAL(20, 8))
     ah_premium_pct: Mapped[Decimal | None] = mapped_column(DECIMAL(20, 8))
+    ha_ratio: Mapped[Decimal | None] = mapped_column(DECIMAL(20, 8))
+    ha_premium_pct: Mapped[Decimal | None] = mapped_column(DECIMAL(20, 8))
     is_hk_connect: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     connect_channels: Mapped[str | None] = mapped_column(String(64))
     rate_date: Mapped[date | None] = mapped_column(Date)
@@ -278,5 +282,8 @@ class AHPremiumDaily(TimestampMixin, Base):
     calc_status: Mapped[str] = mapped_column(String(32), nullable=False, default="OK")
     official_ah_ratio: Mapped[Decimal | None] = mapped_column(DECIMAL(20, 8))
     official_ah_premium_pct: Mapped[Decimal | None] = mapped_column(DECIMAL(20, 8))
+    official_ha_ratio: Mapped[Decimal | None] = mapped_column(DECIMAL(20, 8))
+    official_ha_premium_pct: Mapped[Decimal | None] = mapped_column(DECIMAL(20, 8))
     diff_from_official_pct: Mapped[Decimal | None] = mapped_column(DECIMAL(20, 8))
+    diff_from_official_ha_pct: Mapped[Decimal | None] = mapped_column(DECIMAL(20, 8))
     error_message: Mapped[str | None] = mapped_column(Text)

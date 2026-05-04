@@ -37,8 +37,9 @@
   - 港股通通道过滤。
   - A 股/H 股同日行情对齐。
   - HKD/CNY 直接汇率优先，USD/CNH 与 USD/HKD 交叉汇率兜底。
+  - 自算 A/H 比价、A/H 溢价，并由 A/H 反推 H/A 比价、H/A 溢价后落表。
   - 缺 A 股行情、缺 H 股行情、缺汇率、H 股价格为 0 等状态入库。
-  - 官方 AH 比价差异字段。
+  - 官方 AH 与 H/A 比价、溢价差异字段。
 - LLM 问答：
   - OpenAI-compatible Chat API 封装。
   - 只读 SQL Guard：只允许 SELECT、禁止多语句和写库操作、限制白名单视图、自动 limit。
@@ -47,6 +48,7 @@
   - 后端新增 `/api/query/datasets` 和 `/api/query/rows`，按白名单查询已同步数据。
   - 支持 A 股/港股基础信息、交易日历、日线行情、沪深港通名单、外汇、AH 配对、官方 AH 比价、自算 AH 溢价、同步任务记录。
   - 支持关键词、日期范围、分页和字段列定义返回。
+  - 官方 AH 比价表增加 H/A 比价和 H/A 溢价查询字段。
 - 前端 React 项目：
   - 总览页：指标、溢价榜、Top 10 图表。
   - 数据同步页：数据集、日期、代码、通道、任务记录。
@@ -67,7 +69,7 @@
 ## 暂未执行
 
 - 启动服务前不会在文档或代码中写入 `/Users/salty/codeProject/ai/doc/tushare-token.txt` 内容。
-- 尚未执行批量 Tushare 数据同步。
+- 已执行最近 7 个共同交易日批量同步；`hk_daily` 因官方频率限制未补齐。
 - 未调用 LLM API。
 - 未执行依赖 Tushare 或 LLM 的端到端功能测试。
 
@@ -79,7 +81,7 @@
 - `npm install`：完成，生成 `frontend/package-lock.json`。
 - `npm run build`：通过。
 - `npm audit --omit=dev`：0 个生产依赖漏洞。
-- `scripts/init-db.sh`：通过，已创建 `stock_ah_ai` 表和视图。
+- `scripts/init-db.sh`：通过，已创建/更新 `stock_ah_ai` 表和视图；已应用 `20260504_0002`，为官方 AH 比价和自算溢价表补充 H/A 字段并回填历史数据。
 - `scripts/check.sh`：已在切换 Tushare 中转 SDK、调整 token 文件优先级后重新通过。
 - 新增数据查询后，`scripts/check.sh` 已重新通过。
 - Tushare 中转 SDK 最小连通性：`stock_basic` 携带 `limit=1` 查询成功返回 1 行，未落库。

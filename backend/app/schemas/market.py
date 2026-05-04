@@ -51,13 +51,18 @@ class PremiumQueryResponse(OrmModel):
     h_close_cny: Decimal | None
     ah_ratio: Decimal | None
     ah_premium_pct: Decimal | None
+    ha_ratio: Decimal | None
+    ha_premium_pct: Decimal | None
     connect_channels: str | None
     calc_status: str
     rate_source: str | None
     rate_fallback: bool
     official_ah_ratio: Decimal | None
     official_ah_premium_pct: Decimal | None
+    official_ha_ratio: Decimal | None
+    official_ha_premium_pct: Decimal | None
     diff_from_official_pct: Decimal | None
+    diff_from_official_ha_pct: Decimal | None
 
 
 class PremiumListResponse(BaseModel):

@@ -10,4 +10,7 @@ def test_ah_premium_formula() -> None:
     h_close_cny = h_close_hkd * hkd_cny
     ah_ratio = a_close_cny / h_close_cny
     premium_pct = (ah_ratio - Decimal("1")) * Decimal("100")
+    ha_ratio = Decimal("1") / ah_ratio
+    ha_premium_pct = (ha_ratio - Decimal("1")) * Decimal("100")
     assert premium_pct.quantize(Decimal("0.01")) == Decimal("35.87")
+    assert ha_premium_pct.quantize(Decimal("0.01")) == Decimal("-26.40")

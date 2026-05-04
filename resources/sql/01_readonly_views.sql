@@ -16,6 +16,8 @@ SELECT
   hk_name,
   ah_ratio,
   ah_premium_pct,
+  ha_ratio,
+  ha_premium_pct,
   connect_channels,
   calc_status
 FROM ah_premium_daily;

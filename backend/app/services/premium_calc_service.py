@@ -148,6 +148,8 @@ class PremiumCalcService:
             "connect_channels": ",".join(channels),
             "official_ah_ratio": official.ah_comparison if official else None,
             "official_ah_premium_pct": official.ah_premium if official else None,
+            "official_ha_ratio": official.ha_comparison if official else None,
+            "official_ha_premium_pct": official.ha_premium if official else None,
         }
         if a_quote is None or a_quote.close is None:
             return {
@@ -180,8 +182,18 @@ class PremiumCalcService:
             }
         ah_ratio = a_quote.close / h_close_cny
         premium_pct = (ah_ratio - Decimal("1")) * Decimal("100")
+        ha_ratio = self._reverse_ratio(ah_ratio)
+        ha_premium_pct = (
+            (ha_ratio - Decimal("1")) * Decimal("100") if ha_ratio is not None else None
+        )
         official_premium = official.ah_premium if official else None
+        official_ha_premium = official.ha_premium if official else None
         diff = premium_pct - official_premium if official_premium is not None else None
+        diff_ha = (
+            ha_premium_pct - official_ha_premium
+            if ha_premium_pct is not None and official_ha_premium is not None
+            else None
+        )
         return {
             **base_row,
             "a_close_cny": quantize_decimal(a_quote.close, "0.000001"),
@@ -190,9 +202,17 @@ class PremiumCalcService:
             "h_close_cny": quantize_decimal(h_close_cny, "0.000001"),
             "ah_ratio": quantize_decimal(ah_ratio),
             "ah_premium_pct": quantize_decimal(premium_pct),
+            "ha_ratio": quantize_decimal(ha_ratio),
+            "ha_premium_pct": quantize_decimal(ha_premium_pct),
             "rate_date": rate.rate_date,
             "rate_source": rate.source,
             "rate_fallback": rate.fallback,
             "diff_from_official_pct": quantize_decimal(diff),
+            "diff_from_official_ha_pct": quantize_decimal(diff_ha),
             "calc_status": "OK",
         }
+
+    def _reverse_ratio(self, value: Decimal | None) -> Decimal | None:
+        if value is None or value == Decimal("0"):
+            return None
+        return Decimal("1") / value
