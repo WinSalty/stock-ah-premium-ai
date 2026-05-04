@@ -60,24 +60,6 @@ def create_ah_premium_sync_batch(payload: SyncBatchCreate, db: DbSession) -> lis
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-@router.post("/sync/batches/tushare-stock-data", response_model=list[SyncRunResponse])
-def create_tushare_stock_data_sync_batch(payload: SyncBatchCreate, db: DbSession) -> list[SyncRun]:
-    """同步 Tushare 股票数据目录中 15000 积分及以下接口。
-
-    创建日期：2026-05-04
-    author: sunshengxian
-    """
-
-    try:
-        return SyncService(db).run_tushare_stock_data_plan(
-            mode=payload.mode.value,
-            start_date=payload.start_date,
-            end_date=payload.end_date,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-
 @router.get("/sync/runs", response_model=list[SyncRunResponse])
 def list_sync_runs(
     db: DbSession,

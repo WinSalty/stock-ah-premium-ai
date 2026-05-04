@@ -36,8 +36,6 @@
   - `hk_daily` 当前 token 无法请求，已按要求禁用接口同步，一键同步不会再尝试该接口。
   - 对全市场行情、官方 AH 比价和港股通名单的日期范围同步按交易日拆分请求，降低单次返回上限截断风险。
   - 官方 AH 比价同步后维护 AH 配对。
-  - 新增 Tushare 股票数据目录 15000 积分及以下接口同步目录，统一以 `stock_data_*` 数据集和 `ts_stock_*` 本地表落库；已剔除需正式/实时分钟权限且未给出积分门槛的实时类接口。
-  - 新增 `POST /api/sync/batches/tushare-stock-data` 批量同步入口，仍复用项目 `TushareClient.query()` SDK 方法、`sync_run` 运行记录和 MySQL upsert 仓储。
 - 低权限兜底导入：
   - 支持通过 `POST /api/manual-import/ah-pairs` 导入人工 AH 配对。
   - 支持通过 `POST /api/manual-import/fx-rates` 导入人工汇率。
@@ -113,9 +111,6 @@
 - 新增数据查询后，`scripts/check.sh` 已重新通过。
 - 新增数据集说明、长字段悬浮、东八区时间展示和定时增量任务后，`scripts/check.sh` 已重新通过。
 - 新增官方口径闭环、港股通可操作性、自选股和决策指标后，`scripts/check.sh` 已重新通过，当前 13 个单元测试通过。
-- 新增 Tushare 股票数据目录 100 个本地同步表、注释版 SQL 和表目录文档后，`scripts/check.sh` 已重新通过，当前 14 个单元测试通过。
-- `scripts/init-db.sh`：已应用 `20260504_0005`，本地 MySQL 创建 100 张 `ts_stock_*` Tushare 股票数据目录表。
-- Tushare 股票数据目录最小同步验证：`stock_data_stock_basic` 携带 `limit=1` 同步成功，`ts_stock_stock_basic` 当前 1 行，`sync_run` 记录为 `SUCCESS`。
 - Tushare 中转 SDK 最小连通性：`stock_basic` 携带 `limit=1` 查询成功返回 1 行，未落库。
 - 敏感信息扫描：只发现文档中的 `<local-only>` 占位符，未发现真实 Token、密码或 API Key。
 

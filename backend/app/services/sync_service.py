@@ -1,13 +1,11 @@
 from __future__ import annotations
 
-import hashlib
 import json
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import Table, select
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
@@ -23,16 +21,10 @@ from app.db.models.market import (
     OfficialAHComparison,
 )
 from app.db.models.sync import SyncCheckpoint, SyncRun
-from app.db.models.tushare_stock_data import TUSHARE_STOCK_TABLES
 from app.services.date_utils import format_tushare_date, parse_tushare_date
 from app.services.decimal_utils import quantize_decimal, to_decimal
 from app.services.repository import UpsertRepository
 from app.services.tushare_client import TushareClient
-from app.services.tushare_stock_catalog import (
-    TUSHARE_STOCK_DATASET_BY_NAME,
-    TUSHARE_STOCK_DATASETS,
-    TushareStockDatasetSpec,
-)
 
 
 @dataclass(frozen=True)
@@ -317,8 +309,9 @@ class SyncService:
         author: sunshengxian
         """
 
-        return [self._dataset_info(spec) for spec in DATASET_SPECS.values()] + [
-            self._tushare_stock_dataset_info(spec) for spec in TUSHARE_STOCK_DATASETS
+        return [
+            self._dataset_info(spec)
+            for spec in DATASET_SPECS.values()
         ]
 
     def run_sync(self, dataset: str, params: dict[str, Any]) -> SyncRun:
@@ -328,13 +321,12 @@ class SyncService:
         author: sunshengxian
         """
 
-        stock_spec = TUSHARE_STOCK_DATASET_BY_NAME.get(dataset)
-        if dataset not in DATASET_SPECS and stock_spec is None:
+        if dataset not in DATASET_SPECS:
             raise ValueError(f"不支持的数据集：{dataset}")
         if dataset in DISABLED_INTERFACE_DATASETS:
             raise ValueError("当前 token 无法请求 hk_daily，已按要求禁用该接口同步。")
-        spec = DATASET_SPECS.get(dataset)
-        params = self._resolve_mode_params(spec, params) if spec else self._normalize_params(params)
+        spec = DATASET_SPECS[dataset]
+        params = self._resolve_mode_params(spec, params)
         run = SyncRun(
             dataset=dataset,
             params_json=json.dumps(params, ensure_ascii=False, default=str),
@@ -345,11 +337,7 @@ class SyncService:
         self.db.commit()
         self.db.refresh(run)
         try:
-            row_count = (
-                self._sync_spec(spec, params)
-                if spec
-                else self._sync_tushare_stock_spec(stock_spec, params)
-            )
+            row_count = self._sync_spec(spec, params)
             run.status = "SUCCESS"
             run.row_count = row_count
             run.finished_at = datetime.now(UTC).replace(tzinfo=None)
@@ -385,32 +373,14 @@ class SyncService:
             runs.append(self.run_sync(dataset, params))
         return runs
 
-    def run_tushare_stock_data_plan(
-        self,
-        mode: str = "incremental",
-        start_date: date | None = None,
-        end_date: date | None = None,
-    ) -> list[SyncRun]:
-        """按股票数据目录执行 Tushare 15000 积分及以下接口同步。
-
-        创建日期：2026-05-04
-        author: sunshengxian
-        """
-
-        runs: list[SyncRun] = []
-        base_params = {"mode": mode, "start_date": start_date, "end_date": end_date}
-        for spec in TUSHARE_STOCK_DATASETS:
-            params = {key: value for key, value in base_params.items() if value is not None}
-            runs.append(self.run_sync(spec.dataset_name, params))
-        return runs
-
     def _sync_spec(self, spec: DatasetSpec, params: dict[str, Any]) -> int:
         merged_params = self._build_params(spec, params)
         if spec.name == "stock_hsgt" and "type" not in merged_params:
             return sum(self._sync_spec(spec, {**params, "type": item}) for item in HSGT_TYPES)
         if spec.name == "fx_daily" and "ts_code" not in merged_params:
             return sum(
-                self._sync_spec(spec, {**params, "ts_code": item}) for item in DEFAULT_FX_CODES
+                self._sync_spec(spec, {**params, "ts_code": item})
+                for item in DEFAULT_FX_CODES
             )
         if self._should_split_by_trade_date(spec, params):
             return sum(
@@ -432,82 +402,6 @@ class SyncService:
         self.db.commit()
         return row_count
 
-    def _sync_tushare_stock_spec(
-        self, spec: TushareStockDatasetSpec | None, params: dict[str, Any]
-    ) -> int:
-        if spec is None:
-            raise ValueError("Tushare 股票数据集规格不存在")
-        if "type" in spec.required_inputs and "type" not in params:
-            return sum(
-                self._sync_tushare_stock_spec(spec, {**params, "type": item}) for item in HSGT_TYPES
-            )
-        if "ts_code" in spec.required_inputs and "ts_code" not in params:
-            ts_codes = self._list_a_stock_codes()
-            if not ts_codes:
-                raise ValueError("该接口需要 ts_code，请先同步 A 股股票列表或手工传入 ts_code")
-            return sum(
-                self._sync_tushare_stock_spec(spec, {**params, "ts_code": item})
-                for item in ts_codes
-            )
-
-        api_params = self._build_tushare_stock_params(spec, params)
-        result = self.client.query(spec.api_name, params=api_params, fields=spec.field_names)
-        table = TUSHARE_STOCK_TABLES[spec.dataset_name]
-        rows = [self._normalize_tushare_stock_row(spec, table, row) for row in result.rows]
-        rows = [row for row in rows if row]
-        row_count = self.repository.upsert_many(table, rows)
-        self.db.commit()
-        return row_count
-
-    def _build_tushare_stock_params(
-        self, spec: TushareStockDatasetSpec, params: dict[str, Any]
-    ) -> dict[str, Any]:
-        api_params = dict(spec.default_params or {})
-        for key, value in params.items():
-            if value is None or value == "" or key in CONTROL_PARAM_KEYS:
-                continue
-            if key in {"start_date", "end_date", "trade_date", "ann_date"}:
-                api_params[key] = format_tushare_date(value)
-            else:
-                api_params[key] = value
-        return api_params
-
-    def _normalize_tushare_stock_row(
-        self,
-        spec: TushareStockDatasetSpec,
-        table: Table,
-        row: dict[str, Any],
-    ) -> dict[str, Any]:
-        normalized = dict(row)
-        for field in spec.date_fields:
-            normalized[field] = parse_tushare_date(normalized.get(field))
-        for field in spec.decimal_fields:
-            normalized[field] = to_decimal(normalized.get(field))
-        model_columns = set(table.columns.keys())
-        normalized = {key: value for key, value in normalized.items() if key in model_columns}
-        normalized["sync_key"] = self._build_sync_key(spec, normalized)
-        return normalized
-
-    def _build_sync_key(self, spec: TushareStockDatasetSpec, row: dict[str, Any]) -> str:
-        values = {key: self._sync_key_value(row.get(key)) for key in spec.key_fields if key in row}
-        if not values:
-            values = {
-                key: self._sync_key_value(row.get(key)) for key in spec.field_names if key in row
-            }
-        raw = json.dumps(values, ensure_ascii=False, sort_keys=True, default=str)
-        return hashlib.sha256(raw.encode("utf-8")).hexdigest()
-
-    def _sync_key_value(self, value: Any) -> Any:
-        if isinstance(value, Decimal):
-            return str(value)
-        if isinstance(value, date):
-            return value.isoformat()
-        return value
-
-    def _list_a_stock_codes(self) -> list[str]:
-        statement = select(AStockBasic.ts_code).where(AStockBasic.list_status == "L")
-        return list(self.db.scalars(statement).all())
-
     def _build_params(self, spec: DatasetSpec, params: dict[str, Any]) -> dict[str, Any]:
         api_params = dict(spec.default_params or {})
         for key, value in params.items():
@@ -520,11 +414,6 @@ class SyncService:
             else:
                 api_params[key] = value
         return api_params
-
-    def _normalize_params(self, params: dict[str, Any]) -> dict[str, Any]:
-        params = {key: value for key, value in params.items() if value is not None and value != ""}
-        params.setdefault("mode", "manual")
-        return params
 
     def _resolve_mode_params(self, spec: DatasetSpec, params: dict[str, Any]) -> dict[str, Any]:
         params = {key: value for key, value in params.items() if value is not None and value != ""}
@@ -600,19 +489,6 @@ class SyncService:
             if spec.full_start_date
             else None,
             "sync_strategy": self._sync_strategy_text(spec),
-        }
-
-    def _tushare_stock_dataset_info(self, spec: TushareStockDatasetSpec) -> dict[str, Any]:
-        required = "、".join(spec.required_inputs) if spec.required_inputs else "无"
-        return {
-            "name": spec.dataset_name,
-            "label": f"股票数据-{spec.menu_name}",
-            "description": f"{spec.description}；接口 {spec.api_name}；本地表 {spec.table_name}",
-            "supports_date_range": True,
-            "supports_incremental": True,
-            "supports_full_sync": True,
-            "default_full_start_date": None,
-            "sync_strategy": f"使用 Tushare SDK 同步到 {spec.table_name}；必填参数：{required}。",
         }
 
     def _get_checkpoint(self, dataset: str, scope_key: str) -> SyncCheckpoint | None:

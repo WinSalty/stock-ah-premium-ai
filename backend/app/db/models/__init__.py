@@ -14,7 +14,6 @@ from app.db.models.market import (
     WatchlistStock,
 )
 from app.db.models.sync import DataQualityIssue, SyncCheckpoint, SyncRun
-from app.db.models.tushare_stock_data import TUSHARE_STOCK_TABLES
 
 __all__ = [
     "AHPremiumDaily",
@@ -33,6 +32,5 @@ __all__ = [
     "OfficialAHComparison",
     "SyncCheckpoint",
     "SyncRun",
-    "TUSHARE_STOCK_TABLES",
     "WatchlistStock",
 ]
