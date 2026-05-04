@@ -8,16 +8,19 @@ import {
   InputNumber,
   Modal,
   Select,
+  Skeleton,
   Space,
   message
 } from 'antd';
 import ReactECharts from 'echarts-for-react';
-import { Calculator, Search } from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
+import { Bot, Calculator, Search } from 'lucide-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useMemo, useState } from 'react';
 import dayjs from 'dayjs';
 import PageHeader from '../components/PageHeader';
 import PremiumTable from '../components/PremiumTable';
+import { createChatSession, sendChatMessage } from '../api/chat';
 import { calculatePremium, fetchPremiumTrend, fetchPremiums } from '../api/market';
 import { createWatchlistItem, deleteWatchlistItem, updateWatchlistItem } from '../api/watchlist';
 import type { HoldingMarket, PremiumDirection, PremiumItem } from '../types/domain';
@@ -68,6 +71,51 @@ function thresholdHelpText(direction?: PremiumDirection) {
   return `填写 ${directionLabel} 溢价触发线，单位为百分比，只填数字不带 %；留空则只观察不判断达阈值。系统按“当前${directionLabel}溢价 >= 目标阈值”判定达阈值，并按“目标阈值 - 当前${directionLabel}溢价”显示距阈值。`;
 }
 
+function promptValue(value?: string | number | null, suffix = '') {
+  return value === null || value === undefined || value === '' ? '缺失' : `${value}${suffix}`;
+}
+
+function holdingMarketLabel(value?: HoldingMarket | string | null) {
+  const map: Record<string, string> = {
+    A: 'A 股',
+    H: 'H 股',
+    UNKNOWN: '未设置'
+  };
+  return map[value || 'UNKNOWN'] || value || '未设置';
+}
+
+function buildModalThresholdPrompt(item: PremiumItem, values: WatchlistFormValues) {
+  const direction = values.preferred_direction || item.metric_direction || 'HA';
+  const directionLabel = direction === 'AH' ? 'A/H' : 'H/A';
+  const metricPremium = direction === 'AH' ? item.ah_premium_pct : item.ha_premium_pct;
+  return [
+    `请为“${values.display_name || item.a_name || item.hk_name || item.a_ts_code}”推荐一个 ${directionLabel} 目标阈值。`,
+    '场景是用户正在设置自选股提醒阈值。请只在用户手动点击后给出建议；不要假设后续会自动交易。',
+    '',
+    '当前页面数据：',
+    `- A 股 / H 股代码：${item.a_ts_code} / ${item.hk_ts_code}`,
+    `- 关注方向：${directionLabel}`,
+    `- 持有侧：${holdingMarketLabel(values.holding_market)}`,
+    `- 当前填写阈值：${promptValue(values.target_premium_pct, '%')}`,
+    `- 当前 ${directionLabel} 溢价：${promptValue(metricPremium, '%')}`,
+    `- A/H 溢价：${promptValue(item.ah_premium_pct, '%')}`,
+    `- H/A 溢价：${promptValue(item.ha_premium_pct, '%')}`,
+    `- 60 日中位数：${promptValue(item.premium_median_60, '%')}`,
+    `- 60 日 20% 分位：${promptValue(item.premium_p20_60, '%')}`,
+    `- 60 日 80% 分位：${promptValue(item.premium_p80_60, '%')}`,
+    `- 当前 60 日分位：${promptValue(item.premium_percentile_60, '%')}`,
+    `- 港股通通道：${item.connect_channels || '不可通过港股通操作或缺失'}`,
+    '',
+    '请严格输出中文 Markdown，并包含：',
+    '## 最终答案',
+    `一句话给出“建议将 ${directionLabel} 目标阈值设为 X%”。`,
+    '## 推荐理由',
+    '3-5 条，必须覆盖历史分位、当前价差、持有侧、港股通可操作性和风险缓冲。',
+    '## 使用提醒',
+    '说明阈值只是提醒，不是收益承诺；提醒成本、流动性、汇率、额度和停牌风险。'
+  ].join('\n');
+}
+
 /**
  * AH 官方比价查询和官方派生指标重算页面。
  * 创建日期：2026-05-04
@@ -84,6 +132,7 @@ function PremiumPage() {
   });
   const [selected, setSelected] = useState<PremiumItem | null>(null);
   const [watchlistModal, setWatchlistModal] = useState<WatchlistModalState | null>(null);
+  const [thresholdRecommendation, setThresholdRecommendation] = useState('');
   const queryClient = useQueryClient();
   const premiums = useQuery({
     queryKey: ['premiums', filters, page],
@@ -152,6 +201,25 @@ function PremiumPage() {
       queryClient.invalidateQueries({ queryKey: ['premium-summary'] });
     },
     onError: (error) => message.error(error instanceof Error ? error.message : '取消自选失败')
+  });
+  const thresholdRecommendationMutation = useMutation({
+    mutationFn: async () => {
+      if (!watchlistModal) {
+        throw new Error('请选择股票');
+      }
+      const values = watchlistForm.getFieldsValue();
+      const session = await createChatSession(
+        `阈值建议：${values.display_name || watchlistModal.item.a_name || watchlistModal.item.a_ts_code}`
+      );
+      const result = await sendChatMessage(session.id, {
+        question: buildModalThresholdPrompt(watchlistModal.item, values),
+        only_watchlist: true,
+        ts_code: watchlistModal.item.a_ts_code
+      });
+      return result.answer;
+    },
+    onSuccess: (answer) => setThresholdRecommendation(answer),
+    onError: (error) => message.error(error instanceof Error ? error.message : 'AI 推荐失败')
   });
 
   const trendMetricColor = selected?.metric_direction === 'AH' ? AH_COLOR : HA_COLOR;
@@ -236,6 +304,7 @@ function PremiumPage() {
       holding_market: 'UNKNOWN',
       note: undefined
     });
+    setThresholdRecommendation('');
     setWatchlistModal({ mode: 'create', item });
   };
 
@@ -247,6 +316,7 @@ function PremiumPage() {
       holding_market: (item.holding_market as HoldingMarket) || 'UNKNOWN',
       note: undefined
     });
+    setThresholdRecommendation('');
     setWatchlistModal({ mode: 'edit', item });
   };
 
@@ -271,7 +341,7 @@ function PremiumPage() {
 
   return (
     <main className="page">
-      <PageHeader title="AH 官方比价" />
+      <PageHeader title="AH 机会筛选" />
       <section className="panel">
         <Form
           form={form}
@@ -370,6 +440,7 @@ function PremiumPage() {
         onCancel={() => {
           setWatchlistModal(null);
           watchlistForm.resetFields();
+          setThresholdRecommendation('');
         }}
         okText="保存"
         cancelText="取消"
@@ -388,11 +459,40 @@ function PremiumPage() {
           </Form.Item>
           <Form.Item
             label="目标阈值"
-            name="target_premium_pct"
             extra={thresholdHelpText(watchlistDirection)}
           >
-            <InputNumber className="full-width" addonAfter="%" precision={2} placeholder="例如 -15 或 30" />
+            <Space.Compact className="threshold-recommend-control">
+              <Form.Item name="target_premium_pct" noStyle>
+                <InputNumber addonAfter="%" precision={2} placeholder="例如 -15 或 30" />
+              </Form.Item>
+              <Button
+                htmlType="button"
+                icon={<Bot size={16} />}
+                loading={thresholdRecommendationMutation.isPending}
+                onClick={() => {
+                  setThresholdRecommendation('');
+                  thresholdRecommendationMutation.mutate();
+                }}
+              >
+                AI 推荐
+              </Button>
+            </Space.Compact>
           </Form.Item>
+          {thresholdRecommendation || thresholdRecommendationMutation.isPending ? (
+            <div className="ai-recommendation-box modal-ai-recommendation">
+              <div className="ai-recommendation-head">
+                <Bot size={16} />
+                <strong>AI 阈值建议</strong>
+              </div>
+              {thresholdRecommendation ? (
+                <div className="markdown-answer">
+                  <ReactMarkdown>{thresholdRecommendation}</ReactMarkdown>
+                </div>
+              ) : (
+                <Skeleton active paragraph={{ rows: 4 }} />
+              )}
+            </div>
+          ) : null}
           <Form.Item label="持有侧" name="holding_market" rules={[{ required: true }]}>
             <Select
               options={[

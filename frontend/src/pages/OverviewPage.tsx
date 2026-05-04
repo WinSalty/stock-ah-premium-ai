@@ -1,5 +1,6 @@
 import {
   Alert,
+  Button,
   Card,
   Col,
   Empty,
@@ -15,11 +16,14 @@ import {
 } from 'antd';
 import ReactECharts from 'echarts-for-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useCallback, useEffect, useMemo, useRef, useState, type WheelEvent } from 'react';
+import ReactMarkdown from 'react-markdown';
+import { Bot, GripVertical } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type WheelEvent } from 'react';
 import PageHeader from '../components/PageHeader';
 import PremiumTable from '../components/PremiumTable';
+import { createChatSession, sendChatMessage } from '../api/chat';
 import { fetchOfficialPremiumTrend, fetchPremiumPairs, fetchPremiumSummary } from '../api/market';
-import { deleteWatchlistItem, fetchWatchlist } from '../api/watchlist';
+import { deleteWatchlistItem, fetchWatchlist, updateWatchlistItem } from '../api/watchlist';
 import type { PremiumDirection, PremiumItem, PremiumPairOption, WatchlistOpportunity } from '../types/domain';
 import { formatEast8DateTime } from '../utils/datetime';
 
@@ -149,6 +153,64 @@ function opportunityDirection(item: WatchlistOpportunity): PremiumDirection {
   return item.premium?.metric_direction || item.watchlist.preferred_direction;
 }
 
+function holdingMarketLabel(value?: string | null) {
+  const map: Record<string, string> = {
+    A: 'A 股',
+    H: 'H 股',
+    UNKNOWN: '未设置'
+  };
+  return map[value || 'UNKNOWN'] || value || '未设置';
+}
+
+function promptValue(value?: string | null, suffix = '') {
+  return value === null || value === undefined || value === '' ? '缺失' : `${value}${suffix}`;
+}
+
+function reorderOpportunities(items: WatchlistOpportunity[], sourceId: number, targetId: number) {
+  const sourceIndex = items.findIndex((item) => item.watchlist.id === sourceId);
+  const targetIndex = items.findIndex((item) => item.watchlist.id === targetId);
+  if (sourceIndex < 0 || targetIndex < 0 || sourceIndex === targetIndex) {
+    return items;
+  }
+  const nextItems = [...items];
+  const [moved] = nextItems.splice(sourceIndex, 1);
+  nextItems.splice(targetIndex, 0, moved);
+  return nextItems;
+}
+
+function buildThresholdRecommendationPrompt(item: WatchlistOpportunity) {
+  const premium = item.premium;
+  const direction = opportunityDirection(item);
+  const directionLabel = direction === 'AH' ? 'A/H' : 'H/A';
+  return [
+    `请为自选股“${opportunityName(item)}”推荐一个 ${directionLabel} 目标阈值。`,
+    '你是 A/H 跨市场价差研究助手，请基于下面页面数据和可观察历史分位做判断，不要把它描述为无风险套利。',
+    '',
+    '页面数据：',
+    `- A 股 / H 股代码：${item.watchlist.a_ts_code} / ${item.watchlist.hk_ts_code}`,
+    `- 关注方向：${directionLabel}`,
+    `- 持有侧：${holdingMarketLabel(item.watchlist.holding_market)}`,
+    `- 当前目标阈值：${promptValue(item.watchlist.target_premium_pct, '%')}`,
+    `- 当前 ${directionLabel} 溢价：${promptValue(premium?.metric_premium_pct, '%')}`,
+    `- A/H 溢价：${promptValue(premium?.ah_premium_pct, '%')}`,
+    `- H/A 溢价：${promptValue(premium?.ha_premium_pct, '%')}`,
+    `- 距当前阈值：${promptValue(premium?.distance_to_target_pct, '%')}`,
+    `- 60 日中位数：${promptValue(premium?.premium_median_60, '%')}`,
+    `- 60 日 20% 分位：${promptValue(premium?.premium_p20_60, '%')}`,
+    `- 60 日 80% 分位：${promptValue(premium?.premium_p80_60, '%')}`,
+    `- 当前 60 日分位：${promptValue(premium?.premium_percentile_60, '%')}`,
+    `- 港股通通道：${premium?.connect_channels || '不可通过港股通操作或缺失'}`,
+    '',
+    '请严格输出中文 Markdown，并包含以下三个小节：',
+    '## 最终答案',
+    `用一句话给出建议阈值，格式必须包含“建议将 ${directionLabel} 目标阈值设为 X%”。如果数据不足，也要给出保守值。`,
+    '## 推荐理由',
+    '用 3-5 条说明分位、当前价差、持有侧、通道可操作性和安全边际。',
+    '## 使用提醒',
+    '说明这只是阈值提醒，不是收益承诺；提示交易成本、流动性、汇率、额度和停牌风险。'
+  ].join('\n');
+}
+
 /**
  * 数据总览页面，默认呈现自选股机会状态。
  * 创建日期：2026-05-04
@@ -163,6 +225,9 @@ function OverviewPage() {
   const [selectedWatchlistId, setSelectedWatchlistId] = useState<number | null>(null);
   const [fallbackDirection, setFallbackDirection] = useState<PremiumDirection>('HA');
   const [isManualChart, setIsManualChart] = useState(false);
+  const [orderedOpportunities, setOrderedOpportunities] = useState<WatchlistOpportunity[]>([]);
+  const [draggingWatchlistId, setDraggingWatchlistId] = useState<number | null>(null);
+  const [aiRecommendation, setAiRecommendation] = useState('');
   const queryClient = useQueryClient();
   const { data, isLoading } = useQuery({
     queryKey: ['premium-summary'],
@@ -193,7 +258,8 @@ function OverviewPage() {
     });
     return Array.from(optionMap.values());
   }, [pairs.data]);
-  const opportunities = watchlist.data || [];
+  const serverOpportunities = useMemo(() => watchlist.data || [], [watchlist.data]);
+  const opportunities = orderedOpportunities;
   const selectedOpportunity = opportunities.find((item) => item.watchlist.id === selectedWatchlistId) || null;
   const direction = fallbackDirection;
   const pair = splitPairKey(pairKey);
@@ -220,6 +286,41 @@ function OverviewPage() {
     },
     onError: (error) => message.error(error instanceof Error ? error.message : '取消自选失败')
   });
+  const reorderMutation = useMutation({
+    mutationFn: (items: WatchlistOpportunity[]) =>
+      Promise.all(
+        items.map((item, index) =>
+          updateWatchlistItem(item.watchlist.id, {
+            sort_order: (index + 1) * 10
+          })
+        )
+      ),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['watchlist'] });
+      queryClient.invalidateQueries({ queryKey: ['premium-summary'] });
+    },
+    onError: (error) => {
+      setOrderedOpportunities(serverOpportunities);
+      message.error(error instanceof Error ? error.message : '自选排序保存失败');
+    }
+  });
+  const aiRecommendationMutation = useMutation({
+    mutationFn: async (item: WatchlistOpportunity) => {
+      const session = await createChatSession(`阈值建议：${opportunityName(item)}`);
+      const result = await sendChatMessage(session.id, {
+        question: buildThresholdRecommendationPrompt(item),
+        only_watchlist: true,
+        ts_code: item.watchlist.a_ts_code
+      });
+      return result.answer;
+    },
+    onSuccess: (answer) => setAiRecommendation(answer),
+    onError: (error) => message.error(error instanceof Error ? error.message : 'AI 推荐失败')
+  });
+
+  useEffect(() => {
+    setOrderedOpportunities(serverOpportunities);
+  }, [serverOpportunities]);
 
   useEffect(() => {
     if (isManualChart) {
@@ -298,6 +399,7 @@ function OverviewPage() {
     setSelectedWatchlistId(item.watchlist.id);
     setPairKey(opportunityPairKey(item));
     setFallbackDirection(opportunityDirection(item));
+    setAiRecommendation('');
   };
 
   const onChangePair = (value: string) => {
@@ -321,6 +423,26 @@ function OverviewPage() {
       cancelText: '保留',
       onOk: () => removeWatchlistMutation.mutateAsync(item)
     });
+  };
+
+  const onDropOpportunity = (targetId: number) => {
+    if (!draggingWatchlistId || draggingWatchlistId === targetId) {
+      setDraggingWatchlistId(null);
+      return;
+    }
+    const nextOpportunities = reorderOpportunities(opportunities, draggingWatchlistId, targetId);
+    setOrderedOpportunities(nextOpportunities);
+    reorderMutation.mutate(nextOpportunities);
+    setDraggingWatchlistId(null);
+  };
+
+  const onStartThresholdRecommendation = () => {
+    if (!selectedOpportunity) {
+      message.info('先选择一只自选股票');
+      return;
+    }
+    setAiRecommendation('');
+    aiRecommendationMutation.mutate(selectedOpportunity);
   };
 
   const onChartDataZoom = useCallback(
@@ -520,6 +642,23 @@ function OverviewPage() {
         </Col>
       </Row>
 
+      <section className="panel premium-principle-panel">
+        <div>
+          <div className="panel-title">A/H 价差怎么用</div>
+          <Typography.Paragraph className="principle-text">
+            A/H 比价把 A 股人民币价格与 H 股港币价格按汇率折成人民币后比较。A/H 溢价高，通常表示
+            A 股相对 H 股更贵；H/A 溢价高，通常表示 H 股相对 A 股更贵。实际使用时更适合作为跨市场换仓、
+            替代配置和提醒阈值，不应理解为无风险套利。
+          </Typography.Paragraph>
+        </div>
+        <div className="principle-points">
+          <Tag color="blue">看方向</Tag>
+          <Tag color="green">看港股通</Tag>
+          <Tag color="gold">看分位</Tag>
+          <Tag color="red">看成本与流动性</Tag>
+        </div>
+      </section>
+
       <section className="panel opportunity-panel">
         <div className="query-result-head">
           <div>
@@ -528,6 +667,13 @@ function OverviewPage() {
               官方 AH 口径，H/A 由 A/H 反推；港股通通道来自当日沪深港通名单。
             </Typography.Text>
           </div>
+          <Button
+            icon={<Bot size={16} />}
+            loading={aiRecommendationMutation.isPending}
+            onClick={onStartThresholdRecommendation}
+          >
+            AI 推荐阈值
+          </Button>
         </div>
         {watchlist.isLoading ? (
           <Skeleton active />
@@ -536,11 +682,27 @@ function OverviewPage() {
             {opportunities.map((item) => (
               <button
                 key={item.watchlist.id}
-                className={`opportunity-card ${item.watchlist.id === selectedWatchlistId ? 'active' : ''}`}
+                draggable
+                className={`opportunity-card ${item.watchlist.id === selectedWatchlistId ? 'active' : ''}${
+                  item.watchlist.id === draggingWatchlistId ? ' dragging' : ''
+                }`}
+                onDragStart={(event: DragEvent<HTMLButtonElement>) => {
+                  event.dataTransfer.effectAllowed = 'move';
+                  setDraggingWatchlistId(item.watchlist.id);
+                }}
+                onDragOver={(event: DragEvent<HTMLButtonElement>) => {
+                  event.preventDefault();
+                  event.dataTransfer.dropEffect = 'move';
+                }}
+                onDrop={() => onDropOpportunity(item.watchlist.id)}
+                onDragEnd={() => setDraggingWatchlistId(null)}
                 onClick={() => onSelectOpportunity(item)}
               >
                 <div className="opportunity-card-head">
-                  <strong>{opportunityName(item)}</strong>
+                  <span className="opportunity-card-title">
+                    <GripVertical size={15} className="drag-handle" />
+                    <strong>{opportunityName(item)}</strong>
+                  </span>
                   {statusTag(item.premium?.opportunity_status)}
                 </div>
                 <div className="opportunity-card-codes">
@@ -581,6 +743,21 @@ function OverviewPage() {
             description="可以在 AH 官方比价页从全市场筛选结果加入自选；加入后首页会优先展示阈值、分位和港股通通道。"
           />
         )}
+        {aiRecommendation || aiRecommendationMutation.isPending ? (
+          <div className="ai-recommendation-box">
+            <div className="ai-recommendation-head">
+              <Bot size={16} />
+              <strong>AI 阈值建议</strong>
+            </div>
+            {aiRecommendation ? (
+              <div className="markdown-answer">
+                <ReactMarkdown>{aiRecommendation}</ReactMarkdown>
+              </div>
+            ) : (
+              <Skeleton active paragraph={{ rows: 4 }} />
+            )}
+          </div>
+        ) : null}
       </section>
 
       <div className="content-grid overview-grid">

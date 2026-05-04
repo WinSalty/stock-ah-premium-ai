@@ -29,7 +29,7 @@ function App() {
       { key: 'overview', icon: <LayoutDashboard size={18} />, label: '总览' },
       { key: 'sync', icon: <DatabaseZap size={18} />, label: '同步' },
       { key: 'query', icon: <TableProperties size={18} />, label: '查询' },
-      { key: 'premium', icon: <BarChart3 size={18} />, label: '溢价' },
+      { key: 'premium', icon: <BarChart3 size={18} />, label: 'AH 机会筛选' },
       { key: 'chat', icon: <Bot size={18} />, label: '问答' }
     ],
     []

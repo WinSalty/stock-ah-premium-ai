@@ -139,6 +139,12 @@ body {
   cursor: pointer;
 }
 
+.opportunity-card.dragging {
+  opacity: 0.58;
+  outline: 2px dashed #0f766e;
+  outline-offset: 2px;
+}
+
 .opportunity-card.active {
   border-color: #0f766e;
   box-shadow: 0 0 0 2px rgba(15, 118, 110, 0.12);
@@ -158,6 +164,18 @@ body {
   min-width: 0;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.opportunity-card-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.drag-handle {
+  flex: 0 0 auto;
+  color: #94a3b8;
 }
 
 .opportunity-card-codes,
@@ -186,6 +204,62 @@ body {
   font-size: 16px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.premium-principle-panel {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: 16px;
+}
+
+.premium-principle-panel .panel-title {
+  margin-bottom: 8px;
+}
+
+.principle-text {
+  max-width: 920px;
+  margin-bottom: 0 !important;
+  color: #475569;
+  line-height: 1.72;
+}
+
+.principle-points {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+  min-width: 180px;
+}
+
+.ai-recommendation-box {
+  margin-top: 14px;
+  padding: 14px;
+  border: 1px solid #bfdbfe;
+  border-radius: 8px;
+  background: #f8fbff;
+}
+
+.modal-ai-recommendation {
+  margin: -4px 0 16px;
+}
+
+.ai-recommendation-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  color: #1e40af;
+}
+
+.threshold-recommend-control {
+  display: flex;
+  width: 100%;
+}
+
+.threshold-recommend-control .ant-input-number {
+  flex: 1;
 }
 
 .sync-form-grid,
@@ -829,6 +903,14 @@ body {
 
   .overview-chart-head {
     flex-direction: column;
+  }
+
+  .premium-principle-panel {
+    flex-direction: column;
+  }
+
+  .principle-points {
+    justify-content: flex-start;
   }
 }
 
