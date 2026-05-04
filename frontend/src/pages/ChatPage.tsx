@@ -1,11 +1,10 @@
 import { Button, Checkbox, DatePicker, Form, Input, Skeleton, Table, Typography, message } from 'antd';
 import { SendHorizontal } from 'lucide-react';
-import { useMutation } from '@tanstack/react-query';
 import { useState } from 'react';
 import dayjs from 'dayjs';
 import PageHeader from '../components/PageHeader';
 import OverflowCell from '../components/OverflowCell';
-import { createChatSession, sendChatMessage } from '../api/chat';
+import { createChatSession, sendChatMessageStream } from '../api/chat';
 import type { ChatMessageResponse, ChatSession } from '../types/domain';
 
 interface ChatFormValues {
@@ -16,8 +15,10 @@ interface ChatFormValues {
 }
 
 interface ChatTurn {
+  id: string;
   question: string;
   response?: ChatMessageResponse;
+  streaming?: boolean;
 }
 
 /**
@@ -29,32 +30,108 @@ function ChatPage() {
   const [form] = Form.useForm<ChatFormValues>();
   const [session, setSession] = useState<ChatSession | null>(null);
   const [turns, setTurns] = useState<ChatTurn[]>([]);
-  const mutation = useMutation({
-    mutationFn: async (values: ChatFormValues) => {
+  const [isSending, setIsSending] = useState(false);
+
+  const updateTurn = (id: string, patch: Partial<ChatTurn>) => {
+    setTurns((items) => items.map((item) => (item.id === id ? { ...item, ...patch } : item)));
+  };
+
+  const updateTurnResponse = (id: string, patch: Partial<ChatMessageResponse>) => {
+    setTurns((items) =>
+      items.map((item) =>
+        item.id === id
+          ? {
+              ...item,
+              response: {
+                answer: item.response?.answer || '',
+                sql: item.response?.sql ?? null,
+                rows: item.response?.rows || [],
+                ...patch
+              }
+            }
+          : item
+      )
+    );
+  };
+
+  const handleSubmit = async (values: ChatFormValues) => {
+    if (isSending) {
+      return;
+    }
+    const question = values.question.trim();
+    if (!question) {
+      return;
+    }
+    const turnId = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    setIsSending(true);
+    setTurns((items) => [
+      ...items,
+      {
+        id: turnId,
+        question,
+        response: { answer: '', sql: null, rows: [] },
+        streaming: true
+      }
+    ]);
+    try {
       const currentSession = session || (await createChatSession());
       if (!session) {
         setSession(currentSession);
       }
-      return sendChatMessage(currentSession.id, {
-        question: values.question,
-        start_date: values.range?.[0]?.format('YYYY-MM-DD'),
-        end_date: values.range?.[1]?.format('YYYY-MM-DD'),
-        ts_code: values.ts_code?.trim() || undefined,
-        only_watchlist: values.only_watchlist
-      });
-    },
-    onSuccess: (response, values) => {
-      setTurns((items) => [...items, { question: values.question, response }]);
+      await sendChatMessageStream(
+        currentSession.id,
+        {
+          question,
+          start_date: values.range?.[0]?.format('YYYY-MM-DD'),
+          end_date: values.range?.[1]?.format('YYYY-MM-DD'),
+          ts_code: values.ts_code?.trim() || undefined,
+          only_watchlist: values.only_watchlist
+        },
+        {
+          onMeta: (event) => updateTurnResponse(turnId, { sql: event.sql ?? null, rows: event.rows || [] }),
+          onDelta: (content) =>
+            setTurns((items) =>
+              items.map((item) =>
+                item.id === turnId && item.response
+                  ? { ...item, response: { ...item.response, answer: `${item.response.answer}${content}` } }
+                  : item
+              )
+            ),
+          onDone: (event) => {
+            updateTurn(turnId, { streaming: false });
+            updateTurnResponse(turnId, {
+              answer: event.answer || '',
+              sql: event.sql ?? null,
+              rows: event.rows || []
+            });
+          },
+          onError: (event) => {
+            updateTurn(turnId, { streaming: false });
+            updateTurnResponse(turnId, {
+              answer: event.answer || '问答失败，请稍后再试。',
+              sql: event.sql ?? null,
+              rows: event.rows || []
+            });
+            message.error(event.answer || '问答失败');
+          }
+        }
+      );
       form.resetFields(['question']);
-    },
-    onError: (error) => message.error(error instanceof Error ? error.message : '问答失败')
-  });
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : '问答失败';
+      updateTurn(turnId, { streaming: false });
+      updateTurnResponse(turnId, { answer: errorMessage });
+      message.error(errorMessage);
+    } finally {
+      setIsSending(false);
+    }
+  };
 
   return (
     <main className="page chat-page">
       <PageHeader title="智能问答" />
       <section className="panel chat-history">
-        {turns.length === 0 && !mutation.isPending ? (
+        {turns.length === 0 && !isSending ? (
           <div className="question-bank">
             {[
               '我关注的股票里，最近一个交易日哪些 H/A 折价最明显？',
@@ -67,11 +144,14 @@ function ChatPage() {
             ))}
           </div>
         ) : null}
-        {turns.map((turn, index) => (
-          <div className="chat-turn" key={`${turn.question}-${index}`}>
+        {turns.map((turn) => (
+          <div className="chat-turn" key={turn.id}>
             <div className="chat-question">{turn.question}</div>
             <div className="chat-answer">
-              <Typography.Paragraph>{turn.response?.answer}</Typography.Paragraph>
+              <Typography.Paragraph>
+                {turn.response?.answer || (turn.streaming ? '正在分析...' : '')}
+                {turn.streaming ? <span className="stream-caret" /> : null}
+              </Typography.Paragraph>
               {turn.response?.sql ? <pre className="sql-preview">{turn.response.sql}</pre> : null}
               {turn.response?.rows.length ? (
                 <Table
@@ -92,11 +172,11 @@ function ChatPage() {
             </div>
           </div>
         ))}
-        {mutation.isPending ? <Skeleton active paragraph={{ rows: 4 }} /> : null}
+        {isSending && turns.length === 0 ? <Skeleton active paragraph={{ rows: 4 }} /> : null}
       </section>
 
       <section className="panel chat-composer">
-        <Form form={form} layout="vertical" onFinish={(values) => mutation.mutate(values)}>
+        <Form form={form} layout="vertical" onFinish={handleSubmit}>
           <div className="chat-form-grid">
             <Form.Item label="范围" name="range">
               <DatePicker.RangePicker className="full-width" />
@@ -109,10 +189,25 @@ function ChatPage() {
             </Form.Item>
           </div>
           <Form.Item name="question" rules={[{ required: true, message: '请输入问题' }]}>
-            <Input.TextArea rows={3} placeholder="输入问题" />
+            <Input.TextArea
+              rows={3}
+              placeholder="输入问题"
+              onPressEnter={(event) => {
+                if (!event.shiftKey && !event.nativeEvent.isComposing) {
+                  event.preventDefault();
+                  form.submit();
+                }
+              }}
+            />
           </Form.Item>
           <div className="composer-actions">
-            <Button type="primary" htmlType="submit" icon={<SendHorizontal size={16} />} loading={mutation.isPending}>
+            <Button
+              type="primary"
+              htmlType="submit"
+              icon={<SendHorizontal size={16} />}
+              loading={isSending}
+              disabled={isSending}
+            >
               发送
             </Button>
           </div>

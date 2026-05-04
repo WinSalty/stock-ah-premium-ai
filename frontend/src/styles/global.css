@@ -477,6 +477,22 @@ body {
   background: #edf2f7;
 }
 
+.stream-caret {
+  display: inline-block;
+  width: 7px;
+  height: 16px;
+  margin-left: 3px;
+  vertical-align: -2px;
+  background: #2563eb;
+  animation: caret-blink 1s steps(2, start) infinite;
+}
+
+@keyframes caret-blink {
+  50% {
+    opacity: 0;
+  }
+}
+
 .composer-actions {
   display: flex;
   justify-content: flex-end;

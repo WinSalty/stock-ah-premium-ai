@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Any
 
 import httpx
 from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.core.config import Settings, get_settings
@@ -54,15 +56,50 @@ class LlmService:
                 sql=None,
                 rows=[],
             )
-        sql = self._generate_sql(question, context or {})
-        guarded = self.sql_guard.validate(
-            sql,
-            default_limit=self.settings.query_limit_default,
-            max_limit=self.settings.query_limit_max,
-        )
-        rows = self._execute_sql(guarded.sql)
-        answer = self._generate_answer(question, guarded.sql, rows, context or {})
-        return ChatAnswer(answer=answer, sql=guarded.sql, rows=rows)
+        sql, rows, prompt = self._prepare_answer(question, context or {})
+        answer = self._chat_completion(prompt)
+        return ChatAnswer(answer=answer, sql=sql, rows=rows)
+
+    def stream_answer(
+        self,
+        question: str,
+        context: dict[str, Any] | None = None,
+    ) -> tuple[str | None, list[dict[str, Any]], Iterator[str]]:
+        """根据本地数据流式回答问题。
+
+        创建日期：2026-05-04
+        author: sunshengxian
+        """
+
+        if not self.settings.resolve_llm_api_key() or not self.settings.llm_model:
+            message = (
+                "LLM 未配置。请设置 LLM_API_KEY_FILE 或 LLM_API_KEY，"
+                "并设置 LLM_MODEL 后再使用智能问答。"
+            )
+            return None, [], iter([message])
+        sql, rows, prompt = self._prepare_answer(question, context or {})
+        return sql, rows, self._chat_completion_stream(prompt)
+
+    def _prepare_answer(
+        self,
+        question: str,
+        context: dict[str, Any],
+    ) -> tuple[str, list[dict[str, Any]], str]:
+        sql = self._generate_sql(question, context)
+        for attempt in range(2):
+            guarded = self.sql_guard.validate(
+                sql,
+                default_limit=self.settings.query_limit_default,
+                max_limit=self.settings.query_limit_max,
+            )
+            try:
+                rows = self._execute_sql(guarded.sql)
+                break
+            except SQLAlchemyError as exc:
+                if attempt == 1:
+                    raise
+                sql = self._repair_sql(question, context, guarded.sql, str(exc))
+        return guarded.sql, rows, self._answer_prompt(question, guarded.sql, rows, context)
 
     def _generate_sql(self, question: str, context: dict[str, Any]) -> str:
         prompt = self._sql_prompt(question, context)
@@ -80,18 +117,26 @@ class LlmService:
         rows: list[dict[str, Any]],
         context: dict[str, Any],
     ) -> str:
+        return self._chat_completion(self._answer_prompt(question, sql, rows, context))
+
+    def _answer_prompt(
+        self,
+        question: str,
+        sql: str,
+        rows: list[dict[str, Any]],
+        context: dict[str, Any],
+    ) -> str:
         payload = {
             "question": question,
             "sql": sql,
             "rows": rows[:50],
             "context": context,
         }
-        prompt = (
+        return (
             "你是金融数据分析助手。请基于 JSON 数据用中文回答，说明数据口径；"
             "不要编造结果，数据为空时明确说明。\n"
             f"{json.dumps(payload, ensure_ascii=False, default=str)}"
         )
-        return self._chat_completion(prompt)
 
     def _execute_sql(self, sql: str) -> list[dict[str, Any]]:
         result = self.db.execute(text(sql))
@@ -114,22 +159,34 @@ class LlmService:
         body = response.json()
         return body["choices"][0]["message"]["content"]
 
-    def _sql_prompt(self, question: str, context: dict[str, Any]) -> str:
-        schema = {
-            "v_latest_official_ah_premium": "最新交易日官方 AH/H/A 溢价结果，含港股通通道",
-            "v_official_ah_premium_trend": "官方 AH/H/A 溢价历史趋势",
-            "v_latest_hk_connect_official_ah_premium": "最新交易日且港股通可操作的官方溢价结果",
-            "v_watchlist_opportunity": "自选股机会状态，含阈值、距离、通道和来源",
-            "v_stock_selection_latest": (
-                "最新 A 股选股因子宽表，含蓝筹、低估值、红利、质量和动量标签"
-            ),
-            "v_stock_selection_history": "A 股选股因子历史快照",
-            "v_stock_factor_dictionary": "选股因子字段字典和适用说明",
-            "v_latest_ah_premium": "兼容旧名称，实际同最新官方 AH/H/A 溢价结果",
-            "v_ah_premium_trend": "兼容旧名称，实际同官方 AH/H/A 溢价历史趋势",
-            "v_sync_health": "数据同步运行状态",
-            "v_data_quality_issues": "数据质量问题",
+    def _chat_completion_stream(self, prompt: str) -> Iterator[str]:
+        api_key = self.settings.resolve_llm_api_key()
+        if not api_key:
+            raise ValueError("LLM 未配置 API Key")
+        url = f"{self.settings.llm_base_url.rstrip('/')}/chat/completions"
+        headers = {"Authorization": f"Bearer {api_key}"}
+        payload = {
+            "model": self.settings.llm_model,
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": 0.1,
+            "stream": True,
         }
+        with httpx.Client(timeout=120.0) as client:
+            with client.stream("POST", url, headers=headers, json=payload) as response:
+                response.raise_for_status()
+                for line in response.iter_lines():
+                    if not line.startswith("data:"):
+                        continue
+                    data = line.removeprefix("data:").strip()
+                    if data == "[DONE]":
+                        break
+                    chunk = json.loads(data)
+                    delta = chunk["choices"][0].get("delta", {})
+                    content = delta.get("content")
+                    if content:
+                        yield content
+
+    def _sql_prompt(self, question: str, context: dict[str, Any]) -> str:
         context_json = json.dumps(
             {"question": question, "context": context},
             ensure_ascii=False,
@@ -138,15 +195,83 @@ class LlmService:
         return (
             '你只负责生成只读 MySQL SELECT SQL，必须返回 JSON：{"sql":"..."}。'
             "只能查询这些视图："
-            f"{json.dumps(schema, ensure_ascii=False)}。"
+            f"{json.dumps(self._schema(), ensure_ascii=False)}。"
             "默认使用官方 AH 比价口径；H/A 字段由官方 A/H 反推；"
             "涉及可操作性时优先查询含 hk_connect 或 watchlist 的视图。"
             "涉及 A 股选股、低估值、红利、蓝筹、ROE、PE、PB、股息率时"
             "优先查询 v_stock_selection_latest，"
             "并可用 v_stock_factor_dictionary 解释字段含义。"
+            "字段名必须完全来自字段清单；不要使用 stock_name、ha_premium、ah_premium 等不存在字段，"
+            "应使用 display_name/a_name/hk_name/name、ha_premium_pct、ah_premium_pct。"
             "不要使用写入、DDL、多语句。问题与上下文如下："
             f"{context_json}"
         )
+
+    def _repair_sql(self, question: str, context: dict[str, Any], sql: str, error: str) -> str:
+        payload = {
+            "question": question,
+            "context": context,
+            "failed_sql": sql,
+            "error": error[:1200],
+            "schema": self._schema(),
+        }
+        prompt = (
+            '请修复这个 MySQL SELECT SQL，并只返回 JSON：{"sql":"..."}。'
+            "只能使用 schema 中列出的视图和字段名；不要使用写入、DDL、多语句。"
+            "常见修正：stock_name 改为 display_name/a_name/hk_name/name；"
+            "ha_premium 改为 ha_premium_pct；ah_premium 改为 ah_premium_pct。"
+            f"{json.dumps(payload, ensure_ascii=False, default=str)}"
+        )
+        content = self._chat_completion(prompt)
+        payload = self._extract_json(content)
+        repaired_sql = payload.get("sql")
+        if not isinstance(repaired_sql, str) or not repaired_sql.strip():
+            raise ValueError("LLM 未返回修复后的 SQL")
+        return repaired_sql
+
+    def _schema(self) -> dict[str, str]:
+        return {
+            "v_latest_official_ah_premium": (
+                "columns: trade_date,a_ts_code,hk_ts_code,a_name,hk_name,a_close,a_pct_chg,"
+                "hk_close,hk_pct_chg,ah_ratio,ah_premium_pct,ha_ratio,ha_premium_pct,"
+                "is_hk_connect,connect_channels,is_realtime,data_source,source_updated_at,updated_at"
+            ),
+            "v_official_ah_premium_trend": (
+                "columns: trade_date,a_ts_code,hk_ts_code,a_name,hk_name,a_close,a_pct_chg,"
+                "hk_close,hk_pct_chg,ah_ratio,ah_premium_pct,ha_ratio,ha_premium_pct,"
+                "is_hk_connect,connect_channels,is_realtime,data_source,source_updated_at,updated_at"
+            ),
+            "v_latest_hk_connect_official_ah_premium": (
+                "columns: trade_date,a_ts_code,hk_ts_code,a_name,hk_name,a_close,a_pct_chg,"
+                "hk_close,hk_pct_chg,ah_ratio,ah_premium_pct,ha_ratio,ha_premium_pct,"
+                "is_hk_connect,connect_channels,is_realtime,data_source,source_updated_at,updated_at"
+            ),
+            "v_watchlist_opportunity": (
+                "columns: watchlist_id,a_ts_code,hk_ts_code,display_name,preferred_direction,"
+                "target_premium_pct,holding_market,sort_order,note,trade_date,a_name,hk_name,"
+                "ah_ratio,ah_premium_pct,ha_ratio,ha_premium_pct,metric_premium_pct,"
+                "distance_to_target_pct,premium_percentile_60,is_hk_connect,connect_channels,"
+                "data_source,source_updated_at,opportunity_status,updated_at"
+            ),
+            "v_stock_selection_latest": (
+                "columns: id,factor_date,ts_code,symbol,name,industry,area,market,selection_tags,"
+                "selection_score,selection_reason,is_hs300,is_sse50,is_csi300_value,"
+                "is_csi_dividend,is_sse_dividend,is_sz_dividend,close,pct_chg,turnover_rate,"
+                "pe_ttm,pb,ps_ttm,dividend_yield_ttm,total_mv,circ_mv,roe,grossprofit_margin,"
+                "netprofit_margin,debt_to_assets,revenue_yoy,latest_report_period,return_20d,"
+                "return_60d,return_120d,latest_dividend_year,latest_cash_div_tax,"
+                "latest_dividend_proc,forecast_type,forecast_summary,data_source,"
+                "source_trade_date,created_at,updated_at"
+            ),
+            "v_stock_selection_history": "columns: same as v_stock_selection_latest",
+            "v_stock_factor_dictionary": "columns: field_name,field_label,description,usage_hint",
+            "v_latest_ah_premium": "columns: same as v_latest_official_ah_premium",
+            "v_ah_premium_trend": "columns: same as v_official_ah_premium_trend",
+            "v_sync_health": (
+                "columns: dataset,last_status,last_started_at,last_finished_at,last_message"
+            ),
+            "v_data_quality_issues": "columns: issue_type,issue_level,issue_message,related_key",
+        }
 
     def _extract_json(self, content: str) -> dict[str, Any]:
         match = re.search(r"\{.*\}", content, re.S)

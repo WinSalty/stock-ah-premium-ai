@@ -58,6 +58,8 @@
 - LLM 问答：
   - DeepSeek OpenAI-compatible Chat API 封装，默认 `https://api.deepseek.com` 和 `deepseek-v4-flash`。
   - API Key 优先读取 `/Users/salty/codeProject/ai/doc/deepseek-apikey.txt`，`LLM_API_KEY` 仅作兜底，不把密钥暴露给前端。
+  - 问答页面支持流式响应、Enter 发送和 Shift+Enter 换行。
+  - LLM SQL 生成后会按本地视图字段清单校验并在字段名执行错误时自动修复重试一次。
   - 只读 SQL Guard：只允许 SELECT、禁止多语句和写库操作、限制白名单视图、自动 limit。
   - 默认 schema 已切换为官方 AH 比价、自选机会和港股通可操作性视图。
   - 会话与消息落库。
