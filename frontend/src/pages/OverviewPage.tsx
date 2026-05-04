@@ -17,15 +17,17 @@ function splitPairKey(value: string) {
 }
 
 function formatPairLabel(item: PremiumPairOption) {
-  const aName = item.a_name?.trim() || item.a_ts_code;
+  const rawAName = item.a_name?.trim();
+  const aName = rawAName || item.a_ts_code;
   const hkName = item.hk_name?.trim() || item.hk_ts_code;
   const codeLabel = `${item.a_ts_code} / ${item.hk_ts_code}`;
+  const aDisplayName = rawAName?.startsWith('XD') ? `${aName}（除息）` : aName;
 
   if (aName === hkName) {
-    return `${aName} (${codeLabel})`;
+    return `${aDisplayName} (${codeLabel})`;
   }
 
-  return `${aName} / ${hkName} (${codeLabel})`;
+  return `${aDisplayName} / ${hkName} (${codeLabel})`;
 }
 
 /**
