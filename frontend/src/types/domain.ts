@@ -40,6 +40,8 @@ export interface PremiumItem {
   calc_status: string;
   rate_source: string | null;
   rate_fallback: boolean;
+  official_ah_ratio: string | null;
+  official_ah_premium_pct: string | null;
   diff_from_official_pct: string | null;
 }
 

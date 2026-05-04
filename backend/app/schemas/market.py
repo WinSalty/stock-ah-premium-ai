@@ -55,6 +55,8 @@ class PremiumQueryResponse(OrmModel):
     calc_status: str
     rate_source: str | None
     rate_fallback: bool
+    official_ah_ratio: Decimal | None
+    official_ah_premium_pct: Decimal | None
     diff_from_official_pct: Decimal | None
 
 

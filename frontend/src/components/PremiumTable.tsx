@@ -84,6 +84,31 @@ function PremiumTable({ data, loading, pagination, onTrend }: PremiumTableProps)
       }
     },
     {
+      title: '官方比价',
+      dataIndex: 'official_ah_ratio',
+      align: 'right',
+      width: 112,
+      render: (value) => formatNumber(value, 2)
+    },
+    {
+      title: '官方溢价',
+      dataIndex: 'official_ah_premium_pct',
+      align: 'right',
+      width: 112,
+      render: (value) => {
+        const number = Number(value);
+        const color = number >= 0 ? 'red' : 'green';
+        return value === null ? '-' : <Tag color={color}>{number.toFixed(2)}%</Tag>;
+      }
+    },
+    {
+      title: '差异',
+      dataIndex: 'diff_from_official_pct',
+      align: 'right',
+      width: 100,
+      render: (value) => formatNumber(value)
+    },
+    {
       title: '通道',
       dataIndex: 'connect_channels',
       width: 130,
@@ -118,7 +143,7 @@ function PremiumTable({ data, loading, pagination, onTrend }: PremiumTableProps)
       dataSource={data}
       loading={loading}
       pagination={pagination}
-      scroll={{ x: 1150 }}
+      scroll={{ x: 1470 }}
       size="middle"
     />
   );
