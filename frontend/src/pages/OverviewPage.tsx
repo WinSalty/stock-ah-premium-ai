@@ -153,12 +153,12 @@ function OverviewPage() {
         </Col>
         <Col xs={24} md={8}>
           <Card>
-            <Statistic title="已计算配对" value={data?.calculated_count || 0} loading={isLoading} />
+            <Statistic title="官方 AH 记录" value={data?.calculated_count || 0} loading={isLoading} />
           </Card>
         </Col>
         <Col xs={24} md={8}>
           <Card>
-            <Statistic title="异常记录" value={data?.issue_count || 0} loading={isLoading} />
+            <Statistic title="实时记录" value={data?.issue_count || 0} loading={isLoading} />
           </Card>
         </Col>
       </Row>

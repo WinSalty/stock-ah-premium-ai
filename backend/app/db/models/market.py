@@ -1,9 +1,19 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 
-from sqlalchemy import DECIMAL, Boolean, Date, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy import (
+    DECIMAL,
+    Boolean,
+    Date,
+    DateTime,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base, TimestampMixin
@@ -243,6 +253,9 @@ class OfficialAHComparison(TimestampMixin, Base):
     ah_premium: Mapped[Decimal | None] = mapped_column(DECIMAL(20, 8))
     ha_comparison: Mapped[Decimal | None] = mapped_column(DECIMAL(20, 8))
     ha_premium: Mapped[Decimal | None] = mapped_column(DECIMAL(20, 8))
+    is_realtime: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    data_source: Mapped[str] = mapped_column(String(32), nullable=False, default="TUSHARE_OFFICIAL")
+    source_updated_at: Mapped[datetime | None] = mapped_column(DateTime)
 
 
 class AHPremiumDaily(TimestampMixin, Base):

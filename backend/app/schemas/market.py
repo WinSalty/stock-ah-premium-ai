@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 
 from pydantic import BaseModel, Field
@@ -34,7 +34,7 @@ class PremiumCalculateResponse(BaseModel):
 
 
 class PremiumQueryResponse(OrmModel):
-    """溢价结果列表响应。
+    """官方 AH 比价与溢价列表响应。
 
     创建日期：2026-05-04
     author: sunshengxian
@@ -45,24 +45,17 @@ class PremiumQueryResponse(OrmModel):
     hk_ts_code: str
     a_name: str | None
     hk_name: str | None
-    a_close_cny: Decimal | None
-    h_close_hkd: Decimal | None
-    hkd_cny: Decimal | None
-    h_close_cny: Decimal | None
+    a_close: Decimal | None
+    a_pct_chg: Decimal | None
+    hk_close: Decimal | None
+    hk_pct_chg: Decimal | None
     ah_ratio: Decimal | None
     ah_premium_pct: Decimal | None
     ha_ratio: Decimal | None
     ha_premium_pct: Decimal | None
-    connect_channels: str | None
-    calc_status: str
-    rate_source: str | None
-    rate_fallback: bool
-    official_ah_ratio: Decimal | None
-    official_ah_premium_pct: Decimal | None
-    official_ha_ratio: Decimal | None
-    official_ha_premium_pct: Decimal | None
-    diff_from_official_pct: Decimal | None
-    diff_from_official_ha_pct: Decimal | None
+    is_realtime: bool
+    data_source: str
+    source_updated_at: datetime | None
 
 
 class PremiumListResponse(BaseModel):
@@ -120,3 +113,4 @@ class PremiumOfficialTrendPoint(BaseModel):
     ah_premium_pct: Decimal | None
     ha_ratio: Decimal | None
     ha_premium_pct: Decimal | None
+    is_realtime: bool = False

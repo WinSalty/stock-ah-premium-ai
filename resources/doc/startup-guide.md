@@ -210,6 +210,8 @@ curl -X POST http://127.0.0.1:8000/api/manual-import/ah-pairs/csv \
 
 同步入口在前端“数据同步 / 接口同步”页。
 
+溢价页面以 `official_ah_comparison` 为展示主表。官方 `ah_comparison` 每天盘后更新；日间如果需要刷新当前日计算结果，可在“AH 官方比价”页点击“刷新实时”，结果会写回官方 AH 比价表并通过 `is_realtime` 标记来源。
+
 推荐优先使用“一键模式”：
 
 1. `增量同步`：按各数据集 checkpoint 自动补齐最近缺口，并保留 2 天重叠窗口以覆盖延迟修正。

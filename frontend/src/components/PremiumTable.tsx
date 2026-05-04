@@ -1,5 +1,5 @@
-import { Button, Table, Tag } from 'antd';
-import { LineChart } from 'lucide-react';
+import { Button, Table, Tag, Tooltip } from 'antd';
+import { Info, LineChart } from 'lucide-react';
 import type { ColumnsType } from 'antd/es/table';
 import type { PremiumItem } from '../types/domain';
 
@@ -16,6 +16,28 @@ function formatNumber(value: string | null, digits = 2) {
   }
   const number = Number(value);
   return Number.isFinite(number) ? number.toFixed(digits) : value;
+}
+
+function formatPercentTag(value: string | null) {
+  if (value === null) {
+    return '-';
+  }
+  const number = Number(value);
+  if (!Number.isFinite(number)) {
+    return value;
+  }
+  return <Tag color={number >= 0 ? 'red' : 'green'}>{number.toFixed(2)}%</Tag>;
+}
+
+function FormulaTitle({ label, formula }: { label: string; formula: string }) {
+  return (
+    <span className="formula-title">
+      {label}
+      <Tooltip title={formula}>
+        <Info size={13} className="formula-icon" />
+      </Tooltip>
+    </span>
+  );
 }
 
 /**
@@ -53,115 +75,79 @@ function PremiumTable({ data, loading, pagination, onTrend }: PremiumTableProps)
     },
     {
       title: 'A 收盘',
-      dataIndex: 'a_close_cny',
+      dataIndex: 'a_close',
       align: 'right',
       width: 100,
       render: (value) => formatNumber(value)
+    },
+    {
+      title: 'A 涨跌幅',
+      dataIndex: 'a_pct_chg',
+      align: 'right',
+      width: 104,
+      render: (value) => (value === null ? '-' : `${formatNumber(value)}%`)
     },
     {
       title: 'H 收盘',
-      dataIndex: 'h_close_hkd',
+      dataIndex: 'hk_close',
       align: 'right',
       width: 100,
       render: (value) => formatNumber(value)
     },
     {
-      title: 'HKD/CNY',
-      dataIndex: 'hkd_cny',
+      title: 'H 涨跌幅',
+      dataIndex: 'hk_pct_chg',
       align: 'right',
-      width: 108,
+      width: 104,
+      render: (value) => (value === null ? '-' : `${formatNumber(value)}%`)
+    },
+    {
+      title: (
+        <FormulaTitle
+          label="A/H 比价"
+          formula="A/H 比价 = A 股价格(人民币) ÷ (H 股价格(港币) × HKD/CNY)"
+        />
+      ),
+      dataIndex: 'ah_ratio',
+      align: 'right',
+      width: 118,
       render: (value) => formatNumber(value, 4)
     },
     {
-      title: 'A/H 溢价',
+      title: (
+        <FormulaTitle label="A/H 溢价" formula="A/H 溢价 = (A/H 比价 - 1) × 100%" />
+      ),
       dataIndex: 'ah_premium_pct',
       align: 'right',
-      width: 110,
-      render: (value) => {
-        const number = Number(value);
-        const color = number >= 0 ? 'red' : 'green';
-        return value === null ? '-' : <Tag color={color}>{number.toFixed(2)}%</Tag>;
-      }
+      width: 118,
+      render: (value) => formatPercentTag(value)
     },
     {
-      title: 'H/A 比价',
+      title: <FormulaTitle label="H/A 比价" formula="H/A 比价 = 1 ÷ A/H 比价" />,
       dataIndex: 'ha_ratio',
       align: 'right',
-      width: 112,
+      width: 118,
       render: (value) => formatNumber(value, 4)
     },
     {
-      title: 'H/A 溢价',
+      title: (
+        <FormulaTitle label="H/A 溢价" formula="H/A 溢价 = (H/A 比价 - 1) × 100%" />
+      ),
       dataIndex: 'ha_premium_pct',
       align: 'right',
-      width: 112,
-      render: (value) => {
-        const number = Number(value);
-        const color = number >= 0 ? 'red' : 'green';
-        return value === null ? '-' : <Tag color={color}>{number.toFixed(2)}%</Tag>;
-      }
+      width: 118,
+      render: (value) => formatPercentTag(value)
     },
     {
-      title: '官方 A/H 比价',
-      dataIndex: 'official_ah_ratio',
-      align: 'right',
-      width: 132,
-      render: (value) => formatNumber(value, 2)
-    },
-    {
-      title: '官方 A/H 溢价',
-      dataIndex: 'official_ah_premium_pct',
-      align: 'right',
-      width: 132,
-      render: (value) => {
-        const number = Number(value);
-        const color = number >= 0 ? 'red' : 'green';
-        return value === null ? '-' : <Tag color={color}>{number.toFixed(2)}%</Tag>;
-      }
-    },
-    {
-      title: 'A/H 差异',
-      dataIndex: 'diff_from_official_pct',
-      align: 'right',
-      width: 112,
-      render: (value) => formatNumber(value)
-    },
-    {
-      title: '官方 H/A 比价',
-      dataIndex: 'official_ha_ratio',
-      align: 'right',
-      width: 132,
-      render: (value) => formatNumber(value, 4)
-    },
-    {
-      title: '官方 H/A 溢价',
-      dataIndex: 'official_ha_premium_pct',
-      align: 'right',
-      width: 132,
-      render: (value) => {
-        const number = Number(value);
-        const color = number >= 0 ? 'red' : 'green';
-        return value === null ? '-' : <Tag color={color}>{number.toFixed(2)}%</Tag>;
-      }
-    },
-    {
-      title: 'H/A 差异',
-      dataIndex: 'diff_from_official_ha_pct',
-      align: 'right',
-      width: 112,
-      render: (value) => formatNumber(value)
-    },
-    {
-      title: '通道',
-      dataIndex: 'connect_channels',
-      width: 130,
-      render: (value) => value || '-'
-    },
-    {
-      title: '状态',
-      dataIndex: 'calc_status',
-      width: 120,
-      render: (value) => <Tag color={value === 'OK' ? 'blue' : 'orange'}>{value}</Tag>
+      title: '来源',
+      width: 128,
+      render: (_, record) => (
+        <Tooltip title={record.source_updated_at ? `更新时间：${record.source_updated_at}` : record.data_source}>
+          <Tag color={record.is_realtime ? 'green' : 'blue'}>
+            {record.is_realtime ? '实时' : '官方'}
+          </Tag>
+        </Tooltip>
+      )
     },
     {
       title: '',
@@ -186,7 +172,7 @@ function PremiumTable({ data, loading, pagination, onTrend }: PremiumTableProps)
       dataSource={data}
       loading={loading}
       pagination={pagination}
-      scroll={{ x: 1980 }}
+      scroll={{ x: 1280 }}
       size="middle"
     />
   );

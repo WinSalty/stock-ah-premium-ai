@@ -564,12 +564,17 @@ class SyncService:
     def _normalize_official_ha_row(self, row: dict[str, Any]) -> None:
         ah_ratio = row.get("ah_comparison")
         ha_ratio = self._reverse_ratio(ah_ratio)
+        if row.get("ah_premium") is None and ah_ratio is not None:
+            row["ah_premium"] = quantize_decimal((ah_ratio - Decimal("1")) * Decimal("100"))
         row["ha_comparison"] = ha_ratio
         row["ha_premium"] = (
             quantize_decimal((ha_ratio - Decimal("1")) * Decimal("100"))
             if ha_ratio is not None
             else None
         )
+        row["is_realtime"] = False
+        row["data_source"] = "TUSHARE_OFFICIAL"
+        row["source_updated_at"] = datetime.now(UTC).replace(tzinfo=None)
 
     def _reverse_ratio(self, value: Decimal | None) -> Decimal | None:
         if value is None or value == Decimal("0"):

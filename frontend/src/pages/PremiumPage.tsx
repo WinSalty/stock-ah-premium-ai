@@ -1,4 +1,4 @@
-import { Button, DatePicker, Drawer, Form, Input, InputNumber, Select, Space, message } from 'antd';
+import { Button, DatePicker, Drawer, Form, Input, InputNumber, Space, message } from 'antd';
 import ReactECharts from 'echarts-for-react';
 import { Calculator, Search } from 'lucide-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -13,13 +13,12 @@ import type { PremiumQueryParams } from '../api/market';
 interface FilterValues {
   trade_date?: dayjs.Dayjs;
   keyword?: string;
-  channel?: string;
   min_premium?: number;
   max_premium?: number;
 }
 
 /**
- * AH 溢价查询和计算页面。
+ * AH 官方比价查询和实时计算页面。
  * 创建日期：2026-05-04
  * author: sunshengxian
  */
@@ -74,7 +73,6 @@ function PremiumPage() {
     setFilters({
       trade_date: values.trade_date?.format('YYYY-MM-DD'),
       keyword: values.keyword?.trim() || undefined,
-      channel: values.channel || undefined,
       min_premium: values.min_premium,
       max_premium: values.max_premium
     });
@@ -82,16 +80,13 @@ function PremiumPage() {
 
   const onCalculate = () => {
     const tradeDate = form.getFieldValue('trade_date') as dayjs.Dayjs | undefined;
-    if (!tradeDate) {
-      message.warning('请选择交易日');
-      return;
-    }
-    calculateMutation.mutate({ start_date: tradeDate.format('YYYY-MM-DD') });
+    const targetDate = tradeDate || dayjs();
+    calculateMutation.mutate({ start_date: targetDate.format('YYYY-MM-DD') });
   };
 
   return (
     <main className="page">
-      <PageHeader title="AH 溢价" />
+      <PageHeader title="AH 官方比价" />
       <section className="panel">
         <Form form={form} layout="vertical" onFinish={onSearch}>
           <div className="premium-filter-grid">
@@ -100,15 +95,6 @@ function PremiumPage() {
             </Form.Item>
             <Form.Item label="股票" name="keyword">
               <Input placeholder="代码或名称" />
-            </Form.Item>
-            <Form.Item label="通道" name="channel">
-              <Select
-                allowClear
-                options={[
-                  { value: 'SH_HK', label: 'SH_HK' },
-                  { value: 'SZ_HK', label: 'SZ_HK' }
-                ]}
-              />
             </Form.Item>
             <Form.Item label="最小溢价" name="min_premium">
               <InputNumber className="full-width" addonAfter="%" />
@@ -122,7 +108,7 @@ function PremiumPage() {
                   查询
                 </Button>
                 <Button icon={<Calculator size={16} />} onClick={onCalculate} loading={calculateMutation.isPending}>
-                  计算
+                  刷新实时
                 </Button>
               </Space>
             </Form.Item>

@@ -214,6 +214,17 @@ body {
   font-size: 12px;
 }
 
+.formula-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.formula-icon {
+  color: #64748b;
+  cursor: help;
+}
+
 .mono-text,
 .sql-preview {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;

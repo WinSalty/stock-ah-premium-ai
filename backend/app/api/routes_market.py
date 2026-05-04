@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy import asc, desc, func, or_, select
 from sqlalchemy.orm import Session
 
-from app.db.models.market import AHPremiumDaily, OfficialAHComparison
+from app.db.models.market import OfficialAHComparison
 from app.db.session import get_db
 from app.schemas.imports import (
     CsvImportRequest,
@@ -25,10 +25,31 @@ from app.schemas.market import (
     PremiumSummaryResponse,
 )
 from app.services.manual_import_service import ManualImportService
-from app.services.premium_calc_service import PremiumCalcService
+from app.services.official_premium_calc_service import OfficialPremiumCalcService
 
 router = APIRouter()
 DbSession = Annotated[Session, Depends(get_db)]
+
+
+def _official_to_response(item: OfficialAHComparison) -> PremiumQueryResponse:
+    return PremiumQueryResponse(
+        trade_date=item.trade_date,
+        a_ts_code=item.a_ts_code,
+        hk_ts_code=item.hk_ts_code,
+        a_name=item.a_name,
+        hk_name=item.hk_name,
+        a_close=item.a_close,
+        a_pct_chg=item.a_pct_chg,
+        hk_close=item.hk_close,
+        hk_pct_chg=item.hk_pct_chg,
+        ah_ratio=item.ah_comparison,
+        ah_premium_pct=item.ah_premium,
+        ha_ratio=item.ha_comparison,
+        ha_premium_pct=item.ha_premium,
+        is_realtime=item.is_realtime,
+        data_source=item.data_source,
+        source_updated_at=item.source_updated_at,
+    )
 
 
 @router.post("/ah-premiums/calculate", response_model=PremiumCalculateResponse)
@@ -43,7 +64,7 @@ def calculate_premiums(
     """
 
     end_date = payload.end_date or payload.start_date
-    result = PremiumCalcService(db).calculate_range(payload.start_date, end_date)
+    result = OfficialPremiumCalcService(db).calculate_range(payload.start_date, end_date)
     return PremiumCalculateResponse(**result.__dict__)
 
 
@@ -64,37 +85,42 @@ def list_premiums(
     author: sunshengxian
     """
 
-    statement = select(AHPremiumDaily)
-    count_statement = select(func.count(AHPremiumDaily.id))
+    statement = select(OfficialAHComparison)
+    count_statement = select(func.count(OfficialAHComparison.id))
     filters = []
     if trade_date:
-        filters.append(AHPremiumDaily.trade_date == trade_date)
+        filters.append(OfficialAHComparison.trade_date == trade_date)
+    else:
+        latest_trade_date = db.scalar(select(func.max(OfficialAHComparison.trade_date)))
+        if latest_trade_date is not None:
+            filters.append(OfficialAHComparison.trade_date == latest_trade_date)
     if keyword:
         like = f"%{keyword}%"
         filters.append(
             or_(
-                AHPremiumDaily.a_ts_code.like(like),
-                AHPremiumDaily.hk_ts_code.like(like),
-                AHPremiumDaily.a_name.like(like),
-                AHPremiumDaily.hk_name.like(like),
+                OfficialAHComparison.a_ts_code.like(like),
+                OfficialAHComparison.hk_ts_code.like(like),
+                OfficialAHComparison.a_name.like(like),
+                OfficialAHComparison.hk_name.like(like),
             )
         )
-    if channel:
-        filters.append(AHPremiumDaily.connect_channels.like(f"%{channel}%"))
     if min_premium is not None:
-        filters.append(AHPremiumDaily.ah_premium_pct >= min_premium)
+        filters.append(OfficialAHComparison.ah_premium >= min_premium)
     if max_premium is not None:
-        filters.append(AHPremiumDaily.ah_premium_pct <= max_premium)
+        filters.append(OfficialAHComparison.ah_premium <= max_premium)
     if filters:
         statement = statement.where(*filters)
         count_statement = count_statement.where(*filters)
     total = db.scalar(count_statement) or 0
     statement = (
-        statement.order_by(desc(AHPremiumDaily.trade_date), desc(AHPremiumDaily.ah_premium_pct))
+        statement.order_by(
+            desc(OfficialAHComparison.trade_date),
+            desc(OfficialAHComparison.ah_premium),
+        )
         .offset((page - 1) * page_size)
         .limit(page_size)
     )
-    items = [PremiumQueryResponse.model_validate(item) for item in db.scalars(statement).all()]
+    items = [_official_to_response(item) for item in db.scalars(statement).all()]
     return PremiumListResponse(total=total, items=items)
 
 
@@ -106,40 +132,37 @@ def premium_summary(db: DbSession) -> PremiumSummaryResponse:
     author: sunshengxian
     """
 
-    latest_trade_date = db.scalar(select(func.max(AHPremiumDaily.trade_date)))
+    latest_trade_date = db.scalar(select(func.max(OfficialAHComparison.trade_date)))
     if latest_trade_date is None:
         return PremiumSummaryResponse(latest_trade_date=None, calculated_count=0, issue_count=0)
     calculated_count = db.scalar(
-        select(func.count(AHPremiumDaily.id)).where(
-            AHPremiumDaily.trade_date == latest_trade_date,
-            AHPremiumDaily.calc_status == "OK",
+        select(func.count(OfficialAHComparison.id)).where(
+            OfficialAHComparison.trade_date == latest_trade_date,
         )
     ) or 0
     issue_count = db.scalar(
-        select(func.count(AHPremiumDaily.id)).where(
-            AHPremiumDaily.trade_date == latest_trade_date,
-            AHPremiumDaily.calc_status != "OK",
+        select(func.count(OfficialAHComparison.id)).where(
+            OfficialAHComparison.trade_date == latest_trade_date,
+            OfficialAHComparison.is_realtime.is_(True),
         )
     ) or 0
     top = list(
         db.scalars(
-            select(AHPremiumDaily)
+            select(OfficialAHComparison)
             .where(
-                AHPremiumDaily.trade_date == latest_trade_date,
-                AHPremiumDaily.calc_status == "OK",
+                OfficialAHComparison.trade_date == latest_trade_date,
             )
-            .order_by(desc(AHPremiumDaily.ah_premium_pct))
+            .order_by(desc(OfficialAHComparison.ah_premium))
             .limit(10)
         ).all()
     )
     bottom = list(
         db.scalars(
-            select(AHPremiumDaily)
+            select(OfficialAHComparison)
             .where(
-                AHPremiumDaily.trade_date == latest_trade_date,
-                AHPremiumDaily.calc_status == "OK",
+                OfficialAHComparison.trade_date == latest_trade_date,
             )
-            .order_by(asc(AHPremiumDaily.ah_premium_pct))
+            .order_by(asc(OfficialAHComparison.ah_premium))
             .limit(10)
         ).all()
     )
@@ -147,8 +170,8 @@ def premium_summary(db: DbSession) -> PremiumSummaryResponse:
         latest_trade_date=latest_trade_date,
         calculated_count=calculated_count,
         issue_count=issue_count,
-        top_premiums=[PremiumQueryResponse.model_validate(item) for item in top],
-        bottom_premiums=[PremiumQueryResponse.model_validate(item) for item in bottom],
+        top_premiums=[_official_to_response(item) for item in top],
+        bottom_premiums=[_official_to_response(item) for item in bottom],
     )
 
 
@@ -238,6 +261,7 @@ def official_premium_trend(
             ah_premium_pct=item.ah_premium,
             ha_ratio=item.ha_comparison,
             ha_premium_pct=item.ha_premium,
+            is_realtime=item.is_realtime,
         )
         for item in db.scalars(statement).all()
     ]
@@ -260,16 +284,16 @@ def premium_trend(
     author: sunshengxian
     """
 
-    statement = select(AHPremiumDaily).where(
-        AHPremiumDaily.a_ts_code == a_ts_code,
-        AHPremiumDaily.hk_ts_code == hk_ts_code,
+    statement = select(OfficialAHComparison).where(
+        OfficialAHComparison.a_ts_code == a_ts_code,
+        OfficialAHComparison.hk_ts_code == hk_ts_code,
     )
     if start_date:
-        statement = statement.where(AHPremiumDaily.trade_date >= start_date)
+        statement = statement.where(OfficialAHComparison.trade_date >= start_date)
     if end_date:
-        statement = statement.where(AHPremiumDaily.trade_date <= end_date)
-    statement = statement.order_by(AHPremiumDaily.trade_date)
-    return [PremiumQueryResponse.model_validate(item) for item in db.scalars(statement).all()]
+        statement = statement.where(OfficialAHComparison.trade_date <= end_date)
+    statement = statement.order_by(OfficialAHComparison.trade_date)
+    return [_official_to_response(item) for item in db.scalars(statement).all()]
 
 
 @router.post("/manual-import/ah-pairs", response_model=ImportResponse)

@@ -50,24 +50,17 @@ export interface PremiumItem {
   hk_ts_code: string;
   a_name: string | null;
   hk_name: string | null;
-  a_close_cny: string | null;
-  h_close_hkd: string | null;
-  hkd_cny: string | null;
-  h_close_cny: string | null;
+  a_close: string | null;
+  a_pct_chg: string | null;
+  hk_close: string | null;
+  hk_pct_chg: string | null;
   ah_ratio: string | null;
   ah_premium_pct: string | null;
   ha_ratio: string | null;
   ha_premium_pct: string | null;
-  connect_channels: string | null;
-  calc_status: string;
-  rate_source: string | null;
-  rate_fallback: boolean;
-  official_ah_ratio: string | null;
-  official_ah_premium_pct: string | null;
-  official_ha_ratio: string | null;
-  official_ha_premium_pct: string | null;
-  diff_from_official_pct: string | null;
-  diff_from_official_ha_pct: string | null;
+  is_realtime: boolean;
+  data_source: string;
+  source_updated_at: string | null;
 }
 
 export interface PremiumListResponse {
@@ -101,6 +94,7 @@ export interface PremiumOfficialTrendPoint {
   ah_premium_pct: string | null;
   ha_ratio: string | null;
   ha_premium_pct: string | null;
+  is_realtime?: boolean;
 }
 
 export interface PremiumCalculateRequest {
