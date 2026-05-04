@@ -31,5 +31,5 @@ def public_settings() -> dict[str, object]:
         "appName": settings.app_name,
         "appVersion": settings.app_version,
         "tushareConfigured": bool(settings.resolve_tushare_token()),
-        "llmConfigured": bool(settings.llm_api_key and settings.llm_model),
+        "llmConfigured": bool(settings.resolve_llm_api_key() and settings.llm_model),
     }

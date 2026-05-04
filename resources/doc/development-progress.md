@@ -4,7 +4,7 @@
 
 ## 当前状态
 
-已按一阶段方案完成主要代码开发和本地 MySQL 初始化验证。当前已按中转服务文档切换为 Tushare Python SDK 调用方式，默认地址为 `http://tsy.xiaodefa.cn`。Tushare Token 已调整为本机文件优先，避免旧环境变量干扰；LLM Key 尚未配置。
+已按一阶段方案完成主要代码开发和本地 MySQL 初始化验证。当前已按中转服务文档切换为 Tushare Python SDK 调用方式，默认地址为 `http://tsy.xiaodefa.cn`。Tushare Token 已调整为本机文件优先，避免旧环境变量干扰；LLM 已接入 DeepSeek，并通过本机 API Key 文件完成最小调用验证。
 
 ## 已完成
 
@@ -56,7 +56,8 @@
   - 新增 `GET/POST/PATCH/DELETE /api/watchlist`，支持查询自选股机会状态、新增、更新和停用。
   - 自选机会状态按官方 AH/H/A 口径、港股通通道、用户阈值和数据可用性生成。
 - LLM 问答：
-  - OpenAI-compatible Chat API 封装。
+  - DeepSeek OpenAI-compatible Chat API 封装，默认 `https://api.deepseek.com` 和 `deepseek-v4-flash`。
+  - API Key 优先读取 `/Users/salty/codeProject/ai/doc/deepseek-apikey.txt`，`LLM_API_KEY` 仅作兜底，不把密钥暴露给前端。
   - 只读 SQL Guard：只允许 SELECT、禁止多语句和写库操作、限制白名单视图、自动 limit。
   - 默认 schema 已切换为官方 AH 比价、自选机会和港股通可操作性视图。
   - 会话与消息落库。

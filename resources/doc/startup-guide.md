@@ -22,7 +22,7 @@ cd /Users/salty/codeProject/ai/coding/stock-ah-premium-ai
 - Node.js：支持 Vite 5 的版本。
 - MySQL：本机 MySQL 5.7，连接说明见 `/Users/salty/codeProject/ai/doc/mysqluse.md`。
 - Tushare：使用 Python `tushare` SDK，默认中转地址 `http://tsy.xiaodefa.cn`，同步接口运行时优先读取本机文件 `/Users/salty/codeProject/ai/doc/tushare-token.txt`，环境变量 `TUSHARE_TOKEN` 作为兜底。
-- LLM：运行智能问答时需要 `LLM_BASE_URL`、`LLM_API_KEY`、`LLM_MODEL`。
+- LLM：运行智能问答时默认接入 DeepSeek OpenAI-compatible API，优先读取本机文件 `/Users/salty/codeProject/ai/doc/deepseek-apikey.txt`，环境变量 `LLM_API_KEY` 作为兜底，默认模型 `deepseek-v4-flash`。
 
 启动 MySQL：
 
@@ -77,13 +77,14 @@ TUSHARE_API_URL=http://tsy.xiaodefa.cn
 TUSHARE_REQUEST_INTERVAL_SECONDS=0.6
 SYNC_SCHEDULER_ENABLED=true
 SYNC_SCHEDULER_TIMEZONE=Asia/Shanghai
-LLM_BASE_URL=https://api.openai.com/v1
+LLM_BASE_URL=https://api.deepseek.com
+LLM_API_KEY_FILE=/Users/salty/codeProject/ai/doc/deepseek-apikey.txt
 LLM_API_KEY=
-LLM_MODEL=
+LLM_MODEL=deepseek-v4-flash
 APP_CORS_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
 ```
 
-不要把真实 Token、数据库密码或 LLM Key 写入仓库。若 shell 中残留旧 `TUSHARE_TOKEN`，项目仍会优先使用 `TUSHARE_TOKEN_FILE` 指向的文件，避免误用旧 token。
+不要把真实 Token、数据库密码或 LLM Key 写入仓库。若 shell 中残留旧 `TUSHARE_TOKEN`，项目仍会优先使用 `TUSHARE_TOKEN_FILE` 指向的文件，避免误用旧 token；LLM 同理优先使用 `LLM_API_KEY_FILE` 指向的本机文件。
 
 Tushare 中转服务文档见 `http://tsy.xiaodefa.cn/docs`。项目后端已按其 SDK 方式设置。文档示例使用 `ts.set_token(token)`，项目实现采用 `ts.pro_api(token, timeout=...)` 直接传入 token，避免 SDK 把 token 额外写到用户目录缓存文件：
 
@@ -345,9 +346,10 @@ curl http://127.0.0.1:8000/api/health
 确认 `backend/.env` 中已经配置：
 
 ```bash
-LLM_BASE_URL=
+LLM_BASE_URL=https://api.deepseek.com
+LLM_API_KEY_FILE=/Users/salty/codeProject/ai/doc/deepseek-apikey.txt
 LLM_API_KEY=
-LLM_MODEL=
+LLM_MODEL=deepseek-v4-flash
 ```
 
 ## 14. 当前验证状态

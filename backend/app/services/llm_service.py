@@ -27,7 +27,7 @@ class ChatAnswer:
 
 
 class LlmService:
-    """OpenAI-compatible LLM 问答服务。
+    """DeepSeek OpenAI-compatible LLM 问答服务。
 
     创建日期：2026-05-04
     author: sunshengxian
@@ -45,9 +45,12 @@ class LlmService:
         author: sunshengxian
         """
 
-        if not self.settings.llm_api_key or not self.settings.llm_model:
+        if not self.settings.resolve_llm_api_key() or not self.settings.llm_model:
             return ChatAnswer(
-                answer="LLM 未配置。请设置 LLM_API_KEY 和 LLM_MODEL 后再使用智能问答。",
+                answer=(
+                    "LLM 未配置。请设置 LLM_API_KEY_FILE 或 LLM_API_KEY，"
+                    "并设置 LLM_MODEL 后再使用智能问答。"
+                ),
                 sql=None,
                 rows=[],
             )
@@ -95,8 +98,11 @@ class LlmService:
         return [dict(row._mapping) for row in result.fetchall()]
 
     def _chat_completion(self, prompt: str) -> str:
+        api_key = self.settings.resolve_llm_api_key()
+        if not api_key:
+            raise ValueError("LLM 未配置 API Key")
         url = f"{self.settings.llm_base_url.rstrip('/')}/chat/completions"
-        headers = {"Authorization": f"Bearer {self.settings.llm_api_key}"}
+        headers = {"Authorization": f"Bearer {api_key}"}
         payload = {
             "model": self.settings.llm_model,
             "messages": [{"role": "user", "content": prompt}],

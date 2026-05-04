@@ -32,9 +32,13 @@ class Settings(BaseSettings):
         default=0.6,
         alias="TUSHARE_REQUEST_INTERVAL_SECONDS",
     )
-    llm_base_url: str = Field(default="https://api.openai.com/v1", alias="LLM_BASE_URL")
+    llm_base_url: str = Field(default="https://api.deepseek.com", alias="LLM_BASE_URL")
     llm_api_key: str | None = Field(default=None, alias="LLM_API_KEY")
-    llm_model: str | None = Field(default=None, alias="LLM_MODEL")
+    llm_api_key_file: Path | None = Field(
+        default=Path("/Users/salty/codeProject/ai/doc/deepseek-apikey.txt"),
+        alias="LLM_API_KEY_FILE",
+    )
+    llm_model: str | None = Field(default="deepseek-v4-flash", alias="LLM_MODEL")
     cors_origins: list[str] = Field(default=["http://localhost:5173"], alias="APP_CORS_ORIGINS")
     query_limit_default: int = 200
     query_limit_max: int = 1000
@@ -74,6 +78,21 @@ class Settings(BaseSettings):
                 return token
         if self.tushare_token:
             return self.tushare_token.strip()
+        return None
+
+    def resolve_llm_api_key(self) -> str | None:
+        """按本机文件优先、环境变量兜底的顺序读取 LLM API Key。
+
+        创建日期：2026-05-04
+        author: sunshengxian
+        """
+
+        if self.llm_api_key_file and self.llm_api_key_file.exists():
+            api_key = self.llm_api_key_file.read_text(encoding="utf-8").strip()
+            if api_key:
+                return api_key
+        if self.llm_api_key:
+            return self.llm_api_key.strip()
         return None
 
 

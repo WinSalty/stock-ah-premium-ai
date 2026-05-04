@@ -12,7 +12,7 @@
 - 提供简单精美的 Web 页面，支持数据同步、榜单查看、趋势查看和同步状态观察。
 - 支持通过 LLM API 对本地数据进行安全问答，例如“最近一个交易日溢价最高的前 10 只是什么”“某股票过去 30 个交易日溢价趋势如何”。
 
-本阶段已完成主要代码开发、本地 MySQL 初始化、最大范围数据同步和非外部依赖检查。当前实现以 Tushare 中转 SDK 为入口，`hk_daily` 因当前 token 无法请求已禁用；溢价页面以官方 AH 比价表为展示主表，H/A 比价和溢价由官方 A/H 字段反推。LLM Key 尚未配置，真实 LLM 问答仍待验证。
+本阶段已完成主要代码开发、本地 MySQL 初始化、最大范围数据同步和非外部依赖检查。当前实现以 Tushare 中转 SDK 为入口，`hk_daily` 因当前 token 无法请求已禁用；溢价页面以官方 AH 比价表为展示主表，H/A 比价和溢价由官方 A/H 字段反推。LLM 已接入 DeepSeek，并通过本机 API Key 文件完成最小调用验证。
 
 ## 2. 技术选型
 
@@ -68,9 +68,10 @@ TUSHARE_TOKEN_FILE=/Users/salty/codeProject/ai/doc/tushare-token.txt
 TUSHARE_API_URL=http://tsy.xiaodefa.cn
 SYNC_SCHEDULER_ENABLED=true
 SYNC_SCHEDULER_TIMEZONE=Asia/Shanghai
-LLM_BASE_URL=<openai-compatible-base-url>
-LLM_API_KEY=<local-only>
-LLM_MODEL=<model-name>
+LLM_BASE_URL=https://api.deepseek.com
+LLM_API_KEY_FILE=/Users/salty/codeProject/ai/doc/deepseek-apikey.txt
+LLM_API_KEY=<local-only-fallback>
+LLM_MODEL=deepseek-v4-flash
 ```
 
 ## 3. Tushare 接口范围
@@ -317,7 +318,7 @@ stock-ah-premium-ai/
 - `ah_pair_service`：维护 AH 配对，支持官方接口导入和人工导入。
 - `fx_rate_service`：维护直接汇率和交叉汇率，暴露按日期取 HKD/CNY 的方法。
 - `premium_calc_service`：读取行情、配对、港股通名单和汇率，生成 `ah_premium_daily`。
-- `llm_service`：封装 OpenAI-compatible Chat API，不把密钥暴露给前端。
+- `llm_service`：封装 DeepSeek OpenAI-compatible Chat API，不把密钥暴露给前端。
 - `sql_guard_service`：对 LLM 生成的 SQL 做只读、白名单、limit、超时校验。
 
 ## 7. API 设计
@@ -487,9 +488,9 @@ flowchart LR
 | P1 后端骨架与数据库 | 创建 FastAPI 项目、配置管理、Alembic、MySQL 连接、建表迁移 | 后端项目、迁移脚本 | 已完成，本地 MySQL 初始化通过 |
 | P2 Tushare 同步 | 封装 Tushare 客户端，实现基础信息、行情、港股通、汇率同步 | 同步 API、同步任务、单元测试 | 已完成；`hk_daily` 因权限禁用 |
 | P3 AH 配对与溢价计算 | 导入 AH 配对，计算/反推 A/H 与 H/A 溢价，落官方表和自算表 | 计算服务、结果查询 API | 已完成，页面以官方 AH 比价表为主 |
-| P4 LLM 问答 | OpenAI-compatible 适配、只读 SQL Guard、问答 API | 聊天 API、提示词模板、只读查询视图 | 已编码，待 LLM Key 验证 |
+| P4 LLM 问答 | DeepSeek OpenAI-compatible 适配、只读 SQL Guard、问答 API | 聊天 API、提示词模板、只读查询视图 | 已编码，DeepSeek 最小调用验证通过 |
 | P5 前端页面 | 总览、同步、查询、AH 溢价、智能问答页面 | React 前端 | 已完成，支持长字段悬浮和东八区时间展示 |
-| P6 联调与验收 | 端到端测试、异常处理、README、启动脚本 | 完整本地运行说明 | 本地 MySQL 初始化、批量同步、静态检查和构建已通过；LLM 验证待 Key 配置 |
+| P6 联调与验收 | 端到端测试、异常处理、README、启动脚本 | 完整本地运行说明 | 本地 MySQL 初始化、批量同步、静态检查和构建已通过；DeepSeek 最小调用验证通过 |
 
 建议排期：8-12 个工作日。
 
