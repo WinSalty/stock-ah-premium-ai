@@ -101,7 +101,7 @@ body {
 
 .auth-page {
   display: grid;
-  grid-template-columns: minmax(0, 1.34fr) minmax(430px, 1fr);
+  grid-template-columns: minmax(520px, 1.05fr) minmax(480px, 0.95fr);
   min-height: 100vh;
   background:
     radial-gradient(circle at 68% 22%, rgba(37, 99, 235, 0.07), transparent 26%),
@@ -110,12 +110,14 @@ body {
 
 .auth-visual {
   position: relative;
-  display: grid;
-  align-content: start;
-  gap: 42px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 30px;
   overflow: hidden;
   min-width: 0;
-  padding: clamp(56px, 8vh, 96px) clamp(44px, 7vw, 112px) 0;
+  min-height: 100vh;
+  padding: clamp(48px, 6.8vh, 76px) clamp(44px, 5.8vw, 88px) 260px;
   color: #ffffff;
   background:
     radial-gradient(circle at 16% 18%, rgba(32, 201, 179, 0.42), transparent 28%),
@@ -144,12 +146,12 @@ body {
 .auth-mark {
   display: grid;
   place-items: center;
-  width: 66px;
-  height: 66px;
+  width: 58px;
+  height: 58px;
   border: 1px solid rgba(255, 255, 255, 0.28);
   border-radius: 12px;
   color: #ffffff;
-  font-size: 20px;
+  font-size: 18px;
   font-weight: 800;
   background: rgba(255, 255, 255, 0.08);
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.09);
@@ -157,24 +159,24 @@ body {
 
 .auth-brand-row .ant-typography {
   color: #ffffff;
-  font-size: 24px;
+  font-size: 22px;
   letter-spacing: 0;
 }
 
 .auth-hero-copy h1 {
-  max-width: 900px;
+  max-width: 760px;
   margin: 0 !important;
   color: #ffffff !important;
-  font-size: clamp(48px, 5vw, 68px) !important;
+  font-size: clamp(44px, 4.2vw, 62px) !important;
   line-height: 1.18 !important;
   letter-spacing: 0 !important;
 }
 
 .auth-hero-copy .ant-typography {
-  max-width: 620px;
-  margin: 26px 0 0 !important;
+  max-width: 600px;
+  margin: 20px 0 0 !important;
   color: rgba(255, 255, 255, 0.9) !important;
-  font-size: 21px;
+  font-size: 18px;
   line-height: 1.62;
 }
 
@@ -182,9 +184,9 @@ body {
   z-index: 1;
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 22px;
-  width: min(800px, 100%);
-  padding: 28px 30px;
+  gap: 18px;
+  width: min(720px, 100%);
+  padding: 22px 24px;
   border: 1px solid rgba(255, 255, 255, 0.14);
   border-radius: 16px;
   background: rgba(255, 255, 255, 0.16);
@@ -194,8 +196,8 @@ body {
 
 .auth-feature-item {
   display: grid;
-  grid-template-columns: 54px minmax(0, 1fr);
-  gap: 14px;
+  grid-template-columns: 48px minmax(0, 1fr);
+  gap: 12px;
   align-items: center;
   min-width: 0;
 }
@@ -219,8 +221,8 @@ body {
 .auth-feature-icon {
   display: grid;
   place-items: center;
-  width: 54px;
-  height: 54px;
+  width: 48px;
+  height: 48px;
   border-radius: 999px;
   color: #ffffff;
   box-shadow: 0 12px 26px rgba(15, 23, 42, 0.18);
@@ -241,9 +243,9 @@ body {
 .auth-chart-svg {
   position: absolute;
   right: -36px;
-  bottom: 28px;
+  bottom: 18px;
   left: 0;
-  width: min(960px, 100%);
+  width: min(900px, 98%);
   max-width: none;
   filter: drop-shadow(0 18px 38px rgba(15, 23, 42, 0.16));
 }
@@ -252,13 +254,13 @@ body {
   display: grid;
   place-items: center;
   min-width: 0;
-  padding: 42px;
+  padding: 32px;
 }
 
 .auth-panel {
-  width: min(520px, 100%);
+  width: min(500px, 100%);
   margin: 0 auto;
-  padding: 40px;
+  padding: 36px;
   border: 1px solid #dfe6f1;
   border-radius: 24px;
   background: rgba(255, 255, 255, 0.92);
@@ -267,7 +269,7 @@ body {
 
 .auth-login-illustration {
   display: block;
-  width: min(280px, 74%);
+  width: min(250px, 70%);
   margin: -6px auto 8px;
 }
 
@@ -1164,8 +1166,8 @@ body {
   }
 
   .auth-visual {
-    min-height: 620px;
-    padding-bottom: 240px;
+    min-height: 560px;
+    padding-bottom: 180px;
   }
 
   .auth-feature-strip {
@@ -1268,9 +1270,9 @@ body {
   }
 
   .auth-visual {
-    gap: 28px;
-    min-height: 660px;
-    padding: 32px 20px 210px;
+    gap: 18px;
+    min-height: 390px;
+    padding: 24px 20px 76px;
   }
 
   .auth-brand-row {
@@ -1278,32 +1280,64 @@ body {
   }
 
   .auth-mark {
-    width: 48px;
-    height: 48px;
-    font-size: 16px;
+    width: 46px;
+    height: 46px;
+    font-size: 15px;
   }
 
   .auth-brand-row .ant-typography {
-    font-size: 18px;
-  }
-
-  .auth-hero-copy h1 {
-    font-size: 42px !important;
-  }
-
-  .auth-hero-copy .ant-typography {
     font-size: 16px;
   }
 
+  .auth-hero-copy h1 {
+    font-size: 31px !important;
+  }
+
+  .auth-hero-copy .ant-typography {
+    max-width: 340px;
+    margin-top: 14px !important;
+    font-size: 15px;
+  }
+
   .auth-feature-strip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    width: 100%;
+    overflow: hidden;
+    padding: 12px;
+  }
+
+  .auth-feature-item {
     grid-template-columns: 1fr;
-    gap: 16px;
-    padding: 18px;
+    justify-items: center;
+    gap: 8px;
+    text-align: center;
+  }
+
+  .auth-feature-item > div {
+    justify-items: center;
+  }
+
+  .auth-feature-item .ant-typography {
+    font-size: 13px;
+  }
+
+  .auth-feature-icon {
+    width: 38px;
+    height: 38px;
+  }
+
+  .auth-feature-item .ant-typography + .ant-typography {
+    display: none;
+  }
+
+  .auth-feature-item:nth-child(3) {
+    grid-column: 1 / -1;
   }
 
   .auth-chart-svg {
-    bottom: 18px;
-    width: 920px;
+    bottom: -28px;
+    width: 720px;
   }
 
   .auth-form-area {
@@ -1311,16 +1345,25 @@ body {
   }
 
   .auth-panel {
-    padding: 28px 20px;
+    padding: 20px;
     border-radius: 18px;
   }
 
   .auth-login-illustration {
-    width: min(240px, 82%);
+    width: min(170px, 62%);
+    margin-bottom: 2px;
   }
 
   .auth-panel h2 {
-    font-size: 28px !important;
+    font-size: 24px !important;
+  }
+
+  .auth-panel-head {
+    margin-bottom: 10px;
+  }
+
+  .auth-panel .ant-tabs-nav {
+    margin-bottom: 12px;
   }
 
   .overview-pair-select {
