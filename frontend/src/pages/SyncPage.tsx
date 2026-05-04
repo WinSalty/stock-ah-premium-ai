@@ -1,4 +1,18 @@
-import { Button, DatePicker, Form, Input, Modal, Select, Space, Table, Tabs, Tag, Typography, message } from 'antd';
+import {
+  Button,
+  DatePicker,
+  Form,
+  Input,
+  Modal,
+  Popover,
+  Select,
+  Space,
+  Table,
+  Tabs,
+  Tag,
+  Typography,
+  message
+} from 'antd';
 import { FileUp, Play, RotateCw } from 'lucide-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import dayjs from 'dayjs';
@@ -204,9 +218,22 @@ function SyncPage() {
               render: (value, record) =>
                 value ? (
                   <div className="sync-error-cell">
-                    <Typography.Text type="danger" className="sync-table-text">
-                      {value}
-                    </Typography.Text>
+                    <Popover
+                      arrow
+                      placement="topLeft"
+                      trigger={['hover', 'click']}
+                      overlayClassName="sync-error-popover"
+                      content={
+                        <div className="sync-error-popover-content">
+                          <Typography.Text strong>完整错误</Typography.Text>
+                          <pre>{value}</pre>
+                        </div>
+                      }
+                    >
+                      <Typography.Text type="danger" className="sync-table-text sync-error-trigger">
+                        {value}
+                      </Typography.Text>
+                    </Popover>
                     <Button type="link" size="small" onClick={() => setDetailRun(record)}>
                       查看
                     </Button>
