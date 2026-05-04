@@ -73,6 +73,7 @@
   - `scripts/start-backend.sh`、`scripts/start-frontend.sh`：启动本地服务。
   - `Makefile`：提供 `make bootstrap/check/init-db/backend/frontend` 快捷入口。
   - `resources/doc/startup-guide.md`：完整启动、配置、验证和排错手册。
+  - `resources/doc/phase-1-detailed-development-plan.md`：已同步当前实现口径，包括 `hk_daily` 禁用、官方 AH 比价主表、定时增量、长字段悬浮和东八区时间展示。
 - 非真实功能测试资产：
   - 后端公式单元测试。
   - SQL Guard 单元测试。
@@ -88,7 +89,7 @@
 ## 已执行的非功能性检查
 
 - `python3 -m compileall backend/app backend/tests`：通过。
-- 后端虚拟环境使用 `/opt/homebrew/bin/python3.13` 创建，`pytest`：10 个单元测试通过。
+- 后端虚拟环境使用 `/opt/homebrew/bin/python3.13` 创建，`pytest`：11 个单元测试通过。
 - `ruff check app tests`：通过。
 - `npm install`：完成，生成 `frontend/package-lock.json`。
 - `npm run build`：通过。
@@ -104,7 +105,7 @@
 ## 待验证事项
 
 - 当前 Tushare 中转 Token 的完整可用接口范围。
-- `stock_hsgt`、`hk_daily`、`stk_ah_comparison`、`fx_daily` 的实际返回字段与当前字段映射是否完全一致。
+- `stock_hsgt`、`stk_ah_comparison`、`fx_daily` 的实际返回字段与当前字段映射是否完全一致。
 - 前后端联调、页面响应式截图和真实数据展示。
 - LLM 输出 SQL 的稳定性和问答答案质量。
 

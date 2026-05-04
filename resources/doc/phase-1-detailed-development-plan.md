@@ -6,13 +6,13 @@
 
 一阶段建设一个本地运行的数据分析应用：
 
-- 从 Tushare 按需拉取 A 股基础信息、A 股日行情、沪深港通名单、港股基础信息、港股行情、港股交易日历、外汇行情等数据。
+- 从 Tushare 按需拉取 A 股基础信息、A 股日行情、沪深港通名单、港股基础信息、港股交易日历、官方 AH 比价和外汇行情等数据；港股日行情表结构保留，当前 token 无法请求时不主动调用。
 - 将数据持久化到新的本地 MySQL 数据库 `stock_ah_ai`。
 - 计算港股通范围内的 A/H 比价和 A/H 溢价率，形成可查询的结果表。
 - 提供简单精美的 Web 页面，支持数据同步、榜单查看、趋势查看和同步状态观察。
 - 支持通过 LLM API 对本地数据进行安全问答，例如“最近一个交易日溢价最高的前 10 只是什么”“某股票过去 30 个交易日溢价趋势如何”。
 
-本阶段已进入代码开发。按用户要求，当前先完成大部分代码，不执行依赖高权限 Tushare Token、LLM Key 或本地 MySQL 的功能测试。
+本阶段已完成主要代码开发、本地 MySQL 初始化、最大范围数据同步和非外部依赖检查。当前实现以 Tushare 中转 SDK 为入口，`hk_daily` 因当前 token 无法请求已禁用；溢价页面以官方 AH 比价表为展示主表，H/A 比价和溢价由官方 A/H 字段反推。LLM Key 尚未配置，真实 LLM 问答仍待验证。
 
 ## 2. 技术选型
 
@@ -36,7 +36,7 @@
 - 语言与框架：Python 3.11+、FastAPI。
 - 数据访问：SQLAlchemy 2.x、Alembic、PyMySQL。
 - 数据处理：pandas、pydantic v2、python-dateutil。
-- Tushare 接入：优先使用 Tushare Python SDK；保留 HTTP POST 适配器，便于统一重试、限流和错误处理。
+- Tushare 接入：使用 Tushare Python SDK，并将 SDK 内部请求地址切到中转服务 `http://tsy.xiaodefa.cn`；Token 优先从本机文件读取。
 - 后台任务：一阶段使用 APScheduler + 后端进程内任务；若后续任务量变大，再引入 Redis/RQ 或 Celery。
 - 测试：pytest、respx 或 responses、freezegun。
 
@@ -64,7 +64,10 @@
 
 ```bash
 STOCK_AH_DB_URL=mysql+pymysql://<user>:<password>@127.0.0.1:3306/stock_ah_ai?charset=utf8mb4
-TUSHARE_TOKEN=<local-only>
+TUSHARE_TOKEN_FILE=/Users/salty/codeProject/ai/doc/tushare-token.txt
+TUSHARE_API_URL=http://tsy.xiaodefa.cn
+SYNC_SCHEDULER_ENABLED=true
+SYNC_SCHEDULER_TIMEZONE=Asia/Shanghai
 LLM_BASE_URL=<openai-compatible-base-url>
 LLM_API_KEY=<local-only>
 LLM_MODEL=<model-name>
@@ -81,13 +84,13 @@ LLM_MODEL=<model-name>
 | A 股交易日历 | `trade_cal` | 判断 A 股交易日、前一交易日 | 年度或区间同步 |
 | 沪深港通股票列表 | `stock_hsgt` | 获取沪股通、深股通、港股通名单 | 重点同步 `SH_HK`、`SZ_HK` 两类港股通 |
 | 港股基础 | `hk_basic` | 港股代码、名称、货币等 | 全量同步，定期刷新 |
-| 港股日行情 | `hk_daily` | 港股日线收盘价和涨跌幅 | 按交易日或股票区间增量同步 |
+| 港股日行情 | `hk_daily` | 港股日线收盘价和涨跌幅 | 当前 token 无法请求，已禁用，不纳入一键同步和定时任务 |
 | 港股交易日历 | `hk_tradecal` | 判断港股交易日 | 年度或区间同步 |
 | 外汇基础 | `fx_obasic` | 查询 FXCM 支持的外汇代码 | 初始化或排查时使用 |
 | 外汇日线 | `fx_daily` | 获取汇率日线 | 优先寻找 HKD/CNY；不可用时用 USD/CNH 与 USD/HKD 交叉计算 |
-| AH 股比价 | `stk_ah_comparison` | 官方 AH 映射和官方比价结果 | 用于建立 AH 配对、校验自算结果；不作为唯一计算来源 |
+| AH 股比价 | `stk_ah_comparison` | 官方 AH 映射、官方比价和官方溢价结果 | 当前页面展示主表；用于建立 AH 配对，并反推 H/A 比价与溢价 |
 
-Tushare 文档约束需要纳入任务调度：A 股日行情通常在交易日 15:00-16:00 入库，港股日行情约 18:00 更新，沪深港通名单早间更新，官方 AH 比价数据盘后更新。实际任务时间建议预留缓冲，避免拉到半截数据。
+Tushare 文档约束已纳入任务调度：`daily` 交易日 15:00-16:00 入库，`stock_hsgt` 每天 09:20 更新，`stk_ah_comparison` 每天盘后 17:00 更新，`fx_daily` 按 GMT 交易日更新。实际定时任务按东八区执行，并预留缓冲；`hk_daily` 不会被调度。
 
 ## 4. 核心业务定义
 
@@ -124,18 +127,33 @@ Tushare 文档约束需要纳入任务调度：A 股日行情通常在交易日 
 - 若同日缺失，使用该日期前最近一个可用汇率，并在结果表记录 `rate_date` 与 `rate_fallback=true`。
 - 若汇率仍缺失，结果标记为 `MISSING_RATE`，不生成溢价数值。
 
-### 4.4 A/H 溢价公式
+### 4.4 A/H 与 H/A 溢价公式
+
+当前页面显示以 `official_ah_comparison` 为准：
+
+```text
+ah_ratio = official_ah_comparison.ah_comparison
+ah_premium_pct = official_ah_comparison.ah_premium
+ha_ratio = 1 / ah_ratio
+ha_premium_pct = (ha_ratio - 1) * 100
+```
+
+若官方记录缺少 `ah_premium`，才按 `ah_ratio` 反算补齐；不得用四舍五入后的 `ah_comparison` 覆盖官方返回的 `ah_premium`。日间“刷新实时”会写回官方 AH 比价表，并通过 `is_realtime`、`data_source`、`source_updated_at` 标记来源。
+
+自算口径仍保留在代码和 `ah_premium_daily` 表中，作为后续具备港股日线权限后的扩展口径：
 
 ```text
 h_close_cny = h_close_hkd * hkd_cny
 ah_ratio = a_close_cny / h_close_cny
 ah_premium_pct = (ah_ratio - 1) * 100
+ha_ratio = 1 / ah_ratio
+ha_premium_pct = (ha_ratio - 1) * 100
 ```
 
 其中：
 
 - `a_close_cny` 来源于 A 股 `daily.close`。
-- `h_close_hkd` 来源于港股 `hk_daily.close`。
+- `h_close_hkd` 来源于港股 `hk_daily.close`，但当前 `hk_daily` 已禁用，因此自算口径暂不作为页面主展示来源。
 - `hkd_cny` 来源于汇率表。
 - `ah_premium_pct > 0` 表示 A 股较 H 股溢价；小于 0 表示 A 股折价。
 
@@ -200,6 +218,14 @@ ah_premium_pct = (ah_ratio - 1) * 100
 - 主键：自增 `id`
 - 唯一键：`a_ts_code + hk_ts_code`
 - 关键字段：`a_name`、`hk_name`、`source`、`effective_start_date`、`effective_end_date`、`is_active`
+
+`official_ah_comparison`
+
+- 唯一键：`trade_date + a_ts_code + hk_ts_code`
+- 关键字段：`a_ts_code`、`a_name`、`a_close`、`a_pct_chg`、`hk_ts_code`、`hk_name`、`hk_close`、`hk_pct_chg`、`ah_comparison`、`ah_premium`
+- H/A 字段：`ha_comparison`、`ha_premium`
+- 来源字段：`is_realtime`、`data_source`、`source_updated_at`
+- 说明：当前溢价页、总览页趋势和统一查询均以该表为主。
 
 `ah_premium_daily`
 
@@ -298,8 +324,8 @@ stock-ah-premium-ai/
 
 同步与任务：
 
-- `GET /api/datasets`：返回支持同步的数据集、参数说明、最近同步状态。
-- `POST /api/sync/runs`：创建同步任务。参数包含 `dataset`、`startDate`、`endDate`、`symbols`。
+- `GET /api/datasets`：返回支持同步的数据集、数据集说明、日期范围能力、全量起点和同步策略。
+- `POST /api/sync/runs`：创建同步任务。参数包含 `dataset`、`mode`、`trade_date`、`start_date`、`end_date`、`ts_code`、`type`。
 - `GET /api/sync/runs`：查看同步任务列表。
 - `GET /api/sync/runs/{runId}`：查看任务详情和错误。
 
@@ -309,6 +335,9 @@ stock-ah-premium-ai/
 - `GET /api/ah-premiums`：分页查询溢价结果，支持日期、代码、行业、通道、溢价区间筛选。
 - `GET /api/ah-premiums/summary`：返回最新交易日概览、最高/最低溢价、缺失数据数量。
 - `GET /api/ah-premiums/{aTsCode}/{hkTsCode}/trend`：返回指定 AH 配对的趋势。
+- `GET /api/ah-premiums/official-trend`：返回官方 AH/H/A 溢价趋势，用于总览折线图。
+- `GET /api/query/datasets`：返回统一查询页支持的数据集和列定义。
+- `GET /api/query/rows`：按数据集、关键词、日期范围和分页查询本地同步数据。
 - `POST /api/manual-import/ah-pairs`：当 Tushare AH 比价权限不足时，导入人工 AH 配对 JSON。
 - `POST /api/manual-import/fx-rates`：当 Tushare 外汇权限不足时，导入人工汇率 JSON。
 - `POST /api/manual-import/ah-pairs/csv`：导入人工 AH 配对 CSV。
@@ -350,16 +379,16 @@ LLM 问答：
 
 展示：
 
-- 最新可用交易日。
-- 已计算 AH 配对数量。
-- 港股通标的覆盖数量。
-- 溢价最高/最低 Top 10。
-- 数据缺失和最近同步异常提示。
+- 最新可用交易日、官方 AH 记录数、实时记录数。
+- 默认展示招商银行 H/A 溢价折线图。
+- 支持选择 AH 配对和 A/H、H/A 方向。
+- 折线图默认展示最近三个月数据，支持滑块和鼠标缩放日期范围。
+- 溢价榜放在走势图下方，给趋势图更大的显示区域。
 
 视觉：
 
 - 顶部紧凑指标条。
-- 中部左右布局：左侧榜单表格，右侧趋势/分布图。
+- 上方指标条，中部大面积趋势图，下方溢价榜表格。
 - 配色使用白底、深色文字、绿色/红色涨跌提示和少量蓝色强调。
 
 ### 9.2 数据同步页
@@ -367,8 +396,10 @@ LLM 问答：
 展示：
 
 - 数据集选择：A 股基础、A 股日线、港股通名单、港股基础、港股日线、汇率、AH 配对。
+- 当前所选数据集的数据集说明、同步策略和默认全量起点。
 - 日期范围、股票代码输入、立即同步按钮。
-- 最近任务列表、状态、耗时、行数、错误详情。
+- 最近任务列表、状态、行数、开始/结束时间、参数、错误详情。
+- 任务记录支持按数据集、状态、开始时间范围筛选；数据集说明、参数和错误等长字段支持悬浮查看完整内容。
 
 ### 9.3 AH 溢价页
 
@@ -376,6 +407,8 @@ LLM 问答：
 
 - 日期选择器。
 - 溢价榜单表格：A 股代码、H 股代码、名称、A 收盘、H 收盘、汇率、A/H 比价、溢价率、港股通通道。
+- 当前实现展示官方 AH 比价表字段：A/H 收盘和涨跌幅、A/H 比价、A/H 溢价、H/A 比价、H/A 溢价、来源标记。
+- 比价和溢价字段带公式提示图标，悬浮展示计算公式。
 - 筛选：溢价率区间、通道、股票名称/代码。
 - 趋势抽屉或详情页：展示单个 AH 配对的历史溢价曲线。
 
@@ -387,6 +420,17 @@ LLM 问答：
 - 数据范围控件。
 - 回答中的关键数据表格和引用口径。
 - 可折叠的 SQL/查询计划，默认收起。
+- 问答结果表格长字段省略显示，悬浮查看完整内容。
+
+### 9.5 数据查询页
+
+展示：
+
+- 支持切换查看已同步的不同数据集。
+- 支持关键词、日期范围和分页。
+- 表格列宽由后端列定义控制，日期类字段适当加宽。
+- 长文本、JSON、错误信息等字段省略显示，悬浮查看完整内容。
+- 页面时间统一按东八区 `yyyy-MM-dd HH:mm:ss` 展示。
 
 页面示例问题：
 
@@ -406,19 +450,25 @@ flowchart LR
   D --> F["溢价计算服务"]
   E --> F
   C --> F
-  F --> G["ah_premium_daily"]
+  F --> G["official_ah_comparison / ah_premium_daily"]
   G --> H["后端查询 API"]
   H --> I["前端页面"]
   H --> J["LLM 问答服务"]
 ```
 
-推荐日常任务顺序：
+当前定时增量任务：
 
-1. 09:40 后同步港股通名单 `stock_hsgt`。
-2. 16:15 后同步 A 股日行情 `daily`。
-3. 18:30 后同步港股日行情 `hk_daily` 和汇率 `fx_daily`。
-4. 18:45 后导入/校验 `stk_ah_comparison`。
-5. 19:00 后计算当日 `ah_premium_daily`。
+1. 工作日 09:05 刷新 `stock_basic`。
+2. 工作日 09:10 刷新 `hk_basic`。
+3. 周一 08:35 补齐 `trade_cal`。
+4. 周一 08:40 补齐 `hk_tradecal`。
+5. 工作日 09:25 同步 `stock_hsgt` 的 `SH_HK`。
+6. 工作日 09:28 同步 `stock_hsgt` 的 `SZ_HK`。
+7. 工作日 16:15 同步 `daily`。
+8. 工作日 17:10 同步 `stk_ah_comparison`。
+9. 周一至周六 07:30 同步 `fx_daily`。
+
+`hk_daily` 当前禁用，不在定时任务和一键同步计划中。
 
 历史初始化任务顺序：
 
@@ -426,20 +476,20 @@ flowchart LR
 2. 同步 A 股、港股基础信息。
 3. 同步 A 股、港股交易日历。
 4. 同步 AH 配对。
-5. 按日期循环同步港股通名单、A 股行情、港股行情、汇率。
-6. 按日期批量计算 AH 溢价。
+5. 按日期循环同步港股通名单、A 股行情、官方 AH 比价、汇率。
+6. 以官方 AH 比价表为主展示和反推 H/A 字段；具备港股日线权限后再补充自算口径。
 
 ## 11. 一阶段开发计划
 
 | 阶段 | 工作内容 | 交付物 | 验收标准 |
 | --- | --- | --- | --- |
 | P0 方案确认 | 确认目标、技术栈、数据口径、数据库名、目录结构 | 本文档 | 已完成 |
-| P1 后端骨架与数据库 | 创建 FastAPI 项目、配置管理、Alembic、MySQL 连接、建表迁移 | 后端项目、迁移脚本 | 已编码，待真实 MySQL 验证 |
-| P2 Tushare 同步 | 封装 Tushare 客户端，实现基础信息、行情、港股通、汇率同步 | 同步 API、同步任务、单元测试 | 已编码，待高权限 Token 验证 |
-| P3 AH 配对与溢价计算 | 导入 AH 配对，计算港股通 A/H 溢价，落 `ah_premium_daily` | 计算服务、结果查询 API | 已编码，待真实数据验证 |
+| P1 后端骨架与数据库 | 创建 FastAPI 项目、配置管理、Alembic、MySQL 连接、建表迁移 | 后端项目、迁移脚本 | 已完成，本地 MySQL 初始化通过 |
+| P2 Tushare 同步 | 封装 Tushare 客户端，实现基础信息、行情、港股通、汇率同步 | 同步 API、同步任务、单元测试 | 已完成；`hk_daily` 因权限禁用 |
+| P3 AH 配对与溢价计算 | 导入 AH 配对，计算/反推 A/H 与 H/A 溢价，落官方表和自算表 | 计算服务、结果查询 API | 已完成，页面以官方 AH 比价表为主 |
 | P4 LLM 问答 | OpenAI-compatible 适配、只读 SQL Guard、问答 API | 聊天 API、提示词模板、只读查询视图 | 已编码，待 LLM Key 验证 |
-| P5 前端页面 | 总览、同步、AH 溢价、智能问答页面 | React 前端 | 已编码，待前后端联调 |
-| P6 联调与验收 | 端到端测试、异常处理、README、启动脚本 | 完整本地运行说明 | 本地 MySQL 初始化、静态检查和构建已通过；Tushare/LLM 验证待权限配置 |
+| P5 前端页面 | 总览、同步、查询、AH 溢价、智能问答页面 | React 前端 | 已完成，支持长字段悬浮和东八区时间展示 |
+| P6 联调与验收 | 端到端测试、异常处理、README、启动脚本 | 完整本地运行说明 | 本地 MySQL 初始化、批量同步、静态检查和构建已通过；LLM 验证待 Key 配置 |
 
 建议排期：8-12 个工作日。
 
@@ -455,7 +505,8 @@ flowchart LR
 数据入库：
 
 - 创建新库 `stock_ah_ai`，运行迁移后存在全部业务表、任务表和必要索引。
-- 同步某一交易日的 `daily`、`hk_daily`、`stock_hsgt`，重复执行不会产生重复数据。
+- 同步某一交易日的 `daily`、`stock_hsgt`、`stk_ah_comparison`，重复执行不会产生重复数据。
+- `hk_daily` 在当前权限下不被一键同步或定时任务调用。
 - Tushare Token 缺失、权限不足、频率限制时，任务状态和错误信息可读。
 
 溢价计算：
@@ -470,6 +521,8 @@ flowchart LR
 - 总览页展示最新交易日、Top 榜单和同步健康状态。
 - AH 溢价页能按日期、股票、溢价率筛选。
 - 同步页能发起任务并看到任务状态。
+- 同步页展示数据集说明；任务记录和统一查询长字段可悬浮查看完整内容。
+- 所有页面时间以东八区 `yyyy-MM-dd HH:mm:ss` 展示。
 - 智能问答页能返回中文解释和数据依据。
 
 LLM 安全：
@@ -483,6 +536,7 @@ LLM 安全：
 | 风险 | 影响 | 应对 |
 | --- | --- | --- |
 | Tushare 积分或权限不足 | 部分接口不可用 | 提前运行权限检查；支持 CSV 补录 AH 配对和汇率；错误在同步页可见 |
+| 当前 token 无法请求 `hk_daily` | 自算港股行情链路不完整 | 禁用该接口；展示以官方 AH 比价为主，后续有权限后再启用自算口径 |
 | 港股通名单和 AH 配对历史不足 | 历史计算覆盖不完整 | 记录数据覆盖起止日；结果页展示数据范围 |
 | 汇率口径差异 | 自算溢价与官方值有差异 | 保存 `rate_source`、`rate_date`、官方比价字段，便于追踪 |
 | A 股和港股休市不同步 | 部分日期无法计算 | 明确同日计算口径；缺失状态入库 |
@@ -491,7 +545,7 @@ LLM 安全：
 
 ## 14. 后续扩展
 
-- 支持定时自动同步和失败重试告警。
+- 增强定时任务失败重试、通知和任务健康看板。
 - 支持行业、指数、财务指标维度的溢价解释。
 - 支持导出 Excel/CSV。
 - 支持更多 LLM 工具调用，例如自动生成筛选条件、图表解释。

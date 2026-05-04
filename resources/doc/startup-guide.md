@@ -236,9 +236,10 @@ curl -X POST http://127.0.0.1:8000/api/manual-import/ah-pairs/csv \
 
 默认全量起点：
 
-- `ah_comparison`、`stock_hsgt`、`a_daily`、`hk_daily`、`fx_daily`：`2025-08-12`。
+- `ah_comparison`、`stock_hsgt`、`a_daily`、`fx_daily`：`2025-08-12`。
 - `trade_cal`、`hk_tradecal`：`2025-01-01`，并额外同步未来约 1 年日历。
 - `stock_basic`、`hk_basic`：基础清单接口不带日期范围，增量和全量都会刷新当前全表。
+- `hk_daily`：当前禁用，不设置全量重跑入口。
 
 任务记录可按数据集、状态和开始时间范围筛选；权限不足或接口失败会在记录里显示为 `FAILED`，错误详情可悬浮或点击查看。
 
@@ -262,7 +263,14 @@ curl -X POST http://127.0.0.1:8000/api/manual-import/ah-pairs/csv \
 
 定时任务仍走 `sync_run` 记录和 checkpoint。若某次接口权限不足或返回失败，任务会落 `FAILED`，下一次仍按 checkpoint 加 2 天重叠窗口继续补齐。`hk_daily` 已禁用，不会被定时任务调用。
 
-## 12. 常见问题
+## 12. 页面显示规则
+
+- 时间字段统一按东八区 `yyyy-MM-dd HH:mm:ss` 展示；纯日期字段保持 `yyyy-MM-dd`。
+- 同步任务、统一查询、智能问答结果和溢价表格中的长字段会单行省略，悬浮展示完整内容。
+- 错误信息过长时，可在同步任务记录中悬浮查看完整错误，也可以点击“查看”打开详情弹窗。
+- 日期类表格列已适当加宽，避免固定长度字段被换行挤压。
+
+## 13. 常见问题
 
 ### Python 版本不对
 
@@ -326,7 +334,7 @@ LLM_API_KEY=
 LLM_MODEL=
 ```
 
-## 13. 当前验证状态
+## 14. 当前验证状态
 
 已验证：
 
@@ -334,10 +342,11 @@ LLM_MODEL=
 - `./scripts/check.sh`
 - `./scripts/init-db.sh`
 - 本地 MySQL `stock_ah_ai` 表和视图创建
+- Tushare 中转 SDK 最大范围同步：A 股基础、港股基础、交易日历、官方 AH 比价、港股通名单、A 股日线
 - Tushare 中转 SDK `stock_basic limit=1` 最小连通性，不落库
 
 未验证：
 
-- Tushare 中转 SDK 批量接口同步
+- `hk_daily`：当前 token 无法请求，已禁用
 - LLM 真实问答
 - 真实行情数据下的端到端页面联调
