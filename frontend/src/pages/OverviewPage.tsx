@@ -10,6 +10,8 @@ import type { PremiumPairOption } from '../types/domain';
 type PremiumDirection = 'AH' | 'HA';
 
 const DEFAULT_PAIR_KEY = '600036.SH|03968.HK';
+const DEFAULT_VISIBLE_MONTHS = 3;
+const MIN_VISIBLE_POINTS = 20;
 
 function splitPairKey(value: string) {
   const [aTsCode, hkTsCode] = value.split('|');
@@ -28,6 +30,20 @@ function formatPairLabel(item: PremiumPairOption) {
   }
 
   return `${aDisplayName} / ${hkName} (${codeLabel})`;
+}
+
+function getDefaultZoomStartValue(tradeDates: string[]) {
+  if (!tradeDates.length) {
+    return undefined;
+  }
+  const latestDate = parseLocalDate(tradeDates[tradeDates.length - 1]);
+  latestDate.setMonth(latestDate.getMonth() - DEFAULT_VISIBLE_MONTHS);
+  return tradeDates.find((item) => parseLocalDate(item) >= latestDate) || tradeDates[0];
+}
+
+function parseLocalDate(value: string) {
+  const [year, month, day] = value.split('-').map(Number);
+  return new Date(year, month - 1, day);
 }
 
 /**
@@ -67,24 +83,50 @@ function OverviewPage() {
   const selectedPair = pairs.data?.find((item) => `${item.a_ts_code}|${item.hk_ts_code}` === pairKey);
   const trendTitleName = selectedPair?.a_name || trend.data?.[0]?.a_name || pair.aTsCode;
   const directionLabel = direction === 'HA' ? 'H/A' : 'A/H';
+  const trendDates = useMemo(() => trend.data?.map((item) => item.trade_date) || [], [trend.data]);
+  const defaultZoomStartValue = getDefaultZoomStartValue(trendDates);
+  const defaultZoomEndValue = trendDates[trendDates.length - 1];
+  const minZoomValueSpan = Math.min(
+    Math.max(trendDates.length - 1, 1),
+    MIN_VISIBLE_POINTS
+  );
 
   const trendChartOption = useMemo(
     () => ({
       tooltip: { trigger: 'axis', valueFormatter: (value: number) => `${value.toFixed(2)}%` },
       grid: { left: 54, right: 24, top: 32, bottom: 78 },
       dataZoom: [
-        { type: 'inside', throttle: 50 },
-        { type: 'slider', height: 26, bottom: 18, brushSelect: false }
+        {
+          type: 'inside',
+          throttle: 120,
+          startValue: defaultZoomStartValue,
+          endValue: defaultZoomEndValue,
+          minValueSpan: minZoomValueSpan,
+          zoomOnMouseWheel: 'shift',
+          moveOnMouseWheel: true,
+          moveOnMouseMove: false
+        },
+        {
+          type: 'slider',
+          height: 26,
+          bottom: 18,
+          brushSelect: false,
+          startValue: defaultZoomStartValue,
+          endValue: defaultZoomEndValue,
+          minValueSpan: minZoomValueSpan
+        }
       ],
       xAxis: {
         type: 'category',
-        data: trend.data?.map((item) => item.trade_date) || []
+        data: trendDates,
+        axisLabel: { hideOverlap: true }
       },
-      yAxis: { type: 'value', axisLabel: { formatter: '{value}%' } },
+      yAxis: { type: 'value', scale: true, axisLabel: { formatter: '{value}%' } },
       series: [
         {
           type: 'line',
           smooth: true,
+          showSymbol: false,
           symbolSize: 7,
           data:
             trend.data?.map((item) =>
@@ -92,11 +134,12 @@ function OverviewPage() {
             ) || [],
           lineStyle: { width: 3, color: direction === 'HA' ? '#0f766e' : '#2563eb' },
           itemStyle: { color: direction === 'HA' ? '#0f766e' : '#2563eb' },
-          areaStyle: { opacity: 0.08 }
+          areaStyle: { opacity: 0.08 },
+          emphasis: { focus: 'series' }
         }
       ]
     }),
-    [direction, trend.data]
+    [defaultZoomEndValue, defaultZoomStartValue, direction, minZoomValueSpan, trend.data, trendDates]
   );
 
   return (
