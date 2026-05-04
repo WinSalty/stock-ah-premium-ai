@@ -280,12 +280,6 @@ body {
   width: 96px;
 }
 
-.chat-form-grid {
-  display: grid;
-  grid-template-columns: minmax(240px, 420px) minmax(160px, 260px) minmax(120px, 160px);
-  gap: 12px;
-}
-
 .full-width {
   width: 100%;
 }
@@ -869,8 +863,7 @@ body {
   .sync-run-filter-grid,
   .premium-filter-grid,
   .manual-import-grid,
-  .query-filter-grid,
-  .chat-form-grid {
+  .query-filter-grid {
     grid-template-columns: 1fr;
   }
 

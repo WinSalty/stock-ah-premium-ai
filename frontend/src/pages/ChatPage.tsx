@@ -1,9 +1,8 @@
-import { Button, Checkbox, DatePicker, Form, Input, Popconfirm, Skeleton, Table, message } from 'antd';
+import { Button, Form, Input, Popconfirm, Skeleton, Table, message } from 'antd';
 import { Plus, SendHorizontal, Trash2 } from 'lucide-react';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { useEffect, useState } from 'react';
-import dayjs from 'dayjs';
 import PageHeader from '../components/PageHeader';
 import OverflowCell from '../components/OverflowCell';
 import {
@@ -22,9 +21,6 @@ import { formatEast8DateTime } from '../utils/datetime';
 
 interface ChatFormValues {
   question: string;
-  range?: [dayjs.Dayjs, dayjs.Dayjs];
-  ts_code?: string;
-  only_watchlist?: boolean;
 }
 
 interface ChatTurn {
@@ -294,13 +290,7 @@ function ChatPage() {
       }
       await sendChatMessageStream(
         currentSession.id,
-        {
-          question,
-          start_date: values.range?.[0]?.format('YYYY-MM-DD'),
-          end_date: values.range?.[1]?.format('YYYY-MM-DD'),
-          ts_code: values.ts_code?.trim() || undefined,
-          only_watchlist: values.only_watchlist
-        },
+        { question },
         {
           onMeta: (event) => updateTurnResponse(turnId, { rows: event.rows || [] }),
           onDelta: (content) =>
@@ -441,17 +431,6 @@ function ChatPage() {
 
           <section className="chat-composer">
             <Form form={form} layout="vertical" onFinish={handleSubmit}>
-              <div className="chat-form-grid">
-                <Form.Item label="范围" name="range">
-                  <DatePicker.RangePicker className="full-width" />
-                </Form.Item>
-                <Form.Item label="股票" name="ts_code">
-                  <Input placeholder="可选代码" />
-                </Form.Item>
-                <Form.Item label="自选范围" name="only_watchlist" valuePropName="checked">
-                  <Checkbox>只看自选股</Checkbox>
-                </Form.Item>
-              </div>
               <Form.Item name="question" rules={[{ required: true, message: '请输入问题' }]}>
                 <Input.TextArea
                   rows={3}
