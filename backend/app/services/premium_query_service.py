@@ -1,0 +1,551 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import date
+from decimal import Decimal
+
+from sqlalchemy import asc, desc, func, or_, select
+from sqlalchemy.orm import Session
+
+from app.db.models.market import HsgtConstituent, OfficialAHComparison, WatchlistStock
+from app.schemas.market import (
+    PremiumListResponse,
+    PremiumOfficialTrendPoint,
+    PremiumPairOption,
+    PremiumQueryResponse,
+    PremiumSummaryResponse,
+)
+from app.services.decimal_utils import quantize_decimal
+
+CONNECT_TYPES = ("SH_HK", "SZ_HK")
+DEFAULT_METRIC_DIRECTION = "HA"
+NEAR_TARGET_DISTANCE_PCT = Decimal("3")
+ROLLING_WINDOWS = (20, 60, 120)
+
+
+@dataclass(frozen=True)
+class PremiumQueryFilters:
+    """官方 AH 溢价查询条件。
+
+    创建日期：2026-05-04
+    author: sunshengxian
+    """
+
+    trade_date: date | None = None
+    keyword: str | None = None
+    channel: str | None = None
+    min_premium: Decimal | None = None
+    max_premium: Decimal | None = None
+    min_ha_premium: Decimal | None = None
+    max_ha_premium: Decimal | None = None
+    direction: str = DEFAULT_METRIC_DIRECTION
+    only_hk_connect: bool = False
+    only_watchlist: bool = False
+
+
+@dataclass(frozen=True)
+class PremiumMetricBundle:
+    """单只股票的溢价决策指标。
+
+    创建日期：2026-05-04
+    author: sunshengxian
+    """
+
+    metric_direction: str
+    metric_premium_pct: Decimal | None
+    premium_avg_20: Decimal | None
+    premium_avg_60: Decimal | None
+    premium_avg_120: Decimal | None
+    premium_percentile_60: Decimal | None
+    premium_deviation_from_60d_avg: Decimal | None
+
+
+class PremiumQueryService:
+    """官方 AH 溢价查询和决策指标服务。
+
+    创建日期：2026-05-04
+    author: sunshengxian
+    """
+
+    def __init__(self, db: Session) -> None:
+        self.db = db
+        self._connect_cache: dict[tuple[date, str], str | None] = {}
+        self._metric_cache: dict[tuple[str, str, date, str], PremiumMetricBundle] = {}
+
+    def list_premiums(
+        self,
+        filters: PremiumQueryFilters,
+        page: int,
+        page_size: int,
+    ) -> PremiumListResponse:
+        """分页查询官方 AH 溢价。
+
+        创建日期：2026-05-04
+        author: sunshengxian
+        """
+
+        rows = self._query_rows(filters)
+        watchlist_map = self._watchlist_map()
+        if filters.only_watchlist:
+            rows = [
+                item
+                for item in rows
+                if (item.a_ts_code, item.hk_ts_code) in watchlist_map
+            ]
+        rows = [item for item in rows if self._matches_connect_filter(item, filters)]
+        rows = sorted(
+            rows,
+            key=lambda item: self._metric_value(item, filters.direction) or Decimal("-999999"),
+            reverse=True,
+        )
+        total = len(rows)
+        start = (page - 1) * page_size
+        items = [
+            self.to_response(
+                item,
+                filters.direction,
+                watchlist_map.get((item.a_ts_code, item.hk_ts_code)),
+            )
+            for item in rows[start : start + page_size]
+        ]
+        return PremiumListResponse(total=total, items=items)
+
+    def summary(self) -> PremiumSummaryResponse:
+        """获取最新交易日官方 AH 溢价总览。
+
+        创建日期：2026-05-04
+        author: sunshengxian
+        """
+
+        latest_trade_date = self.latest_trade_date()
+        if latest_trade_date is None:
+            return PremiumSummaryResponse(latest_trade_date=None, calculated_count=0, issue_count=0)
+        base_filters = PremiumQueryFilters(trade_date=latest_trade_date, only_hk_connect=True)
+        rows = self._query_rows(base_filters)
+        hk_connect_rows = [
+            item
+            for item in rows
+            if self._connect_channels(item.trade_date, item.hk_ts_code)
+        ]
+        calculated_count = self.db.scalar(
+            select(func.count(OfficialAHComparison.id)).where(
+                OfficialAHComparison.trade_date == latest_trade_date
+            )
+        ) or 0
+        issue_count = self.db.scalar(
+            select(func.count(OfficialAHComparison.id)).where(
+                OfficialAHComparison.trade_date == latest_trade_date,
+                OfficialAHComparison.is_realtime.is_(True),
+            )
+        ) or 0
+        watchlist_map = self._watchlist_map()
+        top = sorted(
+            hk_connect_rows,
+            key=lambda item: item.ah_premium or Decimal("-999999"),
+            reverse=True,
+        )[:10]
+        bottom = sorted(
+            hk_connect_rows,
+            key=lambda item: item.ah_premium or Decimal("999999"),
+        )[:10]
+        return PremiumSummaryResponse(
+            latest_trade_date=latest_trade_date,
+            calculated_count=calculated_count,
+            issue_count=issue_count,
+            hk_connect_count=len(hk_connect_rows),
+            watchlist_count=len(watchlist_map),
+            top_premiums=[
+                self.to_response(item, "AH", watchlist_map.get((item.a_ts_code, item.hk_ts_code)))
+                for item in top
+            ],
+            bottom_premiums=[
+                self.to_response(item, "AH", watchlist_map.get((item.a_ts_code, item.hk_ts_code)))
+                for item in bottom
+            ],
+        )
+
+    def list_pairs(self, keyword: str | None = None, limit: int = 80) -> list[PremiumPairOption]:
+        """查询可展示趋势的 AH 配对。
+
+        创建日期：2026-05-04
+        author: sunshengxian
+        """
+
+        latest_date = func.max(OfficialAHComparison.trade_date).label("latest_trade_date")
+        statement = select(
+            OfficialAHComparison.a_ts_code,
+            OfficialAHComparison.hk_ts_code,
+            OfficialAHComparison.a_name,
+            OfficialAHComparison.hk_name,
+            latest_date,
+        )
+        if keyword:
+            like = f"%{keyword.strip()}%"
+            statement = statement.where(
+                or_(
+                    OfficialAHComparison.a_ts_code.like(like),
+                    OfficialAHComparison.hk_ts_code.like(like),
+                    OfficialAHComparison.a_name.like(like),
+                    OfficialAHComparison.hk_name.like(like),
+                )
+            )
+        statement = (
+            statement.group_by(
+                OfficialAHComparison.a_ts_code,
+                OfficialAHComparison.hk_ts_code,
+                OfficialAHComparison.a_name,
+                OfficialAHComparison.hk_name,
+            )
+            .order_by(desc(latest_date), OfficialAHComparison.a_ts_code)
+            .limit(limit)
+        )
+        return [
+            PremiumPairOption(
+                a_ts_code=row.a_ts_code,
+                hk_ts_code=row.hk_ts_code,
+                a_name=row.a_name,
+                hk_name=row.hk_name,
+                latest_trade_date=row.latest_trade_date,
+            )
+            for row in self.db.execute(statement).all()
+        ]
+
+    def trend(
+        self,
+        a_ts_code: str,
+        hk_ts_code: str,
+        start_date: date | None = None,
+        end_date: date | None = None,
+        direction: str = DEFAULT_METRIC_DIRECTION,
+    ) -> list[PremiumQueryResponse]:
+        """查询单个 AH 配对官方溢价趋势。
+
+        创建日期：2026-05-04
+        author: sunshengxian
+        """
+
+        statement = select(OfficialAHComparison).where(
+            OfficialAHComparison.a_ts_code == a_ts_code,
+            OfficialAHComparison.hk_ts_code == hk_ts_code,
+        )
+        if start_date:
+            statement = statement.where(OfficialAHComparison.trade_date >= start_date)
+        if end_date:
+            statement = statement.where(OfficialAHComparison.trade_date <= end_date)
+        rows = list(self.db.scalars(statement.order_by(OfficialAHComparison.trade_date)).all())
+        watchlist = self._watchlist_map().get((a_ts_code, hk_ts_code))
+        metrics = self._rolling_metrics(rows, direction)
+        return [
+            self.to_response(item, direction, watchlist, metric_override=metrics[index])
+            for index, item in enumerate(rows)
+        ]
+
+    def official_trend_points(
+        self,
+        a_ts_code: str,
+        hk_ts_code: str,
+        start_date: date | None = None,
+        end_date: date | None = None,
+        direction: str = DEFAULT_METRIC_DIRECTION,
+    ) -> list[PremiumOfficialTrendPoint]:
+        """查询官方 AH/H/A 溢价趋势点。
+
+        创建日期：2026-05-04
+        author: sunshengxian
+        """
+
+        rows = self.trend(a_ts_code, hk_ts_code, start_date, end_date, direction)
+        return [
+            PremiumOfficialTrendPoint(
+                trade_date=item.trade_date,
+                a_ts_code=item.a_ts_code,
+                hk_ts_code=item.hk_ts_code,
+                a_name=item.a_name,
+                hk_name=item.hk_name,
+                ah_ratio=item.ah_ratio,
+                ah_premium_pct=item.ah_premium_pct,
+                ha_ratio=item.ha_ratio,
+                ha_premium_pct=item.ha_premium_pct,
+                metric_direction=item.metric_direction,
+                metric_premium_pct=item.metric_premium_pct,
+                premium_avg_20=item.premium_avg_20,
+                premium_avg_60=item.premium_avg_60,
+                premium_avg_120=item.premium_avg_120,
+                premium_percentile_60=item.premium_percentile_60,
+                is_realtime=item.is_realtime,
+            )
+            for item in rows
+        ]
+
+    def latest_trade_date(self) -> date | None:
+        """查询官方 AH 比价最新交易日。
+
+        创建日期：2026-05-04
+        author: sunshengxian
+        """
+
+        return self.db.scalar(select(func.max(OfficialAHComparison.trade_date)))
+
+    def latest_pair_row(self, a_ts_code: str, hk_ts_code: str) -> OfficialAHComparison | None:
+        """查询单个配对最新官方记录。
+
+        创建日期：2026-05-04
+        author: sunshengxian
+        """
+
+        return self.db.scalar(
+            select(OfficialAHComparison)
+            .where(
+                OfficialAHComparison.a_ts_code == a_ts_code,
+                OfficialAHComparison.hk_ts_code == hk_ts_code,
+            )
+            .order_by(desc(OfficialAHComparison.trade_date))
+            .limit(1)
+        )
+
+    def to_response(
+        self,
+        item: OfficialAHComparison,
+        direction: str = DEFAULT_METRIC_DIRECTION,
+        watchlist: WatchlistStock | None = None,
+        metric_override: PremiumMetricBundle | None = None,
+    ) -> PremiumQueryResponse:
+        """将官方 AH 比价行转为前端响应。
+
+        创建日期：2026-05-04
+        author: sunshengxian
+        """
+
+        normalized_direction = self._normalize_direction(
+            watchlist.preferred_direction if watchlist else direction
+        )
+        metric = metric_override or self._metric_bundle(item, normalized_direction)
+        connect_channels = self._connect_channels(item.trade_date, item.hk_ts_code)
+        target = watchlist.target_premium_pct if watchlist else None
+        distance = (
+            quantize_decimal(target - metric.metric_premium_pct)
+            if target is not None and metric.metric_premium_pct is not None
+            else None
+        )
+        return PremiumQueryResponse(
+            trade_date=item.trade_date,
+            a_ts_code=item.a_ts_code,
+            hk_ts_code=item.hk_ts_code,
+            a_name=item.a_name,
+            hk_name=item.hk_name,
+            a_close=item.a_close,
+            a_pct_chg=item.a_pct_chg,
+            hk_close=item.hk_close,
+            hk_pct_chg=item.hk_pct_chg,
+            ah_ratio=item.ah_comparison,
+            ah_premium_pct=item.ah_premium,
+            ha_ratio=item.ha_comparison,
+            ha_premium_pct=item.ha_premium,
+            is_hk_connect=bool(connect_channels),
+            connect_channels=connect_channels,
+            metric_direction=metric.metric_direction,
+            metric_premium_pct=metric.metric_premium_pct,
+            premium_avg_20=metric.premium_avg_20,
+            premium_avg_60=metric.premium_avg_60,
+            premium_avg_120=metric.premium_avg_120,
+            premium_percentile_60=metric.premium_percentile_60,
+            premium_deviation_from_60d_avg=metric.premium_deviation_from_60d_avg,
+            watchlist_id=watchlist.id if watchlist else None,
+            is_watchlist=watchlist is not None,
+            watchlist_display_name=watchlist.display_name if watchlist else None,
+            preferred_direction=watchlist.preferred_direction if watchlist else None,
+            target_premium_pct=target,
+            holding_market=watchlist.holding_market if watchlist else None,
+            distance_to_target_pct=distance,
+            opportunity_status=self._opportunity_status(
+                metric.metric_premium_pct,
+                distance,
+                bool(connect_channels),
+            ),
+            is_realtime=item.is_realtime,
+            data_source=item.data_source,
+            source_updated_at=item.source_updated_at,
+        )
+
+    def _query_rows(self, filters: PremiumQueryFilters) -> list[OfficialAHComparison]:
+        trade_date = filters.trade_date or self.latest_trade_date()
+        if trade_date is None:
+            return []
+        statement = select(OfficialAHComparison).where(
+            OfficialAHComparison.trade_date == trade_date
+        )
+        if filters.keyword:
+            like = f"%{filters.keyword.strip()}%"
+            statement = statement.where(
+                or_(
+                    OfficialAHComparison.a_ts_code.like(like),
+                    OfficialAHComparison.hk_ts_code.like(like),
+                    OfficialAHComparison.a_name.like(like),
+                    OfficialAHComparison.hk_name.like(like),
+                )
+            )
+        if filters.min_premium is not None:
+            statement = statement.where(OfficialAHComparison.ah_premium >= filters.min_premium)
+        if filters.max_premium is not None:
+            statement = statement.where(OfficialAHComparison.ah_premium <= filters.max_premium)
+        if filters.min_ha_premium is not None:
+            statement = statement.where(OfficialAHComparison.ha_premium >= filters.min_ha_premium)
+        if filters.max_ha_premium is not None:
+            statement = statement.where(OfficialAHComparison.ha_premium <= filters.max_ha_premium)
+        return list(self.db.scalars(statement.order_by(asc(OfficialAHComparison.a_ts_code))).all())
+
+    def _matches_connect_filter(
+        self,
+        item: OfficialAHComparison,
+        filters: PremiumQueryFilters,
+    ) -> bool:
+        channels = self._connect_channels(item.trade_date, item.hk_ts_code)
+        if filters.only_hk_connect and not channels:
+            return False
+        if filters.channel and filters.channel not in (channels or "").split(","):
+            return False
+        return True
+
+    def _connect_channels(self, trade_date: date, hk_ts_code: str) -> str | None:
+        cache_key = (trade_date, hk_ts_code)
+        if cache_key in self._connect_cache:
+            return self._connect_cache[cache_key]
+        channels = list(
+            self.db.scalars(
+                select(HsgtConstituent.connect_type)
+                .where(
+                    HsgtConstituent.trade_date == trade_date,
+                    HsgtConstituent.ts_code == hk_ts_code,
+                    HsgtConstituent.connect_type.in_(CONNECT_TYPES),
+                )
+                .order_by(HsgtConstituent.connect_type)
+            ).all()
+        )
+        value = ",".join(channels) if channels else None
+        self._connect_cache[cache_key] = value
+        return value
+
+    def _watchlist_map(self) -> dict[tuple[str, str], WatchlistStock]:
+        rows = list(
+            self.db.scalars(
+                select(WatchlistStock)
+                .where(WatchlistStock.is_active.is_(True))
+                .order_by(WatchlistStock.sort_order, WatchlistStock.id)
+            ).all()
+        )
+        return {(item.a_ts_code, item.hk_ts_code): item for item in rows}
+
+    def _metric_bundle(
+        self,
+        item: OfficialAHComparison,
+        direction: str,
+    ) -> PremiumMetricBundle:
+        normalized_direction = self._normalize_direction(direction)
+        cache_key = (item.a_ts_code, item.hk_ts_code, item.trade_date, normalized_direction)
+        if cache_key in self._metric_cache:
+            return self._metric_cache[cache_key]
+        history = list(
+            self.db.scalars(
+                select(OfficialAHComparison)
+                .where(
+                    OfficialAHComparison.a_ts_code == item.a_ts_code,
+                    OfficialAHComparison.hk_ts_code == item.hk_ts_code,
+                    OfficialAHComparison.trade_date <= item.trade_date,
+                )
+                .order_by(desc(OfficialAHComparison.trade_date))
+                .limit(max(ROLLING_WINDOWS))
+            ).all()
+        )
+        history = list(reversed(history))
+        metric = (
+            self._rolling_metrics(history, normalized_direction)[-1]
+            if history
+            else self._empty_metric(normalized_direction)
+        )
+        self._metric_cache[cache_key] = metric
+        return metric
+
+    def _rolling_metrics(
+        self,
+        rows: list[OfficialAHComparison],
+        direction: str,
+    ) -> list[PremiumMetricBundle]:
+        normalized_direction = self._normalize_direction(direction)
+        values = [self._metric_value(item, normalized_direction) for item in rows]
+        metrics: list[PremiumMetricBundle] = []
+        for index, current in enumerate(values):
+            avg_values: dict[int, Decimal | None] = {}
+            for window in ROLLING_WINDOWS:
+                window_values = values[max(0, index - window + 1) : index + 1]
+                avg_values[window] = self._average(
+                    [value for value in window_values if value is not None]
+                )
+            percentile_window = [
+                value
+                for value in values[max(0, index - 59) : index + 1]
+                if value is not None
+            ]
+            percentile = self._percentile(current, percentile_window)
+            deviation = (
+                quantize_decimal(current - avg_values[60])
+                if current is not None and avg_values[60] is not None
+                else None
+            )
+            metrics.append(
+                PremiumMetricBundle(
+                    metric_direction=normalized_direction,
+                    metric_premium_pct=current,
+                    premium_avg_20=avg_values[20],
+                    premium_avg_60=avg_values[60],
+                    premium_avg_120=avg_values[120],
+                    premium_percentile_60=percentile,
+                    premium_deviation_from_60d_avg=deviation,
+                )
+            )
+        return metrics
+
+    def _empty_metric(self, direction: str) -> PremiumMetricBundle:
+        return PremiumMetricBundle(
+            metric_direction=direction,
+            metric_premium_pct=None,
+            premium_avg_20=None,
+            premium_avg_60=None,
+            premium_avg_120=None,
+            premium_percentile_60=None,
+            premium_deviation_from_60d_avg=None,
+        )
+
+    def _metric_value(self, item: OfficialAHComparison, direction: str) -> Decimal | None:
+        return item.ah_premium if self._normalize_direction(direction) == "AH" else item.ha_premium
+
+    def _normalize_direction(self, value: str | None) -> str:
+        return "AH" if str(value or "").upper() == "AH" else "HA"
+
+    def _average(self, values: list[Decimal]) -> Decimal | None:
+        if not values:
+            return None
+        return quantize_decimal(sum(values) / Decimal(len(values)))
+
+    def _percentile(self, current: Decimal | None, values: list[Decimal]) -> Decimal | None:
+        if current is None or not values:
+            return None
+        below_or_equal = sum(1 for value in values if value <= current)
+        return quantize_decimal(Decimal(below_or_equal) * Decimal("100") / Decimal(len(values)))
+
+    def _opportunity_status(
+        self,
+        current: Decimal | None,
+        distance: Decimal | None,
+        is_hk_connect: bool,
+    ) -> str:
+        if current is None:
+            return "DATA_ISSUE"
+        if not is_hk_connect:
+            return "NOT_CONNECT"
+        if distance is None:
+            return "WATCH"
+        if distance <= Decimal("0"):
+            return "REACHED"
+        if distance <= NEAR_TARGET_DISTANCE_PCT:
+            return "NEAR"
+        return "WATCH"

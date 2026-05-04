@@ -37,6 +37,10 @@ class SqlGuardService:
     whitelist_tables = {
         "v_latest_ah_premium",
         "v_ah_premium_trend",
+        "v_latest_official_ah_premium",
+        "v_official_ah_premium_trend",
+        "v_latest_hk_connect_official_ah_premium",
+        "v_watchlist_opportunity",
         "v_sync_health",
         "v_data_quality_issues",
     }

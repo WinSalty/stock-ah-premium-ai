@@ -1,5 +1,5 @@
-import { Button, Table, Tag, Tooltip } from 'antd';
-import { Info, LineChart } from 'lucide-react';
+import { Button, Space, Table, Tag, Tooltip } from 'antd';
+import { Info, LineChart, Star } from 'lucide-react';
 import type { ColumnsType } from 'antd/es/table';
 import type { PremiumItem } from '../types/domain';
 import { formatEast8DateTime } from '../utils/datetime';
@@ -9,6 +9,7 @@ interface PremiumTableProps {
   loading?: boolean;
   pagination?: false | { current: number; pageSize: number; total: number; onChange: (page: number) => void };
   onTrend?: (item: PremiumItem) => void;
+  onAddWatchlist?: (item: PremiumItem) => void;
 }
 
 function formatNumber(value: string | null, digits = 2) {
@@ -28,6 +29,38 @@ function formatPercentTag(value: string | null) {
     return value;
   }
   return <Tag color={number >= 0 ? 'red' : 'green'}>{number.toFixed(2)}%</Tag>;
+}
+
+function statusTag(value: string | null) {
+  const labelMap: Record<string, string> = {
+    REACHED: '达阈值',
+    NEAR: '接近',
+    WATCH: '观察',
+    DATA_ISSUE: '数据异常',
+    NOT_CONNECT: '不可操作'
+  };
+  const colorMap: Record<string, string> = {
+    REACHED: 'red',
+    NEAR: 'gold',
+    WATCH: 'blue',
+    DATA_ISSUE: 'orange',
+    NOT_CONNECT: 'default'
+  };
+  if (!value) {
+    return <Tag color="default">未自选</Tag>;
+  }
+  return <Tag color={colorMap[value] || 'default'}>{labelMap[value] || value}</Tag>;
+}
+
+function channelsTag(record: PremiumItem) {
+  if (!record.is_hk_connect) {
+    return <Tag color="default">非港股通</Tag>;
+  }
+  return (
+    <Tooltip title={record.connect_channels || '港股通'}>
+      <Tag color="green">{record.connect_channels || '港股通'}</Tag>
+    </Tooltip>
+  );
 }
 
 function FormulaTitle({ label, formula }: { label: string; formula: string }) {
@@ -63,8 +96,19 @@ function StockCell({ name, code }: { name: string | null; code: string }) {
  * 创建日期：2026-05-04
  * author: sunshengxian
  */
-function PremiumTable({ data, loading, pagination, onTrend }: PremiumTableProps) {
+function PremiumTable({ data, loading, pagination, onTrend, onAddWatchlist }: PremiumTableProps) {
   const columns: ColumnsType<PremiumItem> = [
+    {
+      title: '关注',
+      width: 104,
+      fixed: 'left',
+      render: (_, record) => (
+        <div className="premium-watch-cell">
+          {record.is_watchlist ? <Tag color="purple">自选</Tag> : <Tag color="default">未加</Tag>}
+          {statusTag(record.opportunity_status)}
+        </div>
+      )
+    },
     {
       title: '日期',
       dataIndex: 'trade_date',
@@ -80,6 +124,11 @@ function PremiumTable({ data, loading, pagination, onTrend }: PremiumTableProps)
       title: 'H 股',
       width: 168,
       render: (_, record) => <StockCell name={record.hk_name} code={record.hk_ts_code} />
+    },
+    {
+      title: '港股通',
+      width: 118,
+      render: (_, record) => channelsTag(record)
     },
     {
       title: 'A 收盘',
@@ -147,6 +196,27 @@ function PremiumTable({ data, loading, pagination, onTrend }: PremiumTableProps)
       render: (value) => formatPercentTag(value)
     },
     {
+      title: '60日分位',
+      dataIndex: 'premium_percentile_60',
+      align: 'right',
+      width: 108,
+      render: (value) => (value === null ? '-' : `${formatNumber(value)}%`)
+    },
+    {
+      title: '偏离60均',
+      dataIndex: 'premium_deviation_from_60d_avg',
+      align: 'right',
+      width: 108,
+      render: (value) => formatPercentTag(value)
+    },
+    {
+      title: '距阈值',
+      dataIndex: 'distance_to_target_pct',
+      align: 'right',
+      width: 100,
+      render: (value) => formatPercentTag(value)
+    },
+    {
       title: '来源',
       width: 128,
       render: (_, record) => (
@@ -165,16 +235,27 @@ function PremiumTable({ data, loading, pagination, onTrend }: PremiumTableProps)
     },
     {
       title: '',
-      width: 56,
+      width: 88,
       fixed: 'right',
       render: (_, record) => (
-        <Button
-          aria-label="趋势"
-          title="趋势"
-          type="text"
-          icon={<LineChart size={16} />}
-          onClick={() => onTrend?.(record)}
-        />
+        <Space>
+          <Button
+            aria-label="趋势"
+            title="趋势"
+            type="text"
+            icon={<LineChart size={16} />}
+            onClick={() => onTrend?.(record)}
+          />
+          {onAddWatchlist && !record.is_watchlist ? (
+            <Button
+              aria-label="加入自选"
+              title="加入自选"
+              type="text"
+              icon={<Star size={16} />}
+              onClick={() => onAddWatchlist(record)}
+            />
+          ) : null}
+        </Space>
       )
     }
   ];
@@ -186,7 +267,7 @@ function PremiumTable({ data, loading, pagination, onTrend }: PremiumTableProps)
       dataSource={data}
       loading={loading}
       pagination={pagination}
-      scroll={{ x: 1280 }}
+      scroll={{ x: 1680 }}
       size="middle"
     />
   );

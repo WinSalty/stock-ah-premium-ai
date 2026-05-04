@@ -42,6 +42,7 @@ class ChatMessageCreate(BaseModel):
     start_date: date | None = None
     end_date: date | None = None
     ts_code: str | None = None
+    only_watchlist: bool = False
 
 
 class ChatMessageResponse(BaseModel):

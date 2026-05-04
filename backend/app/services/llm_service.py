@@ -110,8 +110,12 @@ class LlmService:
 
     def _sql_prompt(self, question: str, context: dict[str, Any]) -> str:
         schema = {
-            "v_latest_ah_premium": "最新交易日 AH 溢价结果",
-            "v_ah_premium_trend": "历史 AH 溢价趋势",
+            "v_latest_official_ah_premium": "最新交易日官方 AH/H/A 溢价结果，含港股通通道",
+            "v_official_ah_premium_trend": "官方 AH/H/A 溢价历史趋势",
+            "v_latest_hk_connect_official_ah_premium": "最新交易日且港股通可操作的官方溢价结果",
+            "v_watchlist_opportunity": "自选股机会状态，含阈值、距离、通道和来源",
+            "v_latest_ah_premium": "兼容旧名称，实际同最新官方 AH/H/A 溢价结果",
+            "v_ah_premium_trend": "兼容旧名称，实际同官方 AH/H/A 溢价历史趋势",
             "v_sync_health": "数据同步运行状态",
             "v_data_quality_issues": "数据质量问题",
         }
@@ -124,6 +128,8 @@ class LlmService:
             "你只负责生成只读 MySQL SELECT SQL，必须返回 JSON：{\"sql\":\"...\"}。"
             "只能查询这些视图："
             f"{json.dumps(schema, ensure_ascii=False)}。"
+            "默认使用官方 AH 比价口径；H/A 字段由官方 A/H 反推；"
+            "涉及可操作性时优先查询含 hk_connect 或 watchlist 的视图。"
             "不要使用写入、DDL、多语句。问题与上下文如下："
             f"{context_json}"
         )

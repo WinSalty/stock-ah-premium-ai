@@ -53,6 +53,23 @@ class PremiumQueryResponse(OrmModel):
     ah_premium_pct: Decimal | None
     ha_ratio: Decimal | None
     ha_premium_pct: Decimal | None
+    is_hk_connect: bool = False
+    connect_channels: str | None = None
+    metric_direction: str = "HA"
+    metric_premium_pct: Decimal | None = None
+    premium_avg_20: Decimal | None = None
+    premium_avg_60: Decimal | None = None
+    premium_avg_120: Decimal | None = None
+    premium_percentile_60: Decimal | None = None
+    premium_deviation_from_60d_avg: Decimal | None = None
+    watchlist_id: int | None = None
+    is_watchlist: bool = False
+    watchlist_display_name: str | None = None
+    preferred_direction: str | None = None
+    target_premium_pct: Decimal | None = None
+    holding_market: str | None = None
+    distance_to_target_pct: Decimal | None = None
+    opportunity_status: str | None = None
     is_realtime: bool
     data_source: str
     source_updated_at: datetime | None
@@ -79,6 +96,8 @@ class PremiumSummaryResponse(BaseModel):
     latest_trade_date: date | None
     calculated_count: int
     issue_count: int
+    hk_connect_count: int = 0
+    watchlist_count: int = 0
     top_premiums: list[PremiumQueryResponse] = Field(default_factory=list)
     bottom_premiums: list[PremiumQueryResponse] = Field(default_factory=list)
 
@@ -113,4 +132,10 @@ class PremiumOfficialTrendPoint(BaseModel):
     ah_premium_pct: Decimal | None
     ha_ratio: Decimal | None
     ha_premium_pct: Decimal | None
+    metric_direction: str = "HA"
+    metric_premium_pct: Decimal | None = None
+    premium_avg_20: Decimal | None = None
+    premium_avg_60: Decimal | None = None
+    premium_avg_120: Decimal | None = None
+    premium_percentile_60: Decimal | None = None
     is_realtime: bool = False

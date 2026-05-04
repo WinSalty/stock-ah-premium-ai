@@ -1,4 +1,4 @@
-import { Button, DatePicker, Form, Input, Skeleton, Table, Typography, message } from 'antd';
+import { Button, Checkbox, DatePicker, Form, Input, Skeleton, Table, Typography, message } from 'antd';
 import { SendHorizontal } from 'lucide-react';
 import { useMutation } from '@tanstack/react-query';
 import { useState } from 'react';
@@ -12,6 +12,7 @@ interface ChatFormValues {
   question: string;
   range?: [dayjs.Dayjs, dayjs.Dayjs];
   ts_code?: string;
+  only_watchlist?: boolean;
 }
 
 interface ChatTurn {
@@ -38,7 +39,8 @@ function ChatPage() {
         question: values.question,
         start_date: values.range?.[0]?.format('YYYY-MM-DD'),
         end_date: values.range?.[1]?.format('YYYY-MM-DD'),
-        ts_code: values.ts_code?.trim() || undefined
+        ts_code: values.ts_code?.trim() || undefined,
+        only_watchlist: values.only_watchlist
       });
     },
     onSuccess: (response, values) => {
@@ -55,9 +57,9 @@ function ChatPage() {
         {turns.length === 0 && !mutation.isPending ? (
           <div className="question-bank">
             {[
-              '最近一个交易日 A/H 溢价最高的 10 只是什么？',
-              '哪些股票今天无法计算溢价？',
-              '近 60 个交易日溢价率趋势如何？'
+              '我关注的股票里，最近一个交易日哪些 H/A 折价最明显？',
+              '哪些自选股已经达到我设置的阈值？',
+              '最新交易日哪些官方 AH 比价数据不是港股通可操作标的？'
             ].map((item) => (
               <Button key={item} onClick={() => form.setFieldValue('question', item)}>
                 {item}
@@ -101,6 +103,9 @@ function ChatPage() {
             </Form.Item>
             <Form.Item label="股票" name="ts_code">
               <Input placeholder="可选代码" />
+            </Form.Item>
+            <Form.Item label="自选范围" name="only_watchlist" valuePropName="checked">
+              <Checkbox>只看自选股</Checkbox>
             </Form.Item>
           </div>
           <Form.Item name="question" rules={[{ required: true, message: '请输入问题' }]}>

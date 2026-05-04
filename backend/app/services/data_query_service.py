@@ -20,6 +20,7 @@ from app.db.models.market import (
     HKTradeCalendar,
     HsgtConstituent,
     OfficialAHComparison,
+    WatchlistStock,
 )
 from app.db.models.sync import SyncRun
 from app.schemas.query import DataQueryResponse, QueryColumn, QueryDatasetInfo
@@ -235,6 +236,27 @@ DATA_QUERY_SPECS: dict[str, QueryDatasetSpec] = {
         keyword_fields=("a_ts_code", "hk_ts_code", "a_name", "hk_name", "data_source"),
         date_field="trade_date",
         default_order=(("trade_date", "desc"), ("ah_premium", "desc")),
+    ),
+    "watchlist_stock": QueryDatasetSpec(
+        name="watchlist_stock",
+        label="自选股票",
+        description="用户关注的 AH 股票和阈值配置。",
+        model=WatchlistStock,
+        columns=(
+            col("id", "ID", 80),
+            col("a_ts_code", "A 股代码", 130),
+            col("hk_ts_code", "H 股代码", 130),
+            col("display_name", "展示名", 160),
+            col("preferred_direction", "关注方向", 110),
+            col("target_premium_pct", "目标阈值", 120),
+            col("holding_market", "持有侧", 100),
+            col("sort_order", "排序", 90),
+            col("note", "备注", 220),
+            col("is_active", "启用", 90),
+            col("updated_at", "更新时间", 190),
+        ),
+        keyword_fields=("a_ts_code", "hk_ts_code", "display_name", "preferred_direction", "note"),
+        default_order=(("sort_order", "asc"), ("id", "asc")),
     ),
     "ah_premium_daily": QueryDatasetSpec(
         name="ah_premium_daily",

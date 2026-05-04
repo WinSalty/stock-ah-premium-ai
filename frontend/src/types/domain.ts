@@ -58,6 +58,23 @@ export interface PremiumItem {
   ah_premium_pct: string | null;
   ha_ratio: string | null;
   ha_premium_pct: string | null;
+  is_hk_connect: boolean;
+  connect_channels: string | null;
+  metric_direction: PremiumDirection;
+  metric_premium_pct: string | null;
+  premium_avg_20: string | null;
+  premium_avg_60: string | null;
+  premium_avg_120: string | null;
+  premium_percentile_60: string | null;
+  premium_deviation_from_60d_avg: string | null;
+  watchlist_id: number | null;
+  is_watchlist: boolean;
+  watchlist_display_name: string | null;
+  preferred_direction: PremiumDirection | null;
+  target_premium_pct: string | null;
+  holding_market: HoldingMarket | string | null;
+  distance_to_target_pct: string | null;
+  opportunity_status: OpportunityStatus | string | null;
   is_realtime: boolean;
   data_source: string;
   source_updated_at: string | null;
@@ -72,6 +89,8 @@ export interface PremiumSummaryResponse {
   latest_trade_date: string | null;
   calculated_count: number;
   issue_count: number;
+  hk_connect_count: number;
+  watchlist_count: number;
   top_premiums: PremiumItem[];
   bottom_premiums: PremiumItem[];
 }
@@ -94,6 +113,12 @@ export interface PremiumOfficialTrendPoint {
   ah_premium_pct: string | null;
   ha_ratio: string | null;
   ha_premium_pct: string | null;
+  metric_direction: PremiumDirection;
+  metric_premium_pct: string | null;
+  premium_avg_20: string | null;
+  premium_avg_60: string | null;
+  premium_avg_120: string | null;
+  premium_percentile_60: string | null;
   is_realtime?: boolean;
 }
 
@@ -122,6 +147,7 @@ export interface ChatMessageRequest {
   start_date?: string;
   end_date?: string;
   ts_code?: string;
+  only_watchlist?: boolean;
 }
 
 export interface ChatMessageResponse {
@@ -166,4 +192,50 @@ export interface DataQueryParams {
   end_date?: string;
   page: number;
   page_size: number;
+}
+
+export type PremiumDirection = 'AH' | 'HA';
+export type HoldingMarket = 'A' | 'H' | 'UNKNOWN';
+export type OpportunityStatus = 'REACHED' | 'NEAR' | 'WATCH' | 'DATA_ISSUE' | 'NOT_CONNECT';
+
+export interface WatchlistStock {
+  id: number;
+  a_ts_code: string;
+  hk_ts_code: string;
+  display_name: string | null;
+  preferred_direction: PremiumDirection;
+  target_premium_pct: string | null;
+  holding_market: HoldingMarket | string;
+  sort_order: number;
+  note: string | null;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface WatchlistOpportunity {
+  watchlist: WatchlistStock;
+  premium: PremiumItem | null;
+}
+
+export interface WatchlistCreate {
+  a_ts_code: string;
+  hk_ts_code: string;
+  display_name?: string;
+  preferred_direction?: PremiumDirection;
+  target_premium_pct?: string | number;
+  holding_market?: HoldingMarket;
+  sort_order?: number;
+  note?: string;
+  is_active?: boolean;
+}
+
+export interface WatchlistUpdate {
+  display_name?: string | null;
+  preferred_direction?: PremiumDirection;
+  target_premium_pct?: string | number | null;
+  holding_market?: HoldingMarket;
+  sort_order?: number;
+  note?: string | null;
+  is_active?: boolean;
 }

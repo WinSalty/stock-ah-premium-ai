@@ -11,6 +11,7 @@ from app.db.models.market import (
     HKTradeCalendar,
     HsgtConstituent,
     OfficialAHComparison,
+    WatchlistStock,
 )
 from app.db.models.sync import DataQualityIssue, SyncCheckpoint, SyncRun
 
@@ -31,4 +32,5 @@ __all__ = [
     "OfficialAHComparison",
     "SyncCheckpoint",
     "SyncRun",
+    "WatchlistStock",
 ]

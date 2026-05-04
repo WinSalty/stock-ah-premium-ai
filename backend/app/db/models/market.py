@@ -226,6 +226,31 @@ class AHStockPair(TimestampMixin, Base):
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
 
 
+class WatchlistStock(TimestampMixin, Base):
+    """用户自选 AH 股票表。
+
+    创建日期：2026-05-04
+    author: sunshengxian
+    """
+
+    __tablename__ = "watchlist_stock"
+    __table_args__ = (
+        UniqueConstraint("a_ts_code", "hk_ts_code", name="uk_watchlist_stock_pair"),
+        Index("idx_watchlist_active_order", "is_active", "sort_order"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    a_ts_code: Mapped[str] = mapped_column(String(16), nullable=False)
+    hk_ts_code: Mapped[str] = mapped_column(String(16), nullable=False)
+    display_name: Mapped[str | None] = mapped_column(String(128))
+    preferred_direction: Mapped[str] = mapped_column(String(8), nullable=False, default="HA")
+    target_premium_pct: Mapped[Decimal | None] = mapped_column(DECIMAL(20, 8))
+    holding_market: Mapped[str] = mapped_column(String(16), nullable=False, default="UNKNOWN")
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=1000)
+    note: Mapped[str | None] = mapped_column(Text)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
+
 class OfficialAHComparison(TimestampMixin, Base):
     """Tushare 官方 AH 比价快照表。
 

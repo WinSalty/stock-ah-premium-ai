@@ -5,7 +5,8 @@ import type {
   PremiumListResponse,
   PremiumOfficialTrendPoint,
   PremiumPairOption,
-  PremiumSummaryResponse
+  PremiumSummaryResponse,
+  PremiumDirection
 } from '../types/domain';
 
 export interface PremiumQueryParams {
@@ -14,6 +15,11 @@ export interface PremiumQueryParams {
   channel?: string;
   min_premium?: number;
   max_premium?: number;
+  min_ha_premium?: number;
+  max_ha_premium?: number;
+  direction?: PremiumDirection;
+  only_hk_connect?: boolean;
+  only_watchlist?: boolean;
   page?: number;
   page_size?: number;
 }
@@ -41,12 +47,19 @@ export function fetchPremiums(params: PremiumQueryParams) {
   return requestJson<PremiumListResponse>(`/api/ah-premiums?${search.toString()}`);
 }
 
-export function fetchPremiumTrend(aTsCode: string, hkTsCode: string) {
-  return requestJson<PremiumListResponse['items']>(`/api/ah-premiums/${aTsCode}/${hkTsCode}/trend`);
+export function fetchPremiumTrend(aTsCode: string, hkTsCode: string, direction: PremiumDirection = 'HA') {
+  const search = new URLSearchParams({ direction });
+  return requestJson<PremiumListResponse['items']>(
+    `/api/ah-premiums/${aTsCode}/${hkTsCode}/trend?${search.toString()}`
+  );
 }
 
-export function fetchOfficialPremiumTrend(aTsCode: string, hkTsCode: string) {
-  const search = new URLSearchParams({ a_ts_code: aTsCode, hk_ts_code: hkTsCode });
+export function fetchOfficialPremiumTrend(
+  aTsCode: string,
+  hkTsCode: string,
+  direction: PremiumDirection = 'HA'
+) {
+  const search = new URLSearchParams({ a_ts_code: aTsCode, hk_ts_code: hkTsCode, direction });
   return requestJson<PremiumOfficialTrendPoint[]>(`/api/ah-premiums/official-trend?${search.toString()}`);
 }
 
