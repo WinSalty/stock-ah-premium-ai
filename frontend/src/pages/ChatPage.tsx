@@ -1,5 +1,7 @@
-import { Button, Checkbox, DatePicker, Form, Input, Skeleton, Table, Typography, message } from 'antd';
+import { Button, Checkbox, DatePicker, Form, Input, Skeleton, Table, message } from 'antd';
 import { SendHorizontal } from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { useState } from 'react';
 import dayjs from 'dayjs';
 import PageHeader from '../components/PageHeader';
@@ -148,10 +150,12 @@ function ChatPage() {
           <div className="chat-turn" key={turn.id}>
             <div className="chat-question">{turn.question}</div>
             <div className="chat-answer">
-              <Typography.Paragraph>
-                {turn.response?.answer || (turn.streaming ? '正在分析...' : '')}
+              <div className="markdown-answer">
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                  {turn.response?.answer || (turn.streaming ? '正在分析...' : '')}
+                </ReactMarkdown>
                 {turn.streaming ? <span className="stream-caret" /> : null}
-              </Typography.Paragraph>
+              </div>
               {turn.response?.sql ? <pre className="sql-preview">{turn.response.sql}</pre> : null}
               {turn.response?.rows.length ? (
                 <Table

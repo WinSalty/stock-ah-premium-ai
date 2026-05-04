@@ -4,6 +4,7 @@ import json
 import re
 from collections.abc import Iterator
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -12,7 +13,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.core.config import Settings, get_settings
-from app.services.sql_guard_service import SqlGuardService
+from app.services.sql_guard_service import SqlGuardError, SqlGuardService
 
 
 @dataclass(frozen=True)
@@ -85,20 +86,20 @@ class LlmService:
         question: str,
         context: dict[str, Any],
     ) -> tuple[str, list[dict[str, Any]], str]:
-        sql = self._generate_sql(question, context)
+        sql = self._default_sql_for_question(question) or self._generate_sql(question, context)
         for attempt in range(2):
-            guarded = self.sql_guard.validate(
-                sql,
-                default_limit=self.settings.query_limit_default,
-                max_limit=self.settings.query_limit_max,
-            )
             try:
+                guarded = self.sql_guard.validate(
+                    sql,
+                    default_limit=self.settings.query_limit_default,
+                    max_limit=self.settings.query_limit_max,
+                )
                 rows = self._execute_sql(guarded.sql)
                 break
-            except SQLAlchemyError as exc:
+            except (SQLAlchemyError, SqlGuardError) as exc:
                 if attempt == 1:
                     raise
-                sql = self._repair_sql(question, context, guarded.sql, str(exc))
+                sql = self._repair_sql(question, context, sql, str(exc))
         return guarded.sql, rows, self._answer_prompt(question, guarded.sql, rows, context)
 
     def _generate_sql(self, question: str, context: dict[str, Any]) -> str:
@@ -129,12 +130,17 @@ class LlmService:
         payload = {
             "question": question,
             "sql": sql,
-            "rows": rows[:50],
+            "rows": rows[:200],
+            "supporting_data": self._supporting_data(question),
+            "research_context": self._research_context(question),
             "context": context,
         }
         return (
-            "你是金融数据分析助手。请基于 JSON 数据用中文回答，说明数据口径；"
-            "不要编造结果，数据为空时明确说明。\n"
+            "你是金融数据分析助手。请基于 JSON 数据用中文 Markdown 回答，"
+            "可以使用小标题、列表和表格；说明数据口径；不要编造结果，"
+            "数据为空时明确说明。涉及 AH 溢价套利时，要区分“价差观察、"
+            "配对交易设想、港股通可操作性、卖空/融资/汇率/税费限制”，"
+            "不得把价差直接说成无风险套利。\n"
             f"{json.dumps(payload, ensure_ascii=False, default=str)}"
         )
 
@@ -228,6 +234,78 @@ class LlmService:
         if not isinstance(repaired_sql, str) or not repaired_sql.strip():
             raise ValueError("LLM 未返回修复后的 SQL")
         return repaired_sql
+
+    def _supporting_data(self, question: str) -> dict[str, list[dict[str, Any]]] | None:
+        if not self._is_ah_arbitrage_question(question):
+            return None
+        queries = {
+            "a_discount_h_premium_candidates": (
+                "SELECT trade_date,a_ts_code,hk_ts_code,a_name,hk_name,ah_premium_pct,"
+                "ha_premium_pct,is_hk_connect,connect_channels "
+                "FROM v_latest_hk_connect_official_ah_premium "
+                "ORDER BY ha_premium_pct DESC LIMIT 20"
+            ),
+            "h_discount_a_premium_candidates": (
+                "SELECT trade_date,a_ts_code,hk_ts_code,a_name,hk_name,ah_premium_pct,"
+                "ha_premium_pct,is_hk_connect,connect_channels "
+                "FROM v_latest_hk_connect_official_ah_premium "
+                "ORDER BY ah_premium_pct DESC LIMIT 20"
+            ),
+            "watchlist_opportunities": (
+                "SELECT display_name,a_ts_code,hk_ts_code,trade_date,preferred_direction,"
+                "target_premium_pct,ah_premium_pct,ha_premium_pct,metric_premium_pct,"
+                "distance_to_target_pct,premium_percentile_60,opportunity_status "
+                "FROM v_watchlist_opportunity "
+                "ORDER BY ABS(distance_to_target_pct) ASC LIMIT 30"
+            ),
+            "market_distribution": (
+                "SELECT COUNT(*) AS total_count,"
+                "SUM(ah_premium_pct < 0) AS a_discount_count,"
+                "SUM(ha_premium_pct > 0) AS h_premium_count,"
+                "MIN(ah_premium_pct) AS min_ah_premium_pct,"
+                "MAX(ah_premium_pct) AS max_ah_premium_pct,"
+                "MIN(ha_premium_pct) AS min_ha_premium_pct,"
+                "MAX(ha_premium_pct) AS max_ha_premium_pct "
+                "FROM v_latest_hk_connect_official_ah_premium"
+            ),
+        }
+        supporting_data: dict[str, list[dict[str, Any]]] = {}
+        for key, sql in queries.items():
+            supporting_data[key] = self._execute_sql(sql)
+        return supporting_data
+
+    def _research_context(self, question: str) -> list[str]:
+        if not self._is_ah_arbitrage_question(question):
+            return []
+        doc_path = (
+            Path(__file__).resolve().parents[3]
+            / "resources"
+            / "doc"
+            / "ah-premium-arbitrage-research-2026.md"
+        )
+        if not doc_path.exists():
+            return []
+        content = doc_path.read_text(encoding="utf-8")
+        chunks = [chunk.strip() for chunk in content.split("\n## ") if chunk.strip()]
+        return chunks[:6]
+
+    def _is_ah_arbitrage_question(self, question: str) -> bool:
+        keywords = ("ah", "a/h", "h/a", "溢价", "折价", "套利", "价差", "港股通", "a股", "h股")
+        normalized = question.lower()
+        return any(keyword in normalized for keyword in keywords)
+
+    def _default_sql_for_question(self, question: str) -> str | None:
+        if not self._is_ah_arbitrage_question(question):
+            return None
+        normalized = question.lower()
+        if any(keyword in normalized for keyword in ("哪些", "适合", "候选", "推荐", "筛选")):
+            return (
+                "SELECT trade_date,a_ts_code,hk_ts_code,a_name,hk_name,ah_premium_pct,"
+                "ha_premium_pct,is_hk_connect,connect_channels "
+                "FROM v_latest_hk_connect_official_ah_premium "
+                "ORDER BY ha_premium_pct DESC LIMIT 20"
+            )
+        return None
 
     def _schema(self) -> dict[str, str]:
         return {

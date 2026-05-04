@@ -60,6 +60,7 @@
   - API Key 优先读取 `/Users/salty/codeProject/ai/doc/deepseek-apikey.txt`，`LLM_API_KEY` 仅作兜底，不把密钥暴露给前端。
   - 问答页面支持流式响应、Enter 发送和 Shift+Enter 换行。
   - LLM SQL 生成后会按本地视图字段清单校验并在字段名执行错误时自动修复重试一次。
+  - AH 溢价、折价和套利类问题会追加候选池、市场分布、自选机会和本地研究报告片段。
   - 只读 SQL Guard：只允许 SELECT、禁止多语句和写库操作、限制白名单视图、自动 limit。
   - 默认 schema 已切换为官方 AH 比价、自选机会和港股通可操作性视图。
   - 会话与消息落库。
@@ -92,6 +93,7 @@
   - `resources/doc/startup-guide.md`：完整启动、配置、验证和排错手册。
   - `resources/doc/phase-1-detailed-development-plan.md`：已同步当前实现口径，包括 `hk_daily` 禁用、官方 AH 比价主表、定时增量、长字段悬浮和东八区时间展示。
   - `resources/doc/ah-premium-review-and-display-design.md`：沉淀 A/H 溢价套现评审结论、官方主口径、自选股优先展示和后续落地优先级。
+  - `resources/doc/ah-premium-arbitrage-research-2026.md`：沉淀 2026 AH 溢价套利研究、当前候选池和 LLM 回答框架。
 - 非真实功能测试资产：
   - 后端公式单元测试。
   - SQL Guard 单元测试。
@@ -101,8 +103,8 @@
 - 启动服务前不会在文档或代码中写入 `/Users/salty/codeProject/ai/doc/tushare-token.txt` 内容。
 - 已执行最大限度全量同步；当前本地行数：A 股基础 5512、港股基础 2730、A 股交易日历 730、港股交易日历 730、官方 AH 比价 27176、港股通名单 207769、A 股日线 942927。
 - `hk_daily` 当前 token 无法请求，已禁用接口同步；`fx_daily` 请求成功但返回 0 行。
-- 未调用 LLM API。
-- 未执行依赖 Tushare 或 LLM 的端到端功能测试。
+- DeepSeek LLM 已完成最小调用和流式问答验证。
+- 依赖 Tushare 的完整端到端重新同步未重复执行。
 
 ## 已执行的非功能性检查
 
@@ -123,6 +125,7 @@
 - `scripts/init-db.sh`：已应用新的 `20260504_0005`，创建 `stock_selection_factor_snapshot`，并重建 LLM 选股视图。
 - `stock_selection_factors` 同步验证：成功写入 60 只候选股票。
 - Tushare 中转 SDK 最小连通性：`stock_basic` 携带 `limit=1` 查询成功返回 1 行，未落库。
+- DeepSeek 流式问答验证：AH 套利宽问题返回 `meta` 与连续 `delta` 事件，能基于本地候选池生成 Markdown 答案。
 - 敏感信息扫描：只发现文档中的 `<local-only>` 占位符，未发现真实 Token、密码或 API Key。
 
 ## 待验证事项
@@ -130,11 +133,11 @@
 - 当前 Tushare 中转 Token 的完整可用接口范围。
 - `stock_hsgt`、`stk_ah_comparison`、`fx_daily` 的实际返回字段与当前字段映射是否完全一致。
 - 前后端联调、页面响应式截图和真实数据展示。
-- LLM 输出 SQL 的稳定性和问答答案质量。
+- LLM 输出 SQL 的长期稳定性和问答答案质量。
 
 ## 下一步建议
 
 1. 执行本地 `alembic upgrade head` 或 `./scripts/init-db.sh`，将 `20260504_0004` 自选股表和新版只读视图应用到本地数据库。
 2. 启动前后端后添加几只自选股票，验证首页机会卡片、阈值距离、通道、趋势中位数和分位参考线、溢价页加入自选流程。
-3. 配置 LLM Key 后验证官方口径问答、自选范围问答和 SQL Guard 闭环。
+3. 持续补充 AH 套利研究片段和候选池字段，观察 LLM 宽问题回答质量。
 4. 后续修复真实实时接口，再恢复或增强实时刷新能力。

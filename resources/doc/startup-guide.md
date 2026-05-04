@@ -354,6 +354,8 @@ LLM_MODEL=deepseek-v4-flash
 
 问答页面使用流式响应，输入框按 Enter 发送，Shift+Enter 换行。若页面一直没有响应，先确认后端 `/api/health` 正常，再查看后端日志中是否有 LLM 生成 SQL 字段名或数据库执行错误。
 
+AH 溢价、折价和套利相关问题会自动补充本地候选池、市场分布、自选机会，以及 `resources/doc/ah-premium-arbitrage-research-2026.md` 中的研究片段，避免只基于单行 SQL 结果作答。
+
 ## 14. 当前验证状态
 
 已验证：
