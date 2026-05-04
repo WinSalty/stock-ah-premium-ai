@@ -86,6 +86,8 @@ APP_CORS_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
 
 不要把真实 Token、数据库密码或 LLM Key 写入仓库。若 shell 中残留旧 `TUSHARE_TOKEN`，项目仍会优先使用 `TUSHARE_TOKEN_FILE` 指向的文件，避免误用旧 token；LLM 同理优先使用 `LLM_API_KEY_FILE` 指向的本机文件。
 
+智能问答仅面向投资研究问题。后端会为 LLM 注入专业金融投资分析顾问角色、最近会话上下文和分类投资知识片段；前端只展示报告和数据摘要表格，不展示 SQL 或底层查询过程。
+
 Tushare 中转服务文档见 `http://tsy.xiaodefa.cn/docs`。项目后端已按其 SDK 方式设置。文档示例使用 `ts.set_token(token)`，项目实现采用 `ts.pro_api(token, timeout=...)` 直接传入 token，避免 SDK 把 token 额外写到用户目录缓存文件：
 
 ```python

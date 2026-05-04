@@ -1,11 +1,24 @@
 import { API_BASE_URL, ApiError, requestJson } from './client';
-import type { ChatMessageRequest, ChatMessageResponse, ChatSession } from '../types/domain';
+import type {
+  ChatMessageRequest,
+  ChatMessageResponse,
+  ChatSession,
+  ChatSessionDetail
+} from '../types/domain';
 
 export function createChatSession(title = '新的数据问答') {
   return requestJson<ChatSession>('/api/chat/sessions', {
     method: 'POST',
     body: JSON.stringify({ title })
   });
+}
+
+export function listChatSessions() {
+  return requestJson<ChatSession[]>('/api/chat/sessions');
+}
+
+export function getChatSession(sessionId: number) {
+  return requestJson<ChatSessionDetail>(`/api/chat/sessions/${sessionId}`);
 }
 
 export function sendChatMessage(sessionId: number, payload: ChatMessageRequest) {
@@ -19,7 +32,6 @@ interface ChatStreamEvent {
   type: 'meta' | 'delta' | 'done' | 'error';
   content?: string;
   answer?: string;
-  sql?: string | null;
   rows?: Record<string, unknown>[];
 }
 

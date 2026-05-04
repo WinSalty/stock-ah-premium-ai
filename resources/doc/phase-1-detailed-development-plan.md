@@ -326,8 +326,11 @@ stock-ah-premium-ai/
 LLM 问答：
 
 - `POST /api/chat/sessions`：创建会话。
-- `POST /api/chat/sessions/{sessionId}/messages`：提交问题，返回回答、引用数据、可选 SQL。
-- `GET /api/chat/sessions/{sessionId}`：查看历史消息。
+- `GET /api/chat/sessions`：按更新时间查看已保存会话。
+- `GET /api/chat/sessions/{sessionId}`：查看会话详情和历史消息。
+- `GET /api/chat/sessions/{sessionId}/messages`：查看会话消息列表。
+- `POST /api/chat/sessions/{sessionId}/messages`：提交问题，返回回答和可展示数据摘要，不向前端返回 SQL。
+- `POST /api/chat/sessions/{sessionId}/messages/stream`：提交问题并流式返回回答和可展示数据摘要。
 
 ## 8. LLM 问答安全方案
 
@@ -344,7 +347,8 @@ LLM 问答：
    - 禁止 `INSERT`、`UPDATE`、`DELETE`、`DROP`、`ALTER`、`CREATE`、多语句。
    - 自动加 `LIMIT`，设置查询超时。
 5. 后端执行只读查询，拿到小结果集。
-6. LLM 基于结果集生成中文回答，并附带数据口径说明。
+6. LLM 基于结果集、会话上下文和分类投资知识片段生成中文投资报告。
+7. 前端展示回答和数据摘要表格，不展示 SQL、底层数据来源或中间 JSON。
 
 建议为 LLM 问答创建只读数据库账号，仅授予查询视图权限。可优先开放视图：
 

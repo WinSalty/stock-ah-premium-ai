@@ -148,6 +148,19 @@ export interface ChatSession {
   updated_at: string;
 }
 
+export interface ChatStoredMessage {
+  id: number;
+  role: 'user' | 'assistant' | string;
+  content: string;
+  rows: Record<string, unknown>[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ChatSessionDetail extends ChatSession {
+  messages: ChatStoredMessage[];
+}
+
 export interface ChatMessageRequest {
   question: string;
   start_date?: string;
@@ -158,7 +171,6 @@ export interface ChatMessageRequest {
 
 export interface ChatMessageResponse {
   answer: string;
-  sql: string | null;
   rows: Record<string, unknown>[];
 }
 

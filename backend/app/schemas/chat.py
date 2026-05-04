@@ -31,6 +31,31 @@ class ChatSessionResponse(OrmModel):
     updated_at: datetime
 
 
+class ChatStoredMessageResponse(BaseModel):
+    """已保存聊天消息响应。
+
+    创建日期：2026-05-04
+    author: sunshengxian
+    """
+
+    id: int
+    role: str
+    content: str
+    rows: list[dict[str, Any]] = Field(default_factory=list)
+    created_at: datetime
+    updated_at: datetime
+
+
+class ChatSessionDetailResponse(ChatSessionResponse):
+    """会话详情响应。
+
+    创建日期：2026-05-04
+    author: sunshengxian
+    """
+
+    messages: list[ChatStoredMessageResponse] = Field(default_factory=list)
+
+
 class ChatMessageCreate(BaseModel):
     """创建聊天消息请求。
 
@@ -53,5 +78,4 @@ class ChatMessageResponse(BaseModel):
     """
 
     answer: str
-    sql: str | None
     rows: list[dict[str, Any]] = Field(default_factory=list)

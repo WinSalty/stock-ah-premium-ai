@@ -17,7 +17,11 @@ class LlmChatSession(TimestampMixin, Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     title: Mapped[str] = mapped_column(String(255), nullable=False)
-    messages: Mapped[list[LlmChatMessage]] = relationship(back_populates="session")
+    messages: Mapped[list[LlmChatMessage]] = relationship(
+        back_populates="session",
+        cascade="all, delete-orphan",
+        order_by="LlmChatMessage.id",
+    )
 
 
 class LlmChatMessage(TimestampMixin, Base):
