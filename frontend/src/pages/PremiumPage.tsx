@@ -25,8 +25,9 @@ import type { PremiumQueryParams } from '../api/market';
 
 const AH_COLOR = '#2563eb';
 const HA_COLOR = '#0f766e';
-const AVG20_COLOR = '#64748b';
-const AVG60_COLOR = '#f59e0b';
+const MEDIAN60_COLOR = '#334155';
+const P20_COLOR = '#14b8a6';
+const P80_COLOR = '#f97316';
 
 interface FilterValues {
   trade_date?: dayjs.Dayjs;
@@ -156,7 +157,7 @@ function PremiumPage() {
   const trendMetricColor = selected?.metric_direction === 'AH' ? AH_COLOR : HA_COLOR;
   const trendOption = useMemo(
     () => ({
-      color: [trendMetricColor, AVG20_COLOR, AVG60_COLOR],
+      color: [trendMetricColor, MEDIAN60_COLOR, P20_COLOR, P80_COLOR],
       tooltip: { trigger: 'axis' },
       legend: { top: 0, right: 16 },
       grid: { left: 48, right: 24, top: 42, bottom: 38 },
@@ -166,7 +167,7 @@ function PremiumPage() {
         {
           name: selected?.metric_direction === 'AH' ? 'A/H 溢价' : 'H/A 溢价',
           type: 'line',
-          smooth: true,
+          smooth: false,
           symbolSize: 7,
           data: trend.data?.map((item) => numberValue(item.metric_premium_pct)) || [],
           lineStyle: { color: trendMetricColor, width: 3 },
@@ -174,22 +175,31 @@ function PremiumPage() {
           areaStyle: { color: trendMetricColor, opacity: 0.12 }
         },
         {
-          name: '20日均值',
+          name: '60日中位数',
           type: 'line',
-          smooth: true,
+          smooth: false,
           showSymbol: false,
-          data: trend.data?.map((item) => numberValue(item.premium_avg_20)) || [],
-          lineStyle: { color: AVG20_COLOR, width: 1.5, type: 'dashed' },
-          itemStyle: { color: AVG20_COLOR }
+          data: trend.data?.map((item) => numberValue(item.premium_median_60)) || [],
+          lineStyle: { color: MEDIAN60_COLOR, width: 1.8, type: 'dashed' },
+          itemStyle: { color: MEDIAN60_COLOR }
         },
         {
-          name: '60日均值',
+          name: '20%分位',
           type: 'line',
-          smooth: true,
+          smooth: false,
           showSymbol: false,
-          data: trend.data?.map((item) => numberValue(item.premium_avg_60)) || [],
-          lineStyle: { color: AVG60_COLOR, width: 1.5, type: 'dashed' },
-          itemStyle: { color: AVG60_COLOR }
+          data: trend.data?.map((item) => numberValue(item.premium_p20_60)) || [],
+          lineStyle: { color: P20_COLOR, width: 1.4, type: 'dotted' },
+          itemStyle: { color: P20_COLOR }
+        },
+        {
+          name: '80%分位',
+          type: 'line',
+          smooth: false,
+          showSymbol: false,
+          data: trend.data?.map((item) => numberValue(item.premium_p80_60)) || [],
+          lineStyle: { color: P80_COLOR, width: 1.4, type: 'dotted' },
+          itemStyle: { color: P80_COLOR }
         }
       ]
     }),

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date
-from decimal import Decimal
+from decimal import ROUND_CEILING, ROUND_FLOOR, Decimal
 
 from sqlalchemy import asc, desc, func, or_, select
 from sqlalchemy.orm import Session
@@ -57,6 +57,9 @@ class PremiumMetricBundle:
     premium_avg_20: Decimal | None
     premium_avg_60: Decimal | None
     premium_avg_120: Decimal | None
+    premium_median_60: Decimal | None
+    premium_p20_60: Decimal | None
+    premium_p80_60: Decimal | None
     premium_percentile_60: Decimal | None
     premium_deviation_from_60d_avg: Decimal | None
 
@@ -283,6 +286,9 @@ class PremiumQueryService:
                 premium_avg_20=item.premium_avg_20,
                 premium_avg_60=item.premium_avg_60,
                 premium_avg_120=item.premium_avg_120,
+                premium_median_60=item.premium_median_60,
+                premium_p20_60=item.premium_p20_60,
+                premium_p80_60=item.premium_p80_60,
                 premium_percentile_60=item.premium_percentile_60,
                 is_realtime=item.is_realtime,
             )
@@ -360,6 +366,9 @@ class PremiumQueryService:
             premium_avg_20=metric.premium_avg_20,
             premium_avg_60=metric.premium_avg_60,
             premium_avg_120=metric.premium_avg_120,
+            premium_median_60=metric.premium_median_60,
+            premium_p20_60=metric.premium_p20_60,
+            premium_p80_60=metric.premium_p80_60,
             premium_percentile_60=metric.premium_percentile_60,
             premium_deviation_from_60d_avg=metric.premium_deviation_from_60d_avg,
             watchlist_id=watchlist.id if watchlist else None,
@@ -498,6 +507,9 @@ class PremiumQueryService:
                 if value is not None
             ]
             percentile = self._percentile(current, percentile_window)
+            median_60 = self._quantile(percentile_window, Decimal("0.5"))
+            p20_60 = self._quantile(percentile_window, Decimal("0.2"))
+            p80_60 = self._quantile(percentile_window, Decimal("0.8"))
             deviation = (
                 quantize_decimal(current - avg_values[60])
                 if current is not None and avg_values[60] is not None
@@ -510,6 +522,9 @@ class PremiumQueryService:
                     premium_avg_20=avg_values[20],
                     premium_avg_60=avg_values[60],
                     premium_avg_120=avg_values[120],
+                    premium_median_60=median_60,
+                    premium_p20_60=p20_60,
+                    premium_p80_60=p80_60,
                     premium_percentile_60=percentile,
                     premium_deviation_from_60d_avg=deviation,
                 )
@@ -523,6 +538,9 @@ class PremiumQueryService:
             premium_avg_20=None,
             premium_avg_60=None,
             premium_avg_120=None,
+            premium_median_60=None,
+            premium_p20_60=None,
+            premium_p80_60=None,
             premium_percentile_60=None,
             premium_deviation_from_60d_avg=None,
         )
@@ -547,6 +565,21 @@ class PremiumQueryService:
         if not values:
             return None
         return quantize_decimal(sum(values) / Decimal(len(values)))
+
+    def _quantile(self, values: list[Decimal], ratio: Decimal) -> Decimal | None:
+        if not values:
+            return None
+        sorted_values = sorted(values)
+        position = Decimal(len(sorted_values) - 1) * ratio
+        lower_index = int(position.to_integral_value(rounding=ROUND_FLOOR))
+        upper_index = int(position.to_integral_value(rounding=ROUND_CEILING))
+        if lower_index == upper_index:
+            return quantize_decimal(sorted_values[lower_index])
+        weight = position - Decimal(lower_index)
+        return quantize_decimal(
+            sorted_values[lower_index]
+            + (sorted_values[upper_index] - sorted_values[lower_index]) * weight
+        )
 
     def _percentile(self, current: Decimal | None, values: list[Decimal]) -> Decimal | None:
         if current is None or not values:

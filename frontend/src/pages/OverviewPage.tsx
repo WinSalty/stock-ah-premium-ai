@@ -29,8 +29,9 @@ const MIN_VISIBLE_POINTS = 20;
 const TRACKPAD_WHEEL_UNIT = 80;
 const AH_COLOR = '#2563eb';
 const HA_COLOR = '#0f766e';
-const AVG20_COLOR = '#64748b';
-const AVG60_COLOR = '#f59e0b';
+const MEDIAN60_COLOR = '#334155';
+const P20_COLOR = '#14b8a6';
+const P80_COLOR = '#f97316';
 const TARGET_COLOR = '#dc2626';
 
 function splitPairKey(value: string) {
@@ -396,8 +397,8 @@ function OverviewPage() {
     () => ({
       color:
         targetValue === null
-          ? [premiumColor, AVG20_COLOR, AVG60_COLOR]
-          : [premiumColor, AVG20_COLOR, AVG60_COLOR, TARGET_COLOR],
+          ? [premiumColor, MEDIAN60_COLOR, P20_COLOR, P80_COLOR]
+          : [premiumColor, MEDIAN60_COLOR, P20_COLOR, P80_COLOR, TARGET_COLOR],
       tooltip: { trigger: 'axis', valueFormatter: (value: number) => `${value.toFixed(2)}%` },
       legend: { top: 0, right: 16 },
       grid: { left: 54, right: 24, top: 42, bottom: 78 },
@@ -433,7 +434,7 @@ function OverviewPage() {
         {
           name: `${directionLabel} 溢价`,
           type: 'line',
-          smooth: true,
+          smooth: false,
           showSymbol: false,
           data: trend.data?.map((item) => numberValue(item.metric_premium_pct)) || [],
           lineStyle: { width: 3, color: premiumColor },
@@ -442,22 +443,31 @@ function OverviewPage() {
           emphasis: { focus: 'series' }
         },
         {
-          name: '20日均值',
+          name: '60日中位数',
           type: 'line',
-          smooth: true,
+          smooth: false,
           showSymbol: false,
-          data: trend.data?.map((item) => numberValue(item.premium_avg_20)) || [],
-          lineStyle: { width: 1.5, color: AVG20_COLOR, type: 'dashed' },
-          itemStyle: { color: AVG20_COLOR }
+          data: trend.data?.map((item) => numberValue(item.premium_median_60)) || [],
+          lineStyle: { width: 1.8, color: MEDIAN60_COLOR, type: 'dashed' },
+          itemStyle: { color: MEDIAN60_COLOR }
         },
         {
-          name: '60日均值',
+          name: '20%分位',
           type: 'line',
-          smooth: true,
+          smooth: false,
           showSymbol: false,
-          data: trend.data?.map((item) => numberValue(item.premium_avg_60)) || [],
-          lineStyle: { width: 1.5, color: AVG60_COLOR, type: 'dashed' },
-          itemStyle: { color: AVG60_COLOR }
+          data: trend.data?.map((item) => numberValue(item.premium_p20_60)) || [],
+          lineStyle: { width: 1.4, color: P20_COLOR, type: 'dotted' },
+          itemStyle: { color: P20_COLOR }
+        },
+        {
+          name: '80%分位',
+          type: 'line',
+          smooth: false,
+          showSymbol: false,
+          data: trend.data?.map((item) => numberValue(item.premium_p80_60)) || [],
+          lineStyle: { width: 1.4, color: P80_COLOR, type: 'dotted' },
+          itemStyle: { color: P80_COLOR }
         },
         targetValue === null
           ? null

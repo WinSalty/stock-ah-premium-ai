@@ -89,6 +89,9 @@ def test_premium_query_filters_hk_connect_and_returns_metrics() -> None:
     assert item.is_watchlist is True
     assert item.metric_direction == "HA"
     assert item.premium_percentile_60 is not None
+    assert item.premium_median_60 == Decimal("-16.00000000")
+    assert item.premium_p20_60 == Decimal("-16.60000000")
+    assert item.premium_p80_60 == Decimal("-15.40000000")
     assert item.opportunity_status == "REACHED"
 
 

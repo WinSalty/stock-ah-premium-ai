@@ -65,6 +65,9 @@ export interface PremiumItem {
   premium_avg_20: string | null;
   premium_avg_60: string | null;
   premium_avg_120: string | null;
+  premium_median_60: string | null;
+  premium_p20_60: string | null;
+  premium_p80_60: string | null;
   premium_percentile_60: string | null;
   premium_deviation_from_60d_avg: string | null;
   watchlist_id: number | null;
@@ -118,6 +121,9 @@ export interface PremiumOfficialTrendPoint {
   premium_avg_20: string | null;
   premium_avg_60: string | null;
   premium_avg_120: string | null;
+  premium_median_60: string | null;
+  premium_p20_60: string | null;
+  premium_p80_60: string | null;
   premium_percentile_60: string | null;
   is_realtime?: boolean;
 }

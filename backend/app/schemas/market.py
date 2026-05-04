@@ -60,6 +60,9 @@ class PremiumQueryResponse(OrmModel):
     premium_avg_20: Decimal | None = None
     premium_avg_60: Decimal | None = None
     premium_avg_120: Decimal | None = None
+    premium_median_60: Decimal | None = None
+    premium_p20_60: Decimal | None = None
+    premium_p80_60: Decimal | None = None
     premium_percentile_60: Decimal | None = None
     premium_deviation_from_60d_avg: Decimal | None = None
     watchlist_id: int | None = None
@@ -137,5 +140,8 @@ class PremiumOfficialTrendPoint(BaseModel):
     premium_avg_20: Decimal | None = None
     premium_avg_60: Decimal | None = None
     premium_avg_120: Decimal | None = None
+    premium_median_60: Decimal | None = None
+    premium_p20_60: Decimal | None = None
+    premium_p80_60: Decimal | None = None
     premium_percentile_60: Decimal | None = None
     is_realtime: bool = False
