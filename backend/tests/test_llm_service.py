@@ -81,3 +81,22 @@ def test_investment_knowledge_selects_stock_factor_category() -> None:
 
     assert "A 股选股与估值因子" in selection.categories
     assert selection.chunks
+
+
+def test_default_sql_uses_watchlist_and_correct_ha_discount_direction() -> None:
+    """确认关注股票的 H/A 折价问题按 H 股折价方向排序。
+
+    创建日期：2026-05-04
+    author: sunshengxian
+    """
+
+    service = LlmService(
+        Mock(),
+        settings=Settings(llm_api_key="test-key", llm_api_key_file=None, llm_model="test-model"),
+    )
+
+    sql = service._default_sql_for_question("我关注的股票里，最近一个交易日哪些 H/A 折价最明显？")
+
+    assert sql is not None
+    assert "v_watchlist_opportunity" in sql
+    assert "ORDER BY ha_premium_pct ASC" in sql

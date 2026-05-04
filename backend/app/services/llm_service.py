@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from collections.abc import Iterator
 from dataclasses import dataclass
@@ -14,6 +15,8 @@ from sqlalchemy.orm import Session
 from app.core.config import Settings, get_settings
 from app.services.investment_knowledge_service import InvestmentKnowledgeService
 from app.services.sql_guard_service import SqlGuardError, SqlGuardService
+
+logger = logging.getLogger(__name__)
 
 INVESTMENT_ADVISOR_SYSTEM_PROMPT = """你是专业、审慎、表达克制的金融投资分析顾问，
 只回答投资研究相关问题。
@@ -215,21 +218,35 @@ class LlmService:
         sql: str | None = None
         rows: list[dict[str, Any]] = []
         if self._should_query_data(question, context):
-            sql = self._default_sql_for_question(question) or self._generate_sql(question, context)
-            for attempt in range(2):
-                try:
-                    guarded = self.sql_guard.validate(
-                        sql,
-                        default_limit=self.settings.query_limit_default,
-                        max_limit=self.settings.query_limit_max,
-                    )
-                    rows = self._execute_sql(guarded.sql)
-                    sql = guarded.sql
-                    break
-                except (SQLAlchemyError, SqlGuardError) as exc:
-                    if attempt == 1:
-                        raise
-                    sql = self._repair_sql(question, context, sql, str(exc))
+            try:
+                sql = self._default_sql_for_question(question) or self._generate_sql(
+                    question,
+                    context,
+                )
+                for attempt in range(2):
+                    try:
+                        guarded = self.sql_guard.validate(
+                            sql,
+                            default_limit=self.settings.query_limit_default,
+                            max_limit=self.settings.query_limit_max,
+                        )
+                        rows = self._execute_sql(guarded.sql)
+                        sql = guarded.sql
+                        break
+                    except (SQLAlchemyError, SqlGuardError) as exc:
+                        if attempt == 1:
+                            raise
+                        sql = self._repair_sql(question, context, sql, str(exc))
+            except (
+                SQLAlchemyError,
+                SqlGuardError,
+                ValueError,
+                json.JSONDecodeError,
+                httpx.HTTPError,
+            ):
+                logger.error("LLM 数据查询准备失败，降级为无精确数据回答", exc_info=True)
+                sql = None
+                rows = []
         return sql, rows, self._answer_prompt(question, rows, context)
 
     def _generate_sql(self, question: str, context: dict[str, Any]) -> str:
@@ -432,7 +449,11 @@ class LlmService:
         }
         supporting_data: dict[str, list[dict[str, Any]]] = {}
         for key, sql in queries.items():
-            supporting_data[key] = self._execute_sql(sql)
+            try:
+                supporting_data[key] = self._execute_sql(sql)
+            except SQLAlchemyError:
+                logger.error("LLM 补充数据查询失败 key=%s", key, exc_info=True)
+                supporting_data[key] = []
         return supporting_data
 
     def _is_ah_arbitrage_question(self, question: str) -> bool:
@@ -459,8 +480,26 @@ class LlmService:
         return any(keyword in normalized for keyword in keywords)
 
     def _default_sql_for_question(self, question: str) -> str | None:
-        normalized = question.lower()
-        if any(keyword in normalized for keyword in ("自选", "阈值", "机会状态")):
+        normalized = question.lower().replace(" ", "").replace("／", "/")
+        if any(keyword in normalized for keyword in ("自选", "关注", "阈值", "机会状态")):
+            if any(keyword in normalized for keyword in ("h/a折价", "h股折价", "h股便宜")):
+                return (
+                    "SELECT display_name,a_ts_code,hk_ts_code,trade_date,preferred_direction,"
+                    "target_premium_pct,ah_premium_pct,ha_premium_pct,metric_premium_pct,"
+                    "distance_to_target_pct,premium_percentile_60,is_hk_connect,connect_channels,"
+                    "opportunity_status "
+                    "FROM v_watchlist_opportunity "
+                    "ORDER BY ha_premium_pct ASC LIMIT 30"
+                )
+            if any(keyword in normalized for keyword in ("h/a溢价", "h股溢价", "a股折价")):
+                return (
+                    "SELECT display_name,a_ts_code,hk_ts_code,trade_date,preferred_direction,"
+                    "target_premium_pct,ah_premium_pct,ha_premium_pct,metric_premium_pct,"
+                    "distance_to_target_pct,premium_percentile_60,is_hk_connect,connect_channels,"
+                    "opportunity_status "
+                    "FROM v_watchlist_opportunity "
+                    "ORDER BY ha_premium_pct DESC LIMIT 30"
+                )
             return (
                 "SELECT display_name,a_ts_code,hk_ts_code,trade_date,preferred_direction,"
                 "target_premium_pct,ah_premium_pct,ha_premium_pct,metric_premium_pct,"
@@ -482,7 +521,14 @@ class LlmService:
         if any(keyword in normalized for keyword in ("哪些", "适合", "候选", "推荐", "筛选")):
             if any(
                 keyword in normalized
-                for keyword in ("a/h溢价", "ah溢价", "a股溢价", "h股便宜", "h股折价")
+                for keyword in (
+                    "a/h溢价",
+                    "ah溢价",
+                    "a股溢价",
+                    "h/a折价",
+                    "h股便宜",
+                    "h股折价",
+                )
             ):
                 return (
                     "SELECT trade_date,a_ts_code,hk_ts_code,a_name,hk_name,ah_premium_pct,"

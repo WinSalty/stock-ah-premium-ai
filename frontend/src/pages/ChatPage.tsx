@@ -183,6 +183,7 @@ function ChatPage() {
     }
     const turnId = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
     setIsSending(true);
+    form.setFieldValue('question', '');
     setTurns((items) => [
       ...items,
       {
@@ -236,7 +237,6 @@ function ChatPage() {
           }
         }
       );
-      form.resetFields(['question']);
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : '问答失败';
       updateTurn(turnId, { streaming: false });

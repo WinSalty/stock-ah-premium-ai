@@ -265,7 +265,7 @@ def create_message_stream(
         except Exception:
             db.rollback()
             logger.error("LLM 流式问答失败", exc_info=True)
-            answer_text = "问答失败：LLM 生成的查询无法执行或服务暂时不可用，请换一种问法再试。"
+            answer_text = "问答失败：智能分析服务暂时不可用，请稍后重试。"
             assistant_message = LlmChatMessage(
                 session_id=session_id,
                 role="assistant",
