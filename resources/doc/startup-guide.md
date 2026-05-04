@@ -108,6 +108,8 @@ pro._DataApi__http_url = "http://tsy.xiaodefa.cn"
 - 运行 Alembic 表结构迁移。
 - 创建 LLM 只读查询视图。
 
+完整建表 SQL 注释版维护在 `resources/sql/03_full_schema_with_comments.sql`。该文件用于文档审阅、新环境结构核对和字段含义确认；日常初始化仍以 `./scripts/init-db.sh` 执行的 Alembic 迁移为准。
+
 验证表和视图：
 
 ```bash

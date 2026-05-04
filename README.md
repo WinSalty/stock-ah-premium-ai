@@ -12,8 +12,11 @@
 - A/H 溢价套现评审与展示设计：[ah-premium-review-and-display-design.md](./resources/doc/ah-premium-review-and-display-design.md)
 - 开发进度记录：[development-progress.md](./resources/doc/development-progress.md)
 - 项目启动手册：[startup-guide.md](./resources/doc/startup-guide.md)
+- 数据库表结构说明：[database-schema.md](./resources/doc/database-schema.md)
 - 数据库初始化 SQL：[00_create_database.sql](./resources/sql/00_create_database.sql)
 - LLM 只读视图 SQL：[01_readonly_views.sql](./resources/sql/01_readonly_views.sql)
+- LLM 只读用户模板 SQL：[02_readonly_user_template.sql](./resources/sql/02_readonly_user_template.sql)
+- 完整建表 SQL 注释版：[03_full_schema_with_comments.sql](./resources/sql/03_full_schema_with_comments.sql)
 
 ## 项目目录
 
@@ -30,7 +33,7 @@
 
 - 本地 MySQL 连接信息按需读取 `/Users/salty/codeProject/ai/doc/mysqluse.md`，项目文档和代码中不写入密码、Token 或 LLM API Key。
 - Tushare 默认通过 Python SDK 调用，接口地址为 `http://tsy.xiaodefa.cn`；Tushare Token 优先使用本机未入库文件，LLM API Key、数据库账号密码通过环境变量或本机未入库配置注入。
-- 一阶段目标数据库名为 `stock_ah_ai`，建库 SQL 放在 `resources/sql/00_create_database.sql`，表结构由 Alembic 迁移创建。
+- 一阶段目标数据库名为 `stock_ah_ai`，建库 SQL 放在 `resources/sql/00_create_database.sql`，表结构由 Alembic 迁移创建；完整建表 SQL 注释版统一维护在 `resources/sql/03_full_schema_with_comments.sql`，用于文档、审阅和新环境核对。
 
 ## 本地启动
 
