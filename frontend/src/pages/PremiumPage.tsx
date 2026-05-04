@@ -23,6 +23,11 @@ import { createWatchlistItem, deleteWatchlistItem, updateWatchlistItem } from '.
 import type { HoldingMarket, PremiumDirection, PremiumItem } from '../types/domain';
 import type { PremiumQueryParams } from '../api/market';
 
+const AH_COLOR = '#2563eb';
+const HA_COLOR = '#0f766e';
+const AVG20_COLOR = '#64748b';
+const AVG60_COLOR = '#f59e0b';
+
 interface FilterValues {
   trade_date?: dayjs.Dayjs;
   keyword?: string;
@@ -148,8 +153,10 @@ function PremiumPage() {
     onError: (error) => message.error(error instanceof Error ? error.message : '取消自选失败')
   });
 
+  const trendMetricColor = selected?.metric_direction === 'AH' ? AH_COLOR : HA_COLOR;
   const trendOption = useMemo(
     () => ({
+      color: [trendMetricColor, AVG20_COLOR, AVG60_COLOR],
       tooltip: { trigger: 'axis' },
       legend: { top: 0, right: 16 },
       grid: { left: 48, right: 24, top: 42, bottom: 38 },
@@ -162,9 +169,9 @@ function PremiumPage() {
           smooth: true,
           symbolSize: 7,
           data: trend.data?.map((item) => numberValue(item.metric_premium_pct)) || [],
-          lineStyle: { color: '#2563eb', width: 3 },
-          itemStyle: { color: '#0f766e' },
-          areaStyle: { color: 'rgba(37, 99, 235, 0.12)' }
+          lineStyle: { color: trendMetricColor, width: 3 },
+          itemStyle: { color: trendMetricColor },
+          areaStyle: { color: trendMetricColor, opacity: 0.12 }
         },
         {
           name: '20日均值',
@@ -172,7 +179,8 @@ function PremiumPage() {
           smooth: true,
           showSymbol: false,
           data: trend.data?.map((item) => numberValue(item.premium_avg_20)) || [],
-          lineStyle: { color: '#64748b', width: 1.5, type: 'dashed' }
+          lineStyle: { color: AVG20_COLOR, width: 1.5, type: 'dashed' },
+          itemStyle: { color: AVG20_COLOR }
         },
         {
           name: '60日均值',
@@ -180,11 +188,12 @@ function PremiumPage() {
           smooth: true,
           showSymbol: false,
           data: trend.data?.map((item) => numberValue(item.premium_avg_60)) || [],
-          lineStyle: { color: '#f59e0b', width: 1.5, type: 'dashed' }
+          lineStyle: { color: AVG60_COLOR, width: 1.5, type: 'dashed' },
+          itemStyle: { color: AVG60_COLOR }
         }
       ]
     }),
-    [selected?.metric_direction, trend.data]
+    [selected?.metric_direction, trend.data, trendMetricColor]
   );
 
   const onSearch = (values: FilterValues) => {

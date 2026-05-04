@@ -27,6 +27,11 @@ const DEFAULT_PAIR_KEY = '600036.SH|03968.HK';
 const DEFAULT_VISIBLE_MONTHS = 3;
 const MIN_VISIBLE_POINTS = 20;
 const TRACKPAD_WHEEL_UNIT = 80;
+const AH_COLOR = '#2563eb';
+const HA_COLOR = '#0f766e';
+const AVG20_COLOR = '#64748b';
+const AVG60_COLOR = '#f59e0b';
+const TARGET_COLOR = '#dc2626';
 
 function splitPairKey(value: string) {
   const [aTsCode, hkTsCode] = value.split('|');
@@ -35,10 +40,18 @@ function splitPairKey(value: string) {
 
 function formatPairLabel(item: PremiumPairOption) {
   const rawAName = item.a_name?.trim();
-  const aName = rawAName || item.a_ts_code;
+  const exRightMatch = rawAName?.match(/^(XD|XR|DR)(.+)$/);
+  const exRightLabelMap: Record<string, string> = {
+    XD: '除息',
+    XR: '除权',
+    DR: '除权除息'
+  };
+  const cleanAName = exRightMatch?.[2]?.trim() || rawAName;
+  const aName = cleanAName || item.a_ts_code;
   const hkName = item.hk_name?.trim() || item.hk_ts_code;
   const codeLabel = `${item.a_ts_code} / ${item.hk_ts_code}`;
-  const aDisplayName = rawAName?.startsWith('XD') ? `${aName}（除息）` : aName;
+  const exRightLabel = exRightMatch ? exRightLabelMap[exRightMatch[1]] : null;
+  const aDisplayName = exRightLabel ? `${aName}（${exRightLabel}）` : aName;
 
   if (aName === hkName) {
     return `${aDisplayName} (${codeLabel})`;
@@ -216,6 +229,7 @@ function OverviewPage() {
   const selectedPair = pairs.data?.find((item) => `${item.a_ts_code}|${item.hk_ts_code}` === pairKey);
   const trendTitleName = chartWatchlist ? opportunityName(chartWatchlist) : selectedPair?.a_name || pair.aTsCode;
   const directionLabel = direction === 'HA' ? 'H/A' : 'A/H';
+  const premiumColor = direction === 'HA' ? HA_COLOR : AH_COLOR;
   const trendDates = useMemo(() => trend.data?.map((item) => item.trade_date) || [], [trend.data]);
   const defaultZoomStartValue = getDefaultZoomStartValue(trendDates);
   const defaultZoomEndValue = trendDates[trendDates.length - 1];
@@ -349,6 +363,10 @@ function OverviewPage() {
 
   const trendChartOption = useMemo(
     () => ({
+      color:
+        targetValue === null
+          ? [premiumColor, AVG20_COLOR, AVG60_COLOR]
+          : [premiumColor, AVG20_COLOR, AVG60_COLOR, TARGET_COLOR],
       tooltip: { trigger: 'axis', valueFormatter: (value: number) => `${value.toFixed(2)}%` },
       legend: { top: 0, right: 16 },
       grid: { left: 54, right: 24, top: 42, bottom: 78 },
@@ -387,9 +405,9 @@ function OverviewPage() {
           smooth: true,
           showSymbol: false,
           data: trend.data?.map((item) => numberValue(item.metric_premium_pct)) || [],
-          lineStyle: { width: 3, color: direction === 'HA' ? '#0f766e' : '#2563eb' },
-          itemStyle: { color: direction === 'HA' ? '#0f766e' : '#2563eb' },
-          areaStyle: { opacity: 0.08 },
+          lineStyle: { width: 3, color: premiumColor },
+          itemStyle: { color: premiumColor },
+          areaStyle: { color: premiumColor, opacity: 0.08 },
           emphasis: { focus: 'series' }
         },
         {
@@ -398,7 +416,8 @@ function OverviewPage() {
           smooth: true,
           showSymbol: false,
           data: trend.data?.map((item) => numberValue(item.premium_avg_20)) || [],
-          lineStyle: { width: 1.5, color: '#64748b', type: 'dashed' }
+          lineStyle: { width: 1.5, color: AVG20_COLOR, type: 'dashed' },
+          itemStyle: { color: AVG20_COLOR }
         },
         {
           name: '60日均值',
@@ -406,7 +425,8 @@ function OverviewPage() {
           smooth: true,
           showSymbol: false,
           data: trend.data?.map((item) => numberValue(item.premium_avg_60)) || [],
-          lineStyle: { width: 1.5, color: '#f59e0b', type: 'dashed' }
+          lineStyle: { width: 1.5, color: AVG60_COLOR, type: 'dashed' },
+          itemStyle: { color: AVG60_COLOR }
         },
         targetValue === null
           ? null
@@ -415,7 +435,8 @@ function OverviewPage() {
               type: 'line',
               showSymbol: false,
               data: trendDates.map(() => targetValue),
-              lineStyle: { width: 2, color: '#dc2626', type: 'dotted' }
+              lineStyle: { width: 2, color: TARGET_COLOR, type: 'dotted' },
+              itemStyle: { color: TARGET_COLOR }
             }
       ].filter(Boolean)
     }),
@@ -425,6 +446,7 @@ function OverviewPage() {
       direction,
       directionLabel,
       minZoomValueSpan,
+      premiumColor,
       targetValue,
       trend.data,
       trendDates
