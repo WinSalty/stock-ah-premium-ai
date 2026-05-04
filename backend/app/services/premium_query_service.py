@@ -87,6 +87,7 @@ class PremiumQueryService:
         filters: PremiumQueryFilters,
         page: int,
         page_size: int,
+        user_id: int | None = None,
     ) -> PremiumListResponse:
         """分页查询官方 AH 溢价。
 
@@ -95,7 +96,7 @@ class PremiumQueryService:
         """
 
         rows = self._query_rows(filters)
-        watchlist_map = self._watchlist_map()
+        watchlist_map = self._watchlist_map(user_id)
         if filters.only_watchlist:
             rows = [
                 item
@@ -120,7 +121,7 @@ class PremiumQueryService:
         ]
         return PremiumListResponse(total=total, items=items)
 
-    def summary(self) -> PremiumSummaryResponse:
+    def summary(self, user_id: int | None = None) -> PremiumSummaryResponse:
         """获取最新交易日官方 AH 溢价总览。
 
         创建日期：2026-05-04
@@ -148,7 +149,7 @@ class PremiumQueryService:
                 OfficialAHComparison.is_realtime.is_(True),
             )
         ) or 0
-        watchlist_map = self._watchlist_map()
+        watchlist_map = self._watchlist_map(user_id)
         top = sorted(
             hk_connect_rows,
             key=lambda item: item.ah_premium or Decimal("-999999"),
@@ -238,6 +239,7 @@ class PremiumQueryService:
         start_date: date | None = None,
         end_date: date | None = None,
         direction: str = DEFAULT_METRIC_DIRECTION,
+        user_id: int | None = None,
     ) -> list[PremiumQueryResponse]:
         """查询单个 AH 配对官方溢价趋势。
 
@@ -255,7 +257,7 @@ class PremiumQueryService:
         if end_date:
             statement = statement.where(OfficialAHComparison.trade_date <= end_date)
         rows = list(self.db.scalars(statement.order_by(OfficialAHComparison.trade_date)).all())
-        watchlist = self._watchlist_map().get((a_ts_code, hk_ts_code))
+        watchlist = self._watchlist_map(user_id).get((a_ts_code, hk_ts_code))
         metrics = self._rolling_metrics(rows, direction)
         return [
             self.to_response(item, direction, watchlist, metric_override=metrics[index])
@@ -459,12 +461,13 @@ class PremiumQueryService:
         self._connect_cache[cache_key] = value
         return value
 
-    def _watchlist_map(self) -> dict[tuple[str, str], WatchlistStock]:
+    def _watchlist_map(self, user_id: int | None = None) -> dict[tuple[str, str], WatchlistStock]:
+        statement = select(WatchlistStock).where(WatchlistStock.is_active.is_(True))
+        if user_id is not None:
+            statement = statement.where(WatchlistStock.user_id == user_id)
         rows = list(
             self.db.scalars(
-                select(WatchlistStock)
-                .where(WatchlistStock.is_active.is_(True))
-                .order_by(WatchlistStock.sort_order, WatchlistStock.id)
+                statement.order_by(WatchlistStock.sort_order, WatchlistStock.id)
             ).all()
         )
         return {(item.a_ts_code, item.hk_ts_code): item for item in rows}

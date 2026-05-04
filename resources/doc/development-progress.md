@@ -53,6 +53,11 @@
 - 自选股能力：
   - 新增 `GET/POST/PATCH/DELETE /api/watchlist`，支持查询自选股机会状态、新增、更新和停用。
   - 自选机会状态按官方 AH/H/A 口径、港股通通道、用户阈值和数据可用性生成。
+- 登录注册与权限：
+  - 新增应用用户表、邀请码表和 `20260504_0009` 迁移；预置 `ADMIN/USER` 两种角色。
+  - 登录使用用户名和密码，注册必须填写管理员生成的邀请码，新注册用户固定为普通角色。
+  - 前端新增登录/注册页和管理员邀请码页；菜单按当前用户权限过滤，普通用户仅展示总览、AH 机会筛选和问答。
+  - 自选股和 LLM 会话按 `user_id` 隔离；LLM 自选机会视图新增 `user_id` 字段，生成自选相关 SQL 时按当前用户过滤。
 - LLM 问答：
   - DeepSeek OpenAI-compatible Chat API 封装，默认 `https://api.deepseek.com` 和 `deepseek-v4-pro[1m]`。
   - API Key 优先读取 `/Users/salty/codeProject/ai/doc/deepseek-apikey.txt`，`LLM_API_KEY` 仅作兜底，不把密钥暴露给前端。

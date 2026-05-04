@@ -18,6 +18,7 @@ class LlmChatSession(TimestampMixin, Base):
     __tablename__ = "llm_chat_session"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     messages: Mapped[list[LlmChatMessage]] = relationship(

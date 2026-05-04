@@ -183,8 +183,37 @@ CREATE TABLE IF NOT EXISTS `official_ah_comparison` (
   KEY `idx_official_ah_trade_date` (`trade_date`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Tushare 官方 AH 比价快照表，当前主展示口径';
 
+CREATE TABLE IF NOT EXISTS `app_user` (
+  `id` INT NOT NULL AUTO_INCREMENT COMMENT '自增主键',
+  `username` VARCHAR(64) NOT NULL COMMENT '登录用户名',
+  `password_hash` VARCHAR(255) NOT NULL COMMENT 'PBKDF2 密码哈希',
+  `role` VARCHAR(32) NOT NULL DEFAULT 'USER' COMMENT '用户角色，ADMIN 或 USER',
+  `is_active` TINYINT(1) NOT NULL DEFAULT 1 COMMENT '是否启用',
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '记录创建时间',
+  `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '记录更新时间',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_app_user_username` (`username`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='应用用户表';
+
+CREATE TABLE IF NOT EXISTS `invitation_code` (
+  `id` INT NOT NULL AUTO_INCREMENT COMMENT '自增主键',
+  `code` VARCHAR(64) NOT NULL COMMENT '邀请码',
+  `created_by_user_id` INT DEFAULT NULL COMMENT '创建管理员用户 ID',
+  `used_by_user_id` INT DEFAULT NULL COMMENT '使用该邀请码注册的用户 ID',
+  `used_at` DATETIME DEFAULT NULL COMMENT '使用时间',
+  `note` TEXT DEFAULT NULL COMMENT '备注',
+  `is_active` TINYINT(1) NOT NULL DEFAULT 1 COMMENT '是否启用',
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '记录创建时间',
+  `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '记录更新时间',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_invitation_code` (`code`),
+  KEY `idx_invitation_created_by` (`created_by_user_id`),
+  KEY `idx_invitation_used_by` (`used_by_user_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='注册邀请码表';
+
 CREATE TABLE IF NOT EXISTS `watchlist_stock` (
   `id` INT NOT NULL AUTO_INCREMENT COMMENT '自增主键',
+  `user_id` INT NOT NULL DEFAULT 1 COMMENT '所属用户 ID',
   `a_ts_code` VARCHAR(16) NOT NULL COMMENT 'A 股 Tushare 代码',
   `hk_ts_code` VARCHAR(16) NOT NULL COMMENT 'H 股 Tushare 代码',
   `display_name` VARCHAR(128) DEFAULT NULL COMMENT '用户自定义展示名',
@@ -197,7 +226,7 @@ CREATE TABLE IF NOT EXISTS `watchlist_stock` (
   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '记录创建时间',
   `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '记录更新时间',
   PRIMARY KEY (`id`),
-  UNIQUE KEY `uk_watchlist_stock_pair` (`a_ts_code`, `hk_ts_code`),
+  UNIQUE KEY `uk_watchlist_user_pair` (`user_id`, `a_ts_code`, `hk_ts_code`),
   KEY `idx_watchlist_active_order` (`is_active`, `sort_order`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='用户自选 AH 股票表';
 
@@ -292,12 +321,14 @@ CREATE TABLE IF NOT EXISTS `data_quality_issue` (
 
 CREATE TABLE IF NOT EXISTS `llm_chat_session` (
   `id` INT NOT NULL AUTO_INCREMENT COMMENT '自增主键',
+  `user_id` INT NOT NULL DEFAULT 1 COMMENT '所属用户 ID',
   `title` VARCHAR(255) NOT NULL COMMENT '会话标题',
   `deleted_at` DATETIME DEFAULT NULL COMMENT '逻辑删除时间，非空表示会话已删除',
   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '记录创建时间',
   `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '记录更新时间',
   PRIMARY KEY (`id`),
-  KEY `idx_llm_chat_session_deleted_at` (`deleted_at`)
+  KEY `idx_llm_chat_session_deleted_at` (`deleted_at`),
+  KEY `idx_llm_chat_session_user` (`user_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='LLM 问答会话表';
 
 CREATE TABLE IF NOT EXISTS `llm_chat_message` (

@@ -238,7 +238,7 @@ class LlmService:
         rows: list[dict[str, Any]] = []
         if self._should_query_data(question, context):
             try:
-                sql = self._default_sql_for_question(question) or self._generate_sql(
+                sql = self._default_sql_for_question(question, context) or self._generate_sql(
                     question,
                     context,
                 )
@@ -308,7 +308,7 @@ class LlmService:
             "conversation_history": history[-8:],
             "filters": filters,
             "market_observations": rows[:200],
-            "supplemental_market_observations": self._supporting_data(question),
+            "supplemental_market_observations": self._supporting_data(question, context),
             "knowledge_categories": knowledge.categories,
             "reference_materials": knowledge.chunks,
         }
@@ -402,6 +402,8 @@ class LlmService:
             f"{json.dumps(self._schema(), ensure_ascii=False)}。"
             "默认使用官方 AH 比价口径；H/A 字段由官方 A/H 反推；"
             "涉及可操作性时优先查询含 hk_connect 或 watchlist 的视图。"
+            "涉及自选、关注、阈值、机会状态或 v_watchlist_opportunity 时，"
+            "必须使用 context.user_id 过滤 user_id，禁止查询其他用户自选数据。"
             "涉及 A 股选股、低估值、红利、蓝筹、ROE、PE、PB、股息率时"
             "优先查询 v_stock_selection_latest，"
             "并可用 v_stock_factor_dictionary 解释字段含义。"
@@ -433,11 +435,17 @@ class LlmService:
             raise ValueError("LLM 未返回修复后的 SQL")
         return repaired_sql
 
-    def _supporting_data(self, question: str) -> dict[str, list[dict[str, Any]]] | None:
+    def _supporting_data(
+        self,
+        question: str,
+        context: dict[str, Any] | None = None,
+    ) -> dict[str, list[dict[str, Any]]] | None:
         if not self._is_ah_arbitrage_question(question) or not self._should_query_supporting_data(
             question
         ):
             return None
+        user_id = int((context or {}).get("user_id") or 0)
+        user_filter = f"WHERE user_id = {user_id} " if user_id else ""
         queries = {
             "a_discount_h_premium_candidates": (
                 "SELECT trade_date,a_ts_code,hk_ts_code,a_name,hk_name,ah_premium_pct,"
@@ -456,6 +464,7 @@ class LlmService:
                 "target_premium_pct,ah_premium_pct,ha_premium_pct,metric_premium_pct,"
                 "distance_to_target_pct,premium_percentile_60,opportunity_status "
                 "FROM v_watchlist_opportunity "
+                f"{user_filter}"
                 "ORDER BY ABS(distance_to_target_pct) ASC LIMIT 30"
             ),
             "market_distribution": (
@@ -501,8 +510,14 @@ class LlmService:
         )
         return any(keyword in normalized for keyword in keywords)
 
-    def _default_sql_for_question(self, question: str) -> str | None:
+    def _default_sql_for_question(
+        self,
+        question: str,
+        context: dict[str, Any] | None = None,
+    ) -> str | None:
         normalized = question.lower().replace(" ", "").replace("／", "/")
+        user_id = int((context or {}).get("user_id") or 0)
+        user_filter = f"WHERE user_id = {user_id} " if user_id else ""
         if any(keyword in normalized for keyword in ("自选", "关注", "阈值", "机会状态")):
             if any(keyword in normalized for keyword in ("h/a折价", "h股折价", "h股便宜")):
                 return (
@@ -511,6 +526,7 @@ class LlmService:
                     "distance_to_target_pct,premium_percentile_60,is_hk_connect,connect_channels,"
                     "opportunity_status "
                     "FROM v_watchlist_opportunity "
+                    f"{user_filter}"
                     "ORDER BY ha_premium_pct ASC LIMIT 30"
                 )
             if any(keyword in normalized for keyword in ("h/a溢价", "h股溢价", "a股折价")):
@@ -520,6 +536,7 @@ class LlmService:
                     "distance_to_target_pct,premium_percentile_60,is_hk_connect,connect_channels,"
                     "opportunity_status "
                     "FROM v_watchlist_opportunity "
+                    f"{user_filter}"
                     "ORDER BY ha_premium_pct DESC LIMIT 30"
                 )
             return (
@@ -528,6 +545,7 @@ class LlmService:
                 "distance_to_target_pct,premium_percentile_60,is_hk_connect,connect_channels,"
                 "opportunity_status "
                 "FROM v_watchlist_opportunity "
+                f"{user_filter}"
                 "ORDER BY ABS(distance_to_target_pct) ASC LIMIT 30"
             )
         if not self._is_ah_arbitrage_question(question):
@@ -661,7 +679,8 @@ class LlmService:
                 "is_hk_connect,connect_channels,is_realtime,data_source,source_updated_at,updated_at"
             ),
             "v_watchlist_opportunity": (
-                "columns: watchlist_id,a_ts_code,hk_ts_code,display_name,preferred_direction,"
+                "columns: watchlist_id,user_id,a_ts_code,hk_ts_code,display_name,"
+                "preferred_direction,"
                 "target_premium_pct,holding_market,sort_order,note,trade_date,a_name,hk_name,"
                 "ah_ratio,ah_premium_pct,ha_ratio,ha_premium_pct,metric_premium_pct,"
                 "distance_to_target_pct,premium_percentile_60,is_hk_connect,connect_channels,"

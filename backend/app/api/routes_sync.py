@@ -7,12 +7,13 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import desc, select
 from sqlalchemy.orm import Session
 
+from app.api.deps_auth import require_permission
 from app.db.models.sync import SyncRun
 from app.db.session import get_db
 from app.schemas.sync import DatasetInfo, SyncBatchCreate, SyncRunCreate, SyncRunResponse
 from app.services.sync_service import SyncService
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_permission("sync"))])
 DbSession = Annotated[Session, Depends(get_db)]
 
 

@@ -7,6 +7,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
+from app.api.deps_auth import CurrentUser
 from app.db.session import get_db
 from app.schemas.imports import (
     CsvImportRequest,
@@ -35,6 +36,7 @@ DbSession = Annotated[Session, Depends(get_db)]
 def calculate_premiums(
     payload: PremiumCalculateRequest,
     db: DbSession,
+    current_user: CurrentUser,
 ) -> PremiumCalculateResponse:
     """计算指定日期或日期区间的 AH 溢价。
 
@@ -50,6 +52,7 @@ def calculate_premiums(
 @router.get("/ah-premiums", response_model=PremiumListResponse)
 def list_premiums(
     db: DbSession,
+    current_user: CurrentUser,
     trade_date: date | None = None,
     keyword: str | None = None,
     channel: str | None = None,
@@ -81,23 +84,24 @@ def list_premiums(
         only_hk_connect=only_hk_connect,
         only_watchlist=only_watchlist,
     )
-    return PremiumQueryService(db).list_premiums(filters, page, page_size)
+    return PremiumQueryService(db).list_premiums(filters, page, page_size, current_user.id)
 
 
 @router.get("/ah-premiums/summary", response_model=PremiumSummaryResponse)
-def premium_summary(db: DbSession) -> PremiumSummaryResponse:
+def premium_summary(db: DbSession, current_user: CurrentUser) -> PremiumSummaryResponse:
     """获取最新交易日 AH 溢价总览。
 
     创建日期：2026-05-04
     author: sunshengxian
     """
 
-    return PremiumQueryService(db).summary()
+    return PremiumQueryService(db).summary(current_user.id)
 
 
 @router.get("/ah-premiums/pairs", response_model=list[PremiumPairOption])
 def list_premium_pairs(
     db: DbSession,
+    current_user: CurrentUser,
     keyword: str | None = None,
     limit: int = Query(default=80, ge=1, le=300),
 ) -> list[PremiumPairOption]:
@@ -115,6 +119,7 @@ def official_premium_trend(
     a_ts_code: str,
     hk_ts_code: str,
     db: DbSession,
+    current_user: CurrentUser,
     start_date: date | None = None,
     end_date: date | None = None,
     direction: str = Query(default="HA", pattern="^(AH|HA|ah|ha)$"),
@@ -142,6 +147,7 @@ def premium_trend(
     a_ts_code: str,
     hk_ts_code: str,
     db: DbSession,
+    current_user: CurrentUser,
     start_date: date | None = None,
     end_date: date | None = None,
     direction: str = Query(default="HA", pattern="^(AH|HA|ah|ha)$"),
@@ -152,13 +158,21 @@ def premium_trend(
     author: sunshengxian
     """
 
-    return PremiumQueryService(db).trend(a_ts_code, hk_ts_code, start_date, end_date, direction)
+    return PremiumQueryService(db).trend(
+        a_ts_code,
+        hk_ts_code,
+        start_date,
+        end_date,
+        direction,
+        current_user.id,
+    )
 
 
 @router.post("/manual-import/ah-pairs", response_model=ImportResponse)
 def import_manual_ah_pairs(
     payload: ManualAHPairImportRequest,
     db: DbSession,
+    current_user: CurrentUser,
 ) -> ImportResponse:
     """导入人工 AH 配对。
 
@@ -174,6 +188,7 @@ def import_manual_ah_pairs(
 def import_manual_fx_rates(
     payload: ManualFxRateImportRequest,
     db: DbSession,
+    current_user: CurrentUser,
 ) -> ImportResponse:
     """导入人工汇率。
 
@@ -189,6 +204,7 @@ def import_manual_fx_rates(
 def import_manual_ah_pairs_csv(
     payload: CsvImportRequest,
     db: DbSession,
+    current_user: CurrentUser,
 ) -> ImportResponse:
     """导入 CSV 格式人工 AH 配对。
 
@@ -204,6 +220,7 @@ def import_manual_ah_pairs_csv(
 def import_manual_fx_rates_csv(
     payload: CsvImportRequest,
     db: DbSession,
+    current_user: CurrentUser,
 ) -> ImportResponse:
     """导入 CSV 格式人工汇率。
 

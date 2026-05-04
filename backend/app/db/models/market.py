@@ -235,11 +235,12 @@ class WatchlistStock(TimestampMixin, Base):
 
     __tablename__ = "watchlist_stock"
     __table_args__ = (
-        UniqueConstraint("a_ts_code", "hk_ts_code", name="uk_watchlist_stock_pair"),
+        UniqueConstraint("user_id", "a_ts_code", "hk_ts_code", name="uk_watchlist_user_pair"),
         Index("idx_watchlist_active_order", "is_active", "sort_order"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     a_ts_code: Mapped[str] = mapped_column(String(16), nullable=False)
     hk_ts_code: Mapped[str] = mapped_column(String(16), nullable=False)
     display_name: Mapped[str | None] = mapped_column(String(128))
@@ -340,4 +341,3 @@ class OfficialAHComparison(TimestampMixin, Base):
     is_realtime: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     data_source: Mapped[str] = mapped_column(String(32), nullable=False, default="TUSHARE_OFFICIAL")
     source_updated_at: Mapped[datetime | None] = mapped_column(DateTime)
-

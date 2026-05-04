@@ -14,9 +14,24 @@ from app.api.routes_chat import (
     list_sessions,
 )
 from app.db.base import Base
+from app.db.models.auth import AppUser
 from app.db.models.chat import LlmChatMessage
 from app.schemas.chat import ChatMessageCreate, ChatSessionCreate
 from app.services.llm_service import ChatAnswer
+
+
+def add_user(db: Session, username: str = "tester") -> AppUser:
+    """写入测试用户。
+
+    创建日期：2026-05-04
+    author: sunshengxian
+    """
+
+    user = AppUser(username=username, password_hash="hash", role="ADMIN", is_active=True)
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    return user
 
 
 def test_chat_session_delete_is_logical_and_filtered_from_list() -> None:
@@ -29,15 +44,16 @@ def test_chat_session_delete_is_logical_and_filtered_from_list() -> None:
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(engine)
     with Session(engine) as db:
-        session = create_session(ChatSessionCreate(title="待删除会话"), db)
-        assert len(list_sessions(db)) == 1
+        user = add_user(db)
+        session = create_session(ChatSessionCreate(title="待删除会话"), db, user)
+        assert len(list_sessions(db, user)) == 1
 
-        delete_session(session.id, db)
+        delete_session(session.id, db, user)
 
-        assert len(list_sessions(db)) == 0
+        assert len(list_sessions(db, user)) == 0
         assert db.get(type(session), session.id).deleted_at is not None
         with pytest.raises(HTTPException):
-            get_session(session.id, db)
+            get_session(session.id, db, user)
 
 
 def test_chat_message_stores_display_question_without_internal_prompt(monkeypatch) -> None:
@@ -60,7 +76,8 @@ def test_chat_message_stores_display_question_without_internal_prompt(monkeypatc
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(engine)
     with Session(engine) as db:
-        session = create_session(ChatSessionCreate(title="新的数据问答"), db)
+        user = add_user(db)
+        session = create_session(ChatSessionCreate(title="新的数据问答"), db, user)
 
         create_message(
             session.id,
@@ -71,6 +88,7 @@ def test_chat_message_stores_display_question_without_internal_prompt(monkeypatc
                 ts_code="600036.SH",
             ),
             db,
+            user,
         )
 
         user_message = db.scalar(

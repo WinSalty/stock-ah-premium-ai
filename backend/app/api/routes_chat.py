@@ -12,6 +12,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import desc, select
 from sqlalchemy.orm import Session
 
+from app.api.deps_auth import CurrentUser
 from app.db.models.chat import LlmChatMessage, LlmChatSession
 from app.db.session import get_db
 from app.schemas.chat import (
@@ -50,7 +51,7 @@ def _now_east8() -> datetime:
     return datetime.now(CHAT_TIMEZONE).replace(tzinfo=None)
 
 
-def _active_session_or_404(db: Session, session_id: int) -> LlmChatSession:
+def _active_session_or_404(db: Session, session_id: int, user_id: int) -> LlmChatSession:
     """读取未删除会话。
 
     创建日期：2026-05-04
@@ -58,7 +59,7 @@ def _active_session_or_404(db: Session, session_id: int) -> LlmChatSession:
     """
 
     session = db.get(LlmChatSession, session_id)
-    if session is None or session.deleted_at is not None:
+    if session is None or session.deleted_at is not None or session.user_id != user_id:
         raise HTTPException(status_code=404, detail="会话不存在")
     return session
 
@@ -119,7 +120,12 @@ def _message_response(message: LlmChatMessage) -> ChatStoredMessageResponse:
     )
 
 
-def _recent_history(db: Session, session_id: int, limit: int = 10) -> list[dict[str, str]]:
+def _recent_history(
+    db: Session,
+    session_id: int,
+    user_id: int,
+    limit: int = 10,
+) -> list[dict[str, str]]:
     """读取最近对话，供 LLM 生成上下文记忆。
 
     创建日期：2026-05-04
@@ -128,7 +134,9 @@ def _recent_history(db: Session, session_id: int, limit: int = 10) -> list[dict[
 
     statement = (
         select(LlmChatMessage)
+        .join(LlmChatSession, LlmChatSession.id == LlmChatMessage.session_id)
         .where(LlmChatMessage.session_id == session_id)
+        .where(LlmChatSession.user_id == user_id)
         .order_by(desc(LlmChatMessage.id))
         .limit(limit)
     )
@@ -153,7 +161,11 @@ def _touch_session(session: LlmChatSession, question: str, has_history: bool) ->
 
 
 @router.post("/chat/sessions", response_model=ChatSessionResponse)
-def create_session(payload: ChatSessionCreate, db: DbSession) -> LlmChatSession:
+def create_session(
+    payload: ChatSessionCreate,
+    db: DbSession,
+    current_user: CurrentUser,
+) -> LlmChatSession:
     """创建 LLM 问答会话。
 
     创建日期：2026-05-04
@@ -161,7 +173,12 @@ def create_session(payload: ChatSessionCreate, db: DbSession) -> LlmChatSession:
     """
 
     now = _now_east8()
-    session = LlmChatSession(title=payload.title, created_at=now, updated_at=now)
+    session = LlmChatSession(
+        user_id=current_user.id,
+        title=payload.title,
+        created_at=now,
+        updated_at=now,
+    )
     db.add(session)
     db.commit()
     db.refresh(session)
@@ -171,6 +188,7 @@ def create_session(payload: ChatSessionCreate, db: DbSession) -> LlmChatSession:
 @router.get("/chat/sessions", response_model=list[ChatSessionResponse])
 def list_sessions(
     db: DbSession,
+    current_user: CurrentUser,
     limit: Annotated[int, Query(ge=1, le=100)] = 30,
 ) -> list[LlmChatSession]:
     """获取 LLM 问答会话列表。
@@ -181,7 +199,7 @@ def list_sessions(
 
     statement = (
         select(LlmChatSession)
-        .where(LlmChatSession.deleted_at.is_(None))
+        .where(LlmChatSession.user_id == current_user.id, LlmChatSession.deleted_at.is_(None))
         .order_by(desc(LlmChatSession.updated_at))
         .limit(limit)
     )
@@ -189,14 +207,18 @@ def list_sessions(
 
 
 @router.get("/chat/sessions/{session_id}", response_model=ChatSessionDetailResponse)
-def get_session(session_id: int, db: DbSession) -> ChatSessionDetailResponse:
+def get_session(
+    session_id: int,
+    db: DbSession,
+    current_user: CurrentUser,
+) -> ChatSessionDetailResponse:
     """获取 LLM 问答会话。
 
     创建日期：2026-05-04
     author: sunshengxian
     """
 
-    session = _active_session_or_404(db, session_id)
+    session = _active_session_or_404(db, session_id, current_user.id)
     return ChatSessionDetailResponse(
         id=session.id,
         title=session.title,
@@ -208,26 +230,34 @@ def get_session(session_id: int, db: DbSession) -> ChatSessionDetailResponse:
 
 
 @router.get("/chat/sessions/{session_id}/messages", response_model=list[ChatStoredMessageResponse])
-def list_messages(session_id: int, db: DbSession) -> list[ChatStoredMessageResponse]:
+def list_messages(
+    session_id: int,
+    db: DbSession,
+    current_user: CurrentUser,
+) -> list[ChatStoredMessageResponse]:
     """获取 LLM 问答消息历史。
 
     创建日期：2026-05-04
     author: sunshengxian
     """
 
-    session = _active_session_or_404(db, session_id)
+    session = _active_session_or_404(db, session_id, current_user.id)
     return [_message_response(message) for message in session.messages]
 
 
 @router.delete("/chat/sessions/{session_id}", status_code=204)
-def delete_session(session_id: int, db: DbSession) -> Response:
+def delete_session(
+    session_id: int,
+    db: DbSession,
+    current_user: CurrentUser,
+) -> Response:
     """逻辑删除 LLM 问答会话。
 
     创建日期：2026-05-04
     author: sunshengxian
     """
 
-    session = _active_session_or_404(db, session_id)
+    session = _active_session_or_404(db, session_id, current_user.id)
     now = _now_east8()
     session.deleted_at = now
     session.updated_at = now
@@ -240,6 +270,7 @@ def create_message(
     session_id: int,
     payload: ChatMessageCreate,
     db: DbSession,
+    current_user: CurrentUser,
 ) -> ChatMessageResponse:
     """提交问题并返回 LLM 回答。
 
@@ -247,8 +278,8 @@ def create_message(
     author: sunshengxian
     """
 
-    session = _active_session_or_404(db, session_id)
-    history = _recent_history(db, session_id)
+    session = _active_session_or_404(db, session_id, current_user.id)
+    history = _recent_history(db, session_id, current_user.id)
     now = _now_east8()
     visible_question = _visible_question(payload)
     user_message = LlmChatMessage(
@@ -260,6 +291,7 @@ def create_message(
     )
     db.add(user_message)
     context = payload.model_dump(exclude={"question", "display_question"}, exclude_none=True)
+    context["user_id"] = current_user.id
     context["conversation_history"] = history
     _touch_session(session, visible_question, has_history=bool(history))
     db.commit()
@@ -284,6 +316,7 @@ def create_message_stream(
     session_id: int,
     payload: ChatMessageCreate,
     db: DbSession,
+    current_user: CurrentUser,
 ) -> StreamingResponse:
     """提交问题并以流式响应返回 LLM 回答。
 
@@ -291,8 +324,8 @@ def create_message_stream(
     author: sunshengxian
     """
 
-    session = _active_session_or_404(db, session_id)
-    history = _recent_history(db, session_id)
+    session = _active_session_or_404(db, session_id, current_user.id)
+    history = _recent_history(db, session_id, current_user.id)
     now = _now_east8()
     visible_question = _visible_question(payload)
     user_message = LlmChatMessage(
@@ -306,6 +339,7 @@ def create_message_stream(
     _touch_session(session, visible_question, has_history=bool(history))
     db.commit()
     context = payload.model_dump(exclude={"question", "display_question"}, exclude_none=True)
+    context["user_id"] = current_user.id
     context["conversation_history"] = history
 
     def stream() -> Iterator[str]:

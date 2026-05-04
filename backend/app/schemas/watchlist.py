@@ -51,6 +51,7 @@ class WatchlistResponse(OrmModel):
     """
 
     id: int
+    user_id: int
     a_ts_code: str
     hk_ts_code: str
     display_name: str | None

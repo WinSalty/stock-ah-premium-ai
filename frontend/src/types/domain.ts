@@ -9,6 +9,44 @@ export interface DatasetInfo {
   sync_strategy: string;
 }
 
+export interface UserInfo {
+  id: number;
+  username: string;
+  role: 'ADMIN' | 'USER' | string;
+  is_active: boolean;
+  permissions: string[];
+}
+
+export interface LoginRequest {
+  username: string;
+  password: string;
+}
+
+export interface RegisterRequest extends LoginRequest {
+  invitation_code: string;
+}
+
+export interface AuthTokenResponse {
+  token: string;
+  user: UserInfo;
+}
+
+export interface InvitationCreateRequest {
+  note?: string;
+}
+
+export interface InvitationResponse {
+  id: number;
+  code: string;
+  created_by_user_id: number | null;
+  used_by_user_id: number | null;
+  used_at: string | null;
+  note: string | null;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface SyncRun {
   id: number;
   dataset: string;

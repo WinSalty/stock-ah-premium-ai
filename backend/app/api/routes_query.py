@@ -6,11 +6,12 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
+from app.api.deps_auth import require_permission
 from app.db.session import get_db
 from app.schemas.query import DataQueryResponse, QueryDatasetInfo
 from app.services.data_query_service import DataQueryService
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_permission("query"))])
 DbSession = Annotated[Session, Depends(get_db)]
 
 

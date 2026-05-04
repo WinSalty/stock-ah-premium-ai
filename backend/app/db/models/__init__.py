@@ -1,3 +1,4 @@
+from app.db.models.auth import AppUser, InvitationCode
 from app.db.models.chat import LlmChatMessage, LlmChatSession
 from app.db.models.market import (
     ADailyQuote,
@@ -18,6 +19,7 @@ from app.db.models.sync import DataQualityIssue, SyncCheckpoint, SyncRun
 __all__ = [
     "AHStockPair",
     "ADailyQuote",
+    "AppUser",
     "AStockBasic",
     "ATradeCalendar",
     "DataQualityIssue",
@@ -26,6 +28,7 @@ __all__ = [
     "HKStockBasic",
     "HKTradeCalendar",
     "HsgtConstituent",
+    "InvitationCode",
     "LlmChatMessage",
     "LlmChatSession",
     "OfficialAHComparison",

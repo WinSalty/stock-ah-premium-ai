@@ -46,6 +46,7 @@ WHERE is_hk_connect = 1;
 CREATE OR REPLACE VIEW v_watchlist_opportunity AS
 SELECT
   w.id AS watchlist_id,
+  w.user_id,
   w.a_ts_code,
   w.hk_ts_code,
   COALESCE(w.display_name, p.a_name, w.a_ts_code) AS display_name,

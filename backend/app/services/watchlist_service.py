@@ -19,7 +19,11 @@ class WatchlistService:
         self.db = db
         self.premium_query_service = PremiumQueryService(db)
 
-    def list_opportunities(self, active_only: bool = True) -> list[WatchlistOpportunityResponse]:
+    def list_opportunities(
+        self,
+        active_only: bool = True,
+        user_id: int | None = None,
+    ) -> list[WatchlistOpportunityResponse]:
         """查询自选股机会状态。
 
         创建日期：2026-05-04
@@ -27,6 +31,8 @@ class WatchlistService:
         """
 
         statement = select(WatchlistStock)
+        if user_id is not None:
+            statement = statement.where(WatchlistStock.user_id == user_id)
         if active_only:
             statement = statement.where(WatchlistStock.is_active.is_(True))
         statement = statement.order_by(WatchlistStock.sort_order, WatchlistStock.id)
@@ -49,14 +55,14 @@ class WatchlistService:
             result.append(WatchlistOpportunityResponse(watchlist=item, premium=premium))
         return result
 
-    def create(self, payload: WatchlistCreate) -> WatchlistStock:
+    def create(self, payload: WatchlistCreate, user_id: int = 1) -> WatchlistStock:
         """新增或恢复自选股。
 
         创建日期：2026-05-04
         author: sunshengxian
         """
 
-        existing = self._get_by_pair(payload.a_ts_code, payload.hk_ts_code)
+        existing = self._get_by_pair(payload.a_ts_code, payload.hk_ts_code, user_id)
         if existing is not None:
             self._apply_update(existing, payload.model_dump(exclude_none=False))
             self.db.commit()
@@ -65,6 +71,7 @@ class WatchlistService:
         item = WatchlistStock(
             a_ts_code=payload.a_ts_code.upper(),
             hk_ts_code=payload.hk_ts_code.upper(),
+            user_id=user_id,
             display_name=payload.display_name,
             preferred_direction=self._normalize_direction(payload.preferred_direction),
             target_premium_pct=payload.target_premium_pct,
@@ -78,7 +85,12 @@ class WatchlistService:
         self.db.refresh(item)
         return item
 
-    def update(self, item_id: int, payload: WatchlistUpdate) -> WatchlistStock | None:
+    def update(
+        self,
+        item_id: int,
+        payload: WatchlistUpdate,
+        user_id: int | None = None,
+    ) -> WatchlistStock | None:
         """更新自选股。
 
         创建日期：2026-05-04
@@ -86,14 +98,14 @@ class WatchlistService:
         """
 
         item = self.db.get(WatchlistStock, item_id)
-        if item is None:
+        if item is None or (user_id is not None and item.user_id != user_id):
             return None
         self._apply_update(item, payload.model_dump(exclude_unset=True))
         self.db.commit()
         self.db.refresh(item)
         return item
 
-    def deactivate(self, item_id: int) -> bool:
+    def deactivate(self, item_id: int, user_id: int | None = None) -> bool:
         """停用自选股。
 
         创建日期：2026-05-04
@@ -101,15 +113,21 @@ class WatchlistService:
         """
 
         item = self.db.get(WatchlistStock, item_id)
-        if item is None:
+        if item is None or (user_id is not None and item.user_id != user_id):
             return False
         item.is_active = False
         self.db.commit()
         return True
 
-    def _get_by_pair(self, a_ts_code: str, hk_ts_code: str) -> WatchlistStock | None:
+    def _get_by_pair(
+        self,
+        a_ts_code: str,
+        hk_ts_code: str,
+        user_id: int,
+    ) -> WatchlistStock | None:
         return self.db.scalar(
             select(WatchlistStock).where(
+                WatchlistStock.user_id == user_id,
                 WatchlistStock.a_ts_code == a_ts_code.upper(),
                 WatchlistStock.hk_ts_code == hk_ts_code.upper(),
             )
