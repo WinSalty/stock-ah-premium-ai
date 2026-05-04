@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from 'react';
 import PageHeader from '../components/PageHeader';
 import PremiumTable from '../components/PremiumTable';
 import { fetchOfficialPremiumTrend, fetchPremiumPairs, fetchPremiumSummary } from '../api/market';
+import type { PremiumPairOption } from '../types/domain';
 
 type PremiumDirection = 'AH' | 'HA';
 
@@ -13,6 +14,18 @@ const DEFAULT_PAIR_KEY = '600036.SH|03968.HK';
 function splitPairKey(value: string) {
   const [aTsCode, hkTsCode] = value.split('|');
   return { aTsCode, hkTsCode };
+}
+
+function formatPairLabel(item: PremiumPairOption) {
+  const aName = item.a_name?.trim() || item.a_ts_code;
+  const hkName = item.hk_name?.trim() || item.hk_ts_code;
+  const codeLabel = `${item.a_ts_code} / ${item.hk_ts_code}`;
+
+  if (aName === hkName) {
+    return `${aName} (${codeLabel})`;
+  }
+
+  return `${aName} / ${hkName} (${codeLabel})`;
 }
 
 /**
@@ -56,7 +69,11 @@ function OverviewPage() {
   const trendChartOption = useMemo(
     () => ({
       tooltip: { trigger: 'axis', valueFormatter: (value: number) => `${value.toFixed(2)}%` },
-      grid: { left: 48, right: 20, top: 28, bottom: 34 },
+      grid: { left: 54, right: 24, top: 32, bottom: 78 },
+      dataZoom: [
+        { type: 'inside', throttle: 50 },
+        { type: 'slider', height: 26, bottom: 18, brushSelect: false }
+      ],
       xAxis: {
         type: 'category',
         data: trend.data?.map((item) => item.trade_date) || []
@@ -102,7 +119,7 @@ function OverviewPage() {
       </Row>
 
       <div className="content-grid overview-grid">
-        <section className="panel">
+        <section className="panel overview-chart-panel">
           <div className="overview-chart-head">
             <div className="panel-title">{trendTitleName} {directionLabel} 溢价走势</div>
             <Space wrap>
@@ -114,7 +131,7 @@ function OverviewPage() {
                 optionFilterProp="label"
                 options={pairs.data?.map((item) => ({
                   value: `${item.a_ts_code}|${item.hk_ts_code}`,
-                  label: `${item.a_name || item.a_ts_code} / ${item.hk_name || item.hk_ts_code}`
+                  label: formatPairLabel(item)
                 }))}
                 onChange={setPairKey}
               />
@@ -130,12 +147,12 @@ function OverviewPage() {
             </Space>
           </div>
           {trend.data?.length ? (
-            <ReactECharts option={trendChartOption} style={{ height: 360 }} />
+            <ReactECharts option={trendChartOption} className="overview-chart" />
           ) : (
             <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} />
           )}
         </section>
-        <section className="panel">
+        <section className="panel overview-rank-panel">
           <div className="panel-title">溢价榜</div>
           {isLoading ? (
             <Skeleton active />

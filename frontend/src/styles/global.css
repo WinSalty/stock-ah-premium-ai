@@ -90,7 +90,16 @@ body {
 }
 
 .overview-grid {
-  grid-template-columns: minmax(420px, 1fr) minmax(420px, 1fr);
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.overview-chart-panel {
+  min-height: 560px;
+}
+
+.overview-chart {
+  width: 100%;
+  height: 480px !important;
 }
 
 .panel {
@@ -158,7 +167,7 @@ body {
 }
 
 .overview-pair-select {
-  width: 240px;
+  width: 340px;
 }
 
 .overview-direction-select {
@@ -354,5 +363,13 @@ body {
 
   .overview-pair-select {
     width: min(260px, 100%);
+  }
+
+  .overview-chart-panel {
+    min-height: 460px;
+  }
+
+  .overview-chart {
+    height: 380px !important;
   }
 }
