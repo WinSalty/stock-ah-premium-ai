@@ -51,6 +51,7 @@ DEFAULT_ROLE_PERMISSIONS: dict[str, list[str]] = {
 DEFAULT_OVERVIEW_CHART_SETTINGS = OverviewChartSettings()
 
 PASSWORD_HASH_ITERATIONS = 120_000
+REMEMBER_LOGIN_TOKEN_EXPIRE_DAYS = 30
 
 
 class AuthError(ValueError):
@@ -272,14 +273,22 @@ class AuthService:
         self.db.refresh(user)
         return settings
 
-    def create_token(self, user: AppUser) -> str:
+    def create_token(self, user: AppUser, remember_login: bool = False) -> str:
         """生成自签登录 token。
 
         创建日期：2026-05-04
         author: sunshengxian
         """
 
-        expires_at = datetime.now(UTC) + timedelta(hours=self.settings.auth_token_expire_hours)
+        remember_days = self.settings.auth_remember_login_expire_days
+        if remember_days <= 0:
+            remember_days = REMEMBER_LOGIN_TOKEN_EXPIRE_DAYS
+        expires_delta = (
+            timedelta(days=remember_days)
+            if remember_login
+            else timedelta(hours=self.settings.auth_token_expire_hours)
+        )
+        expires_at = datetime.now(UTC) + expires_delta
         payload = {
             "user_id": user.id,
             "username": user.username,

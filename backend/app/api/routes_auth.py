@@ -36,7 +36,10 @@ def login(payload: LoginRequest, db: DbSession) -> AuthTokenResponse:
         user = service.login(payload.username, payload.password)
     except AuthError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return AuthTokenResponse(token=service.create_token(user), user=service.user_response(user))
+    return AuthTokenResponse(
+        token=service.create_token(user, remember_login=payload.remember_login),
+        user=service.user_response(user),
+    )
 
 
 @router.post("/auth/register", response_model=AuthTokenResponse)

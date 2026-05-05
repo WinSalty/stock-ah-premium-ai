@@ -59,6 +59,10 @@ class Settings(BaseSettings):
     )
     auth_secret_key: str = Field(default="stock-ah-premium-local-secret", alias="AUTH_SECRET_KEY")
     auth_token_expire_hours: int = Field(default=168, alias="AUTH_TOKEN_EXPIRE_HOURS")
+    auth_remember_login_expire_days: int = Field(
+        default=30,
+        alias="AUTH_REMEMBER_LOGIN_EXPIRE_DAYS",
+    )
     default_admin_username: str = Field(default="admin", alias="DEFAULT_ADMIN_USERNAME")
     default_admin_password: str = Field(default="admin123456", alias="DEFAULT_ADMIN_PASSWORD")
     cors_origins: list[str] = Field(default=["http://localhost:5173"], alias="APP_CORS_ORIGINS")

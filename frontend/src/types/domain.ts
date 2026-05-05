@@ -32,6 +32,7 @@ export interface OverviewChartSettings {
 export interface LoginRequest {
   username: string;
   password: string;
+  remember_login?: boolean;
 }
 
 export interface RegisterRequest extends LoginRequest {

@@ -1,4 +1,4 @@
-import { Button, Form, Input, Tabs, Typography, message } from 'antd';
+import { Button, Checkbox, Form, Input, Tabs, Typography, message } from 'antd';
 import { BarChart3, BriefcaseBusiness, Database, KeyRound, LockKeyhole, UserRound } from 'lucide-react';
 import { useState } from 'react';
 import { login, register } from '../api/auth';
@@ -21,7 +21,7 @@ function AuthPage({ onAuthenticated }: AuthPageProps) {
     setLoading(true);
     try {
       const result = await login(values);
-      setAuthToken(result.token);
+      setAuthToken(result.token, values.remember_login !== false);
       onAuthenticated(result);
     } catch (error) {
       message.error(error instanceof Error ? error.message : '登录失败');
@@ -175,12 +175,20 @@ function AuthPage({ onAuthenticated }: AuthPageProps) {
                 key: 'login',
                 label: '登录',
                 children: (
-                  <Form layout="vertical" requiredMark={false} onFinish={submitLogin}>
+                  <Form
+                    initialValues={{ remember_login: true }}
+                    layout="vertical"
+                    requiredMark={false}
+                    onFinish={submitLogin}
+                  >
                     <Form.Item label="用户名" name="username" rules={[{ required: true }]}>
                       <Input prefix={<UserRound size={17} />} placeholder="请输入用户名" maxLength={64} />
                     </Form.Item>
                     <Form.Item label="密码" name="password" rules={[{ required: true }]}>
                       <Input.Password prefix={<LockKeyhole size={17} />} placeholder="请输入密码" maxLength={128} />
+                    </Form.Item>
+                    <Form.Item name="remember_login" valuePropName="checked">
+                      <Checkbox>记住登录，一个月内免登录</Checkbox>
                     </Form.Item>
                     <Button type="primary" htmlType="submit" loading={loading} block>
                       登录
