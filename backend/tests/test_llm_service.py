@@ -20,6 +20,7 @@ from app.services.llm_service import (
     LlmCallTrace,
     LlmEndpoint,
     LlmService,
+    QuestionRoute,
 )
 
 
@@ -48,8 +49,8 @@ def test_llm_service_rejects_non_investment_question_before_api_call() -> None:
     assert answer.rows == []
 
 
-def test_llm_answer_prompt_loads_model_selected_investment_knowledge(monkeypatch) -> None:
-    """确认问答提示词按模型选择加载知识库分类。
+def test_llm_answer_prompt_loads_routed_investment_knowledge() -> None:
+    """确认问答提示词按前置路由选择加载知识库分类。
 
     创建日期：2026-05-04
     author: sunshengxian
@@ -60,25 +61,16 @@ def test_llm_answer_prompt_loads_model_selected_investment_knowledge(monkeypatch
         settings=Settings(llm_api_key="test-key", llm_api_key_file=None, llm_model="test-model"),
     )
 
-    def fake_chat_completion(
-        prompt: str,
-        system_prompt: str | None = None,
-        model: str | None = None,
-        temperature: float = 0.1,
-        trace: LlmCallTrace | None = None,
-    ) -> str:
-        return '{"use_knowledge":true,"categories":["ah_premium"],"reason":"需要阈值框架"}'
-
-    monkeypatch.setattr(service, "_chat_completion", fake_chat_completion)
-
-    prompt = service._answer_prompt_for_trace(
+    prompt = service._answer_prompt(
         "A/H 溢价套利风险框架",
         rows=[],
         context={"conversation_history": [{"role": "user", "content": "先看港股通标的"}]},
-        model="test-model",
-        question_id="1234567",
-        user_id=1,
-        session_id=2,
+        route=QuestionRoute(
+            is_answerable=True,
+            should_query_data=False,
+            use_knowledge=True,
+            knowledge_category_keys=("ah_premium",),
+        ),
     )
     payload = json.loads(prompt.split("\n", 1)[1])
 
@@ -87,8 +79,8 @@ def test_llm_answer_prompt_loads_model_selected_investment_knowledge(monkeypatch
     assert "conversation_history" in payload
 
 
-def test_llm_answer_prompt_can_skip_investment_knowledge(monkeypatch) -> None:
-    """确认模型判断不需要知识库时不会塞参考材料。
+def test_llm_answer_prompt_can_skip_investment_knowledge() -> None:
+    """确认前置路由判断不需要知识库时不会塞参考材料。
 
     创建日期：2026-05-05
     author: sunshengxian
@@ -99,25 +91,15 @@ def test_llm_answer_prompt_can_skip_investment_knowledge(monkeypatch) -> None:
         settings=Settings(llm_api_key="test-key", llm_api_key_file=None, llm_model="test-model"),
     )
 
-    def fake_chat_completion(
-        prompt: str,
-        system_prompt: str | None = None,
-        model: str | None = None,
-        temperature: float = 0.1,
-        trace: LlmCallTrace | None = None,
-    ) -> str:
-        return '{"use_knowledge":false,"categories":[],"reason":"结构化数据已足够"}'
-
-    monkeypatch.setattr(service, "_chat_completion", fake_chat_completion)
-
-    prompt = service._answer_prompt_for_trace(
+    prompt = service._answer_prompt(
         "我自选里哪些最接近阈值？",
         rows=[{"display_name": "招商银行", "distance_to_target_pct": "0.5"}],
         context={},
-        model="test-model",
-        question_id="1234568",
-        user_id=1,
-        session_id=2,
+        route=QuestionRoute(
+            is_answerable=True,
+            should_query_data=True,
+            use_knowledge=False,
+        ),
     )
     payload = json.loads(prompt.split("\n", 1)[1])
 
@@ -157,8 +139,8 @@ def test_investment_advisor_prompt_allows_professional_opinions() -> None:
     assert "不要输出“不构成投资建议”" in INVESTMENT_ADVISOR_SYSTEM_PROMPT
 
 
-def test_clear_investment_question_skips_classifier_llm(monkeypatch) -> None:
-    """确认明显投资问题不再调用分类 LLM。
+def test_clear_investment_question_uses_unified_qwen_router(monkeypatch) -> None:
+    """确认投资问题通过统一 Qwen 路由返回前置信息。
 
     创建日期：2026-05-05
     author: sunshengxian
@@ -166,15 +148,43 @@ def test_clear_investment_question_skips_classifier_llm(monkeypatch) -> None:
 
     service = LlmService(
         Mock(),
-        settings=Settings(llm_api_key="test-key", llm_api_key_file=None, llm_model="test-model"),
+        settings=Settings(
+            llm_api_key="test-key",
+            llm_api_key_file=None,
+            qwen_api_key="qwen-key",
+            qwen_api_key_file=None,
+            llm_model="test-model",
+        ),
     )
 
-    def fail_completion(*args: object, **kwargs: object) -> str:
-        raise AssertionError("不应调用分类 LLM")
+    captured: dict[str, object] = {}
 
-    monkeypatch.setattr(service, "_chat_completion", fail_completion)
+    def fake_chat_completion(
+        prompt: str,
+        system_prompt: str | None = None,
+        model: str | None = None,
+        temperature: float = 0.1,
+        trace: LlmCallTrace | None = None,
+    ) -> str:
+        captured["model"] = model
+        captured["prompt"] = prompt
+        captured["phase"] = trace.phase if trace else None
+        return (
+            '{"is_answerable":true,"needs_sql":false,"use_knowledge":true,'
+            '"knowledge_categories":["company_research"],"reason":"需要公司投研框架"}'
+        )
 
-    assert service._is_investment_related_question("招商银行现在估值怎么看") is True
+    monkeypatch.setattr(service, "_chat_completion", fake_chat_completion)
+
+    route = service._route_question("招商银行现在估值怎么看")
+
+    assert route.is_answerable is True
+    assert route.should_query_data is False
+    assert route.use_knowledge is True
+    assert route.knowledge_category_keys == ("company_research",)
+    assert captured["model"] == "qwen3.6-flash"
+    assert captured["phase"] == "question_router"
+    assert "knowledge_catalog" in str(captured["prompt"])
 
 
 def test_report_analysis_question_skips_data_query() -> None:
@@ -414,14 +424,14 @@ def test_qwen_chat_model_uses_qwen_endpoint(monkeypatch) -> None:
         ),
     )
 
-    assert service._chat_completion("分析招商银行", model="qwen3.6-max-preview") == "qwen ok"
+    assert service._chat_completion("分析招商银行", model="qwen3.6-flash") == "qwen ok"
     assert captured["url"] == "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
     assert captured["headers"] == {"Authorization": "Bearer qwen-key"}
-    assert captured["payload"]["model"] == "qwen3.6-max-preview"
+    assert captured["payload"]["model"] == "qwen3.6-flash"
 
 
-def test_uncertain_question_scope_uses_qwen_flash_classifier(monkeypatch) -> None:
-    """确认本地规则不确定时才使用 Qwen 3.5 Flash 分类。
+def test_uncertain_question_scope_uses_qwen_flash_router(monkeypatch) -> None:
+    """确认本地规则不确定时使用 Qwen 3.6 Flash 路由。
 
     创建日期：2026-05-04
     author: sunshengxian
@@ -436,7 +446,19 @@ def test_uncertain_question_scope_uses_qwen_flash_classifier(monkeypatch) -> Non
             return None
 
         def json(self) -> dict[str, object]:
-            return {"choices": [{"message": {"content": '{"is_investment_related":true}'}}]}
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "content": (
+                                '{"is_answerable":true,"needs_sql":false,'
+                                '"use_knowledge":false,"knowledge_categories":[],'
+                                '"reason":"允许回答"}'
+                            )
+                        }
+                    }
+                ]
+            }
 
     class FakeClient:
         def __init__(self, timeout: float) -> None:
@@ -464,7 +486,7 @@ def test_uncertain_question_scope_uses_qwen_flash_classifier(monkeypatch) -> Non
     )
 
     assert service._is_investment_related_question("这件事是否值得继续推进")
-    assert captured_payload["model"] == "qwen3.5-flash"
+    assert captured_payload["model"] == "qwen3.6-flash"
 
 
 def test_service_intro_question_skips_classifier_and_returns_role_intro(monkeypatch) -> None:
@@ -536,7 +558,7 @@ def test_llm_completion_metric_is_persisted() -> None:
                 provider="Qwen",
                 base_url="https://example.test",
                 api_key="test-key",
-                model="qwen3.6-max-preview",
+                model="qwen3.6-flash",
             ),
             LlmCallTrace(
                 question_id="1234567",
@@ -553,7 +575,7 @@ def test_llm_completion_metric_is_persisted() -> None:
     assert metric is not None
     assert metric.phase == "answer"
     assert metric.provider == "Qwen"
-    assert metric.model == "qwen3.6-max-preview"
+    assert metric.model == "qwen3.6-flash"
     assert metric.user_id == 9
     assert metric.session_id == 18
     assert metric.output_chars == 2

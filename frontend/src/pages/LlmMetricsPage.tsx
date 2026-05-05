@@ -17,7 +17,7 @@ const providerOptions = ['Qwen', 'DeepSeek', 'Database', 'Internal'].map((item) 
 }));
 
 const phaseOptions = [
-  'classify',
+  'question_router',
   'generate_sql',
   'repair_sql',
   'execute_sql',
@@ -32,8 +32,7 @@ const phaseOptions = [
 ].map((item) => ({ label: item, value: item }));
 
 const modelOptions = [
-  'qwen3.5-flash',
-  'qwen3.6-max-preview',
+  'qwen3.6-flash',
   'deepseek-v4-flash',
   'deepseek-v4-pro'
 ].map((item) => ({ label: item, value: item }));

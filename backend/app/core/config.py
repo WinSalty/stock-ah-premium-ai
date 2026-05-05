@@ -48,8 +48,12 @@ class Settings(BaseSettings):
         default=Path("/Users/salty/codeProject/ai/doc/qwen-apikey.txt"),
         alias="QWEN_API_KEY_FILE",
     )
-    qwen_question_classifier_model: str = Field(
-        default="qwen3.5-flash",
+    qwen_question_router_model: str = Field(
+        default="qwen3.6-flash",
+        alias="QWEN_QUESTION_ROUTER_MODEL",
+    )
+    qwen_question_classifier_model: str | None = Field(
+        default=None,
         alias="QWEN_QUESTION_CLASSIFIER_MODEL",
     )
     auth_secret_key: str = Field(default="stock-ah-premium-local-secret", alias="AUTH_SECRET_KEY")
@@ -144,6 +148,17 @@ class Settings(BaseSettings):
         if self.qwen_api_key:
             return self.qwen_api_key.strip()
         return None
+
+    def resolve_qwen_question_router_model(self) -> str:
+        """读取 Qwen 前置路由模型，兼容旧分类器环境变量名。
+
+        创建日期：2026-05-05
+        author: sunshengxian
+        """
+
+        if self.qwen_question_classifier_model:
+            return self.qwen_question_classifier_model.strip()
+        return self.qwen_question_router_model.strip()
 
     def resolve_pushplus_token(self) -> str | None:
         """按本机文件优先、环境变量兜底的顺序读取 PushPlus 用户 Token。

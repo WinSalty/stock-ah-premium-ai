@@ -26,7 +26,7 @@ DEFAULT_CHAT_MODEL = "deepseek-v4-flash"
 ANSWER_MARKET_ROW_LIMIT = 60
 ANSWER_KNOWLEDGE_CHUNK_LIMIT = 5
 DEEPSEEK_PRO_CHAT_MODEL = "deepseek-v4-pro"
-QWEN_CHAT_MODEL = "qwen3.6-max-preview"
+QWEN_CHAT_MODEL = "qwen3.6-flash"
 SUPPORTED_CHAT_MODELS = (DEFAULT_CHAT_MODEL, DEEPSEEK_PRO_CHAT_MODEL, QWEN_CHAT_MODEL)
 
 INVESTMENT_ADVISOR_SYSTEM_PROMPT = """你是专业、有独立观点、注重证据链的金融投资分析顾问。
@@ -54,22 +54,19 @@ SQL_SYSTEM_PROMPT = """你是只读金融数据查询规划器。只生成可执
 禁止输出解释、Markdown、代码块或多余文本。禁止写入、DDL、多语句和非白名单对象。
 """
 
-QUESTION_CLASSIFIER_SYSTEM_PROMPT = """你是投资问答边界分类器。
-只判断用户问题是否允许由本投资助手回答。
+QUESTION_ROUTER_SYSTEM_PROMPT = """你是投资问答前置路由器。
+你需要在同一次判断中决定：问题是否允许由本投资助手回答、是否需要查询结构化数据、
+是否需要读取本地投研知识库，以及需要读取哪些知识分类。
 投资研究范围包括股票、基金、指数、行业、估值、财报、红利、仓位、风险、
 组合配置、A/H 溢价、港股通、宏观与投资策略相关问题；股票代码、公司投研、
 阈值建议和投资报告写作也属于范围。
 用户询问“你好”“你是谁”“你能做什么”“你可以帮我什么”等问候、角色身份和能力介绍问题也属于允许范围。
 编程、娱乐、日常生活、账号操作、违法违规交易和与投资研究无关的开放闲聊不属于范围。
-只返回 JSON，不要输出解释。格式：{"is_investment_related":true或false}
-"""
-
-KNOWLEDGE_ROUTER_SYSTEM_PROMPT = """你是投资问答知识库路由器。
-你只判断回答用户问题是否需要读取本地投研知识库，以及需要哪些分类。
-如果问题主要依赖当前结构化数据、简单排序、列表、数值查询或常识解释，不要读取知识库。
-如果问题需要投研框架、报告结论、反证条件、行业逻辑、阈值方法或组合风险表达，可以读取知识库。
+如果问题需要当前/最近/自选/阈值/列表/排名/筛选/股票代码/精确数值，通常需要查询结构化数据。
+如果问题偏投研框架、报告结论、反证条件、行业逻辑、阈值方法、组合风险表达或个股深度研究，
+可以读取知识库；如果结构化数据和常识足够，不要读取知识库。
 只返回 JSON，不要输出解释。格式：
-{"use_knowledge":true或false,"categories":["分类key"],"reason":"一句话原因"}
+{"is_answerable":true或false,"needs_sql":true或false,"use_knowledge":true或false,"knowledge_categories":["分类key"],"reason":"一句话原因"}
 """
 
 OUT_OF_SCOPE_MESSAGE = (
@@ -275,6 +272,21 @@ class LlmCallTrace:
     session_id: int | None = None
 
 
+@dataclass(frozen=True)
+class QuestionRoute:
+    """问答前置路由结果。
+
+    创建日期：2026-05-05
+    author: sunshengxian
+    """
+
+    is_answerable: bool
+    should_query_data: bool
+    use_knowledge: bool
+    knowledge_category_keys: tuple[str, ...] = ()
+    reason: str = ""
+
+
 class LlmService:
     """OpenAI-compatible LLM 问答服务。
 
@@ -301,24 +313,10 @@ class LlmService:
         """
 
         question_id = self._question_trace_id(question)
-        user_id, session_id = self._trace_scope(context or {})
+        request_context = context or {}
+        user_id, session_id = self._trace_scope(request_context)
         started_at = perf_counter()
         selected_model = self._normalize_chat_model(model or self.settings.llm_model)
-        if not self._is_investment_related_question(
-            question,
-            question_id=question_id,
-            user_id=user_id,
-            session_id=session_id,
-        ):
-            self._log_total_elapsed(
-                "sync_out_of_scope",
-                question_id,
-                selected_model,
-                started_at,
-                user_id=user_id,
-                session_id=session_id,
-            )
-            return ChatAnswer(answer=OUT_OF_SCOPE_MESSAGE, sql=None, rows=[])
         if self._is_service_intro_question(question):
             self._log_total_elapsed(
                 "sync_intro",
@@ -329,6 +327,23 @@ class LlmService:
                 session_id=session_id,
             )
             return ChatAnswer(answer=SERVICE_INTRO_MESSAGE, sql=None, rows=[])
+        route = self._route_question(
+            question,
+            request_context,
+            question_id=question_id,
+            user_id=user_id,
+            session_id=session_id,
+        )
+        if not route.is_answerable:
+            self._log_total_elapsed(
+                "sync_out_of_scope",
+                question_id,
+                selected_model,
+                started_at,
+                user_id=user_id,
+                session_id=session_id,
+            )
+            return ChatAnswer(answer=OUT_OF_SCOPE_MESSAGE, sql=None, rows=[])
         endpoint = self._model_endpoint(selected_model)
         if not endpoint.api_key or not endpoint.model:
             self._log_total_elapsed(
@@ -349,7 +364,8 @@ class LlmService:
             )
         sql, rows, prompt = self._prepare_answer(
             question,
-            context or {},
+            request_context,
+            route,
             selected_model,
             question_id,
             user_id,
@@ -391,24 +407,10 @@ class LlmService:
         """
 
         question_id = self._question_trace_id(question)
-        user_id, session_id = self._trace_scope(context or {})
+        request_context = context or {}
+        user_id, session_id = self._trace_scope(request_context)
         started_at = perf_counter()
         selected_model = self._normalize_chat_model(model or self.settings.llm_model)
-        if not self._is_investment_related_question(
-            question,
-            question_id=question_id,
-            user_id=user_id,
-            session_id=session_id,
-        ):
-            self._log_total_elapsed(
-                "stream_out_of_scope",
-                question_id,
-                selected_model,
-                started_at,
-                user_id=user_id,
-                session_id=session_id,
-            )
-            return None, [], iter([OUT_OF_SCOPE_MESSAGE])
         if self._is_service_intro_question(question):
             self._log_total_elapsed(
                 "stream_intro",
@@ -419,6 +421,23 @@ class LlmService:
                 session_id=session_id,
             )
             return None, [], iter([SERVICE_INTRO_MESSAGE])
+        route = self._route_question(
+            question,
+            request_context,
+            question_id=question_id,
+            user_id=user_id,
+            session_id=session_id,
+        )
+        if not route.is_answerable:
+            self._log_total_elapsed(
+                "stream_out_of_scope",
+                question_id,
+                selected_model,
+                started_at,
+                user_id=user_id,
+                session_id=session_id,
+            )
+            return None, [], iter([OUT_OF_SCOPE_MESSAGE])
         endpoint = self._model_endpoint(selected_model)
         if not endpoint.api_key or not endpoint.model:
             message = (
@@ -436,7 +455,8 @@ class LlmService:
             return None, [], iter([message])
         sql, rows, prompt = self._prepare_answer(
             question,
-            context or {},
+            request_context,
+            route,
             selected_model,
             question_id,
             user_id,
@@ -462,6 +482,7 @@ class LlmService:
         self,
         question: str,
         context: dict[str, Any],
+        route: QuestionRoute,
         model: str,
         question_id: str,
         user_id: int | None,
@@ -469,7 +490,7 @@ class LlmService:
     ) -> tuple[str | None, list[dict[str, Any]], str]:
         sql: str | None = None
         rows: list[dict[str, Any]] = []
-        if self._should_query_data(question, context):
+        if route.should_query_data:
             try:
                 sql = self._default_sql_for_question(question, context) or self._generate_sql(
                     question,
@@ -530,14 +551,11 @@ class LlmService:
                 logger.error("LLM 数据查询准备失败，降级为无精确数据回答", exc_info=True)
                 sql = None
                 rows = []
-        return sql, rows, self._answer_prompt_for_trace(
+        return sql, rows, self._answer_prompt(
             question,
             rows,
             context,
-            model,
-            question_id,
-            user_id,
-            session_id,
+            route,
         )
 
     def _generate_sql(
@@ -587,133 +605,40 @@ class LlmService:
         question: str,
         rows: list[dict[str, Any]],
         context: dict[str, Any],
+        route: QuestionRoute | None = None,
     ) -> str:
         history = self._conversation_history(context)
-        knowledge = self._select_knowledge_for_answer(
-            question,
-            history,
-            model=None,
-            question_id=None,
-            user_id=None,
-            session_id=None,
-        )
-        filters = {
-            key: value
-            for key, value in context.items()
-            if key != "conversation_history" and value not in (None, "", [])
-        }
-        payload = {
-            "user_question": question,
-            "conversation_history": history[-8:],
-            "filters": filters,
-            "market_observations": rows[:ANSWER_MARKET_ROW_LIMIT],
-            "supplemental_market_observations": self._supporting_data(question, context),
-            "knowledge_categories": knowledge.categories,
-            "reference_materials": knowledge.chunks,
-        }
-        return (
-            "请根据以下分析材料生成给用户的最终投资研究回答。"
-            "材料中的结构化字段和参考内容只供你内部分析，最终回答不得提及材料格式、"
-            "底层系统、SQL、JSON、数据库、视图名或文件来源。"
-            "若有 market_observations，请优先使用其中的精确数值；"
-            "若没有精确数值，可基于 reference_materials 和你的金融知识输出框架性分析，"
-            "但不要编造具体行情数字。"
-            "不要过度自我设限；在证据足够时可以给出清晰的看多/中性/谨慎判断、"
-            "配置优先级、仓位思路和触发条件。"
-            "请直接给出结论、表格、投资逻辑、配置建议、执行条件、反证条件和跟踪项。"
-            "不要输出模板化免责句或泛泛风险警告。\n"
-            f"{json.dumps(payload, ensure_ascii=False, default=str)}"
-        )
-
-    def _answer_prompt_for_trace(
-        self,
-        question: str,
-        rows: list[dict[str, Any]],
-        context: dict[str, Any],
-        model: str,
-        question_id: str,
-        user_id: int | None,
-        session_id: int | None,
-    ) -> str:
-        history = self._conversation_history(context)
-        knowledge = self._select_knowledge_for_answer(
-            question,
-            history,
-            model=model,
-            question_id=question_id,
-            user_id=user_id,
-            session_id=session_id,
-        )
-        filters = {
-            key: value
-            for key, value in context.items()
-            if key != "conversation_history" and value not in (None, "", [])
-        }
-        payload = {
-            "user_question": question,
-            "conversation_history": history[-8:],
-            "filters": filters,
-            "market_observations": rows[:ANSWER_MARKET_ROW_LIMIT],
-            "supplemental_market_observations": self._supporting_data(question, context),
-            "knowledge_categories": knowledge.categories,
-            "reference_materials": knowledge.chunks,
-        }
-        return (
-            "请根据以下分析材料生成给用户的最终投资研究回答。"
-            "材料中的结构化字段和参考内容只供你内部分析，最终回答不得提及材料格式、"
-            "底层系统、SQL、JSON、数据库、视图名或文件来源。"
-            "若有 market_observations，请优先使用其中的精确数值；"
-            "若没有精确数值，可基于 reference_materials 和你的金融知识输出框架性分析，"
-            "但不要编造具体行情数字。"
-            "不要过度自我设限；在证据足够时可以给出清晰的看多/中性/谨慎判断、"
-            "配置优先级、仓位思路和触发条件。"
-            "请直接给出结论、表格、投资逻辑、配置建议、执行条件、反证条件和跟踪项。"
-            "不要输出模板化免责句或泛泛风险警告。\n"
-            f"{json.dumps(payload, ensure_ascii=False, default=str)}"
-        )
-
-    def _select_knowledge_for_answer(
-        self,
-        question: str,
-        history: list[dict[str, str]],
-        model: str | None,
-        question_id: str | None,
-        user_id: int | None,
-        session_id: int | None,
-    ):
-        if model is None or question_id is None:
-            return self.knowledge_service.select_by_keys([], ANSWER_KNOWLEDGE_CHUNK_LIMIT)
-        payload = {
-            "question": question,
-            "conversation_history": history[-4:],
-            "knowledge_catalog": self.knowledge_service.catalog(),
-        }
-        try:
-            content = self._chat_completion(
-                json.dumps(payload, ensure_ascii=False, default=str),
-                system_prompt=KNOWLEDGE_ROUTER_SYSTEM_PROMPT,
-                model=self.settings.qwen_question_classifier_model,
-                temperature=0,
-                trace=LlmCallTrace(
-                    question_id=question_id,
-                    phase="knowledge_router",
-                    user_id=user_id,
-                    session_id=session_id,
-                ),
-            )
-            decision = self._extract_json(content)
-        except (ValueError, KeyError, TypeError, json.JSONDecodeError, httpx.HTTPError):
-            logger.error("LLM 知识库路由失败，跳过知识库材料", exc_info=True)
-            return self.knowledge_service.select_by_keys([], ANSWER_KNOWLEDGE_CHUNK_LIMIT)
-        if decision.get("use_knowledge") is not True:
-            return self.knowledge_service.select_by_keys([], ANSWER_KNOWLEDGE_CHUNK_LIMIT)
-        categories = decision.get("categories")
-        if not isinstance(categories, list):
-            return self.knowledge_service.select_by_keys([], ANSWER_KNOWLEDGE_CHUNK_LIMIT)
-        category_keys = [item for item in categories if isinstance(item, str)]
-        return self.knowledge_service.select_by_keys(
+        category_keys = route.knowledge_category_keys if route and route.use_knowledge else ()
+        knowledge = self.knowledge_service.select_by_keys(
             category_keys,
             ANSWER_KNOWLEDGE_CHUNK_LIMIT,
+        )
+        filters = {
+            key: value
+            for key, value in context.items()
+            if key != "conversation_history" and value not in (None, "", [])
+        }
+        payload = {
+            "user_question": question,
+            "conversation_history": history[-8:],
+            "filters": filters,
+            "market_observations": rows[:ANSWER_MARKET_ROW_LIMIT],
+            "supplemental_market_observations": self._supporting_data(question, context),
+            "knowledge_categories": knowledge.categories,
+            "reference_materials": knowledge.chunks,
+        }
+        return (
+            "请根据以下分析材料生成给用户的最终投资研究回答。"
+            "材料中的结构化字段和参考内容只供你内部分析，最终回答不得提及材料格式、"
+            "底层系统、SQL、JSON、数据库、视图名或文件来源。"
+            "若有 market_observations，请优先使用其中的精确数值；"
+            "若没有精确数值，可基于 reference_materials 和你的金融知识输出框架性分析，"
+            "但不要编造具体行情数字。"
+            "不要过度自我设限；在证据足够时可以给出清晰的看多/中性/谨慎判断、"
+            "配置优先级、仓位思路和触发条件。"
+            "请直接给出结论、表格、投资逻辑、配置建议、执行条件、反证条件和跟踪项。"
+            "不要输出模板化免责句或泛泛风险警告。\n"
+            f"{json.dumps(payload, ensure_ascii=False, default=str)}"
         )
 
     def _execute_sql(self, sql: str) -> list[dict[str, Any]]:
@@ -1301,6 +1226,93 @@ class LlmService:
             )
         return None
 
+    def _route_question(
+        self,
+        question: str,
+        context: dict[str, Any] | None = None,
+        question_id: str | None = None,
+        user_id: int | None = None,
+        session_id: int | None = None,
+    ) -> QuestionRoute:
+        if not question.strip():
+            return QuestionRoute(
+                is_answerable=False,
+                should_query_data=False,
+                use_knowledge=False,
+                reason="空问题",
+            )
+        context = context or {}
+        payload = {
+            "question": question.strip()[:1200],
+            "conversation_history": self._conversation_history(context)[-4:],
+            "frontend_context": {
+                key: value
+                for key, value in context.items()
+                if key != "conversation_history" and value not in (None, "", [])
+            },
+            "knowledge_catalog": self.knowledge_service.catalog(),
+        }
+        try:
+            content = self._chat_completion(
+                json.dumps(payload, ensure_ascii=False, default=str),
+                system_prompt=QUESTION_ROUTER_SYSTEM_PROMPT,
+                model=self.settings.resolve_qwen_question_router_model(),
+                temperature=0,
+                trace=LlmCallTrace(
+                    question_id=question_id or self._question_trace_id(question),
+                    phase="question_router",
+                    user_id=user_id,
+                    session_id=session_id,
+                ),
+            )
+            payload = self._extract_json(content)
+            return self._route_from_payload(payload)
+        except (ValueError, KeyError, TypeError, json.JSONDecodeError, httpx.HTTPError):
+            logger.error("Qwen 问答前置路由失败，降级使用本地兜底规则", exc_info=True)
+            return self._local_question_route(question, context)
+
+    def _route_from_payload(self, payload: dict[str, Any]) -> QuestionRoute:
+        """把 Qwen 路由 JSON 转换为内部结构。
+
+        创建日期：2026-05-05
+        author: sunshengxian
+        """
+
+        categories = payload.get("knowledge_categories")
+        if not isinstance(categories, list):
+            categories = []
+        category_keys = tuple(item for item in categories if isinstance(item, str))
+        return QuestionRoute(
+            is_answerable=payload.get("is_answerable") is True,
+            should_query_data=payload.get("needs_sql") is True,
+            use_knowledge=payload.get("use_knowledge") is True,
+            knowledge_category_keys=category_keys,
+            reason=str(payload.get("reason") or ""),
+        )
+
+    def _local_question_route(
+        self,
+        question: str,
+        context: dict[str, Any] | None = None,
+    ) -> QuestionRoute:
+        """Qwen 路由不可用时的保守兜底。
+
+        创建日期：2026-05-05
+        author: sunshengxian
+        """
+
+        local_scope = self._local_question_scope(question)
+        if local_scope is False:
+            return QuestionRoute(False, False, False, reason="本地规则判定为非投资问题")
+        if local_scope is True:
+            return QuestionRoute(
+                is_answerable=True,
+                should_query_data=self._should_query_data(question, context or {}),
+                use_knowledge=False,
+                reason="Qwen 路由不可用，本地规则放行",
+            )
+        return QuestionRoute(False, False, False, reason="Qwen 路由不可用且本地规则不确定")
+
     def _is_investment_related_question(
         self,
         question: str,
@@ -1308,29 +1320,13 @@ class LlmService:
         user_id: int | None = None,
         session_id: int | None = None,
     ) -> bool:
-        if not question.strip():
-            return False
-        local_scope = self._local_question_scope(question)
-        if local_scope is not None:
-            return local_scope
-        try:
-            content = self._chat_completion(
-                question.strip()[:1000],
-                system_prompt=QUESTION_CLASSIFIER_SYSTEM_PROMPT,
-                model=self.settings.qwen_question_classifier_model,
-                temperature=0,
-                trace=LlmCallTrace(
-                    question_id=question_id or self._question_trace_id(question),
-                    phase="classify",
-                    user_id=user_id,
-                    session_id=session_id,
-                ),
-            )
-            payload = self._extract_json(content)
-            return payload.get("is_investment_related") is True
-        except (ValueError, KeyError, TypeError, json.JSONDecodeError, httpx.HTTPError):
-            logger.error("Qwen 投资问题边界判定失败", exc_info=True)
-            return False
+        return self._route_question(
+            question,
+            {},
+            question_id=question_id,
+            user_id=user_id,
+            session_id=session_id,
+        ).is_answerable
 
     def _local_question_scope(self, question: str) -> bool | None:
         """先用本地规则判断明显问题，减少问答前置 LLM 调用。

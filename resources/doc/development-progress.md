@@ -72,16 +72,16 @@
   - PushPlus 测试消息、阈值提醒和股价提醒统一使用 HTML 模板发送，消息采用非紫色轻量卡片和价差信号图样式，并展示触发类型、标的、交易日、当前阈值/价格和目标阈值/价格等明细。
   - 自选股保存提醒配置时会校验当前用户必须已有 PushPlus 绑定，未绑定时前端弹出二维码引导，后端同步拒绝未绑定提醒保存。
 - LLM 问答：
-  - OpenAI-compatible Chat API 封装支持 DeepSeek 和阿里 Qwen，问答页面可在 `deepseek-v4-flash`、`deepseek-v4-pro` 与 `qwen3.6-max-preview` 间选择，默认使用 `deepseek-v4-flash`；兼容历史配置 `deepseek-v4-pro[1m]` 到 DeepSeek API 支持的模型名，当前不额外传 `reasoning_effort`。
+  - OpenAI-compatible Chat API 封装支持 DeepSeek 和阿里 Qwen，问答页面可在 `deepseek-v4-flash`、`deepseek-v4-pro` 与 `qwen3.6-flash` 间选择，默认使用 `deepseek-v4-flash`；兼容历史配置 `deepseek-v4-pro[1m]` 到 DeepSeek API 支持的模型名，当前不额外传 `reasoning_effort`。
   - DeepSeek API Key 优先读取 `/Users/salty/codeProject/ai/doc/deepseek-apikey.txt`，`LLM_API_KEY` 仅作兜底；Qwen API Key 优先读取 `/Users/salty/codeProject/ai/doc/qwen-apikey.txt`，`QWEN_API_KEY` 仅作兜底，不把密钥暴露给前端。
-  - 投资研究边界判定已从本地关键词匹配切换为 Qwen `qwen3.5-flash` JSON 分类调用；问候、角色身份和“你能做什么”类问题允许返回助手能力介绍，非范围问题改为更自然的引导文案。
+  - 投资研究边界、是否需要结构化数据、是否需要知识库和知识分类已合并到 Qwen `qwen3.6-flash` 单次 JSON 前置路由；问候、角色身份和“你能做什么”类问题允许返回助手能力介绍，非范围问题改为更自然的引导文案。
   - 已将 LLM 系统角色升级为专业金融投资分析顾问，仅允许股票、估值、A/H 溢价、港股通、组合配置和风险控制等投资研究相关问题。
   - 已调整回答约束：直接输出专业报告，不输出寒暄、JSON/SQL/底层数据来源和模板化免责句；要求给出评级口径、配置倾向、优先级、阈值、触发条件和反证条件。
   - 新增 LLM 专用投资知识库 `resources/doc/llm-knowledge/`，按 A/H 跨市场价差、A 股选股估值、银行与非银、个股研究、宏观产业推演、组合风险与报告框架分组；问答时按问题和上下文选择性读取 Markdown 与 DOCX 片段。
   - 已将中国神华、格力电器、宁德时代、比亚迪、长江电力和寒武纪 2026 版公司价值投资报告整理到 `llm-knowledge/company-research/value-investing-2026/`，个股深度投资报告分类通过稳定子目录通配读取，按公司名、股票代码和价值投资关键词命中。
   - 问答页面支持流式响应、Enter 发送和 Shift+Enter 换行；预设提问池已补充中国神华、格力电器、宁德时代、比亚迪、长江电力和寒武纪价值投资报告相关问题。
   - 总览页自选明细表格右侧趋势按钮已接入走势图切换，点击后会展示对应 A/H 标的和方向的溢价走势。
-  - 问答链路新增快路径：明显投资/问候类问题本地放行，不再等待分类 LLM；报告分析类问题优先走知识材料，避免无意义 SQL 生成；LLM 知识库 DOCX/Markdown 解析增加进程内缓存。知识库注入改为先给模型轻量目录简介，由模型判断是否需要读取材料以及读取哪些分类，不再对每个问题按关键词默认塞材料。前端发送后展示“理解问题、整理信息、形成框架、组织回答”等用户可感知进度，不暴露内部处理细节。
+  - 问答链路新增快路径：问候类问题本地秒回；报告分析类问题由前置路由决定是否跳过 SQL；LLM 知识库 DOCX/Markdown 解析增加进程内缓存。知识库注入改为在前置路由中给模型轻量目录简介，由模型判断是否需要读取材料以及读取哪些分类，不再对每个问题按关键词默认塞材料。前端发送后展示“理解问题、整理信息、形成框架、组织回答”等用户可感知进度，不暴露内部处理细节。
   - 消息提交后立即清空输入框；数据查询准备失败时降级为无精确数据回答，避免整轮问答直接失败。
   - 非流式 AI 阈值推荐若遇到外部 LLM 异常，会返回可读的 502 错误，不再裸露为 `Internal Server Error`；DeepSeek 错误体会写入后端日志便于排查。非流式 LLM 超时已放宽到 90 秒。
   - LLM SQL 生成后会按本地视图字段清单校验并在字段名执行错误时自动修复重试一次。
