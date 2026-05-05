@@ -154,13 +154,14 @@ function getTextContent(children: ReactNode): string {
 }
 
 /**
- * 兼容模型偶发输出的非标准 Markdown，例如标题缺少空格或标题与表格表头粘在一行。
+ * 兼容模型偶发输出的非标准 Markdown，例如标题缺少空格、多个标题粘连或标题与表格表头粘在一行。
  * 创建日期：2026-05-05
  * author: sunshengxian
  */
 function normalizeMarkdownForRender(content: string) {
   return content
     .replace(/^(#{1,6})(?=\S)/gm, '$1 ')
+    .replace(/^(#{1,6}\s+[^\n#]+?)\s*(#{1,6}\s+)/gm, '$1\n\n$2')
     .replace(
       /^(#{1,6}\s+[^\n|]+)(\|[^\n]*\|)\n(\|(?:\s*:?-{3,}:?\s*\|)+\s*)$/gm,
       '$1\n\n$2\n$3'
