@@ -565,8 +565,26 @@ body {
   justify-content: flex-end;
 }
 
-.profile-notification-panel {
-  margin-top: 16px;
+.profile-pushplus-card {
+  display: grid;
+  gap: 14px;
+  margin: 4px 0 18px;
+  padding: 16px;
+  border: 1px solid #e5ebf3;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.profile-pushplus-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: flex-start;
+}
+
+.profile-pushplus-head > div {
+  display: grid;
+  gap: 4px;
 }
 
 .pushplus-bind-grid {
@@ -1313,6 +1331,10 @@ body {
 
   .profile-form-grid {
     grid-template-columns: 1fr;
+  }
+
+  .profile-pushplus-head {
+    flex-direction: column;
   }
 
   .overview-chart-head {

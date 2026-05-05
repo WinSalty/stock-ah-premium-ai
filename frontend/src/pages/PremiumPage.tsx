@@ -629,7 +629,7 @@ function PremiumPage() {
                 showIcon
                 type="warning"
                 message="设置提醒前需要绑定 PushPlus 好友"
-                description="请扫描系统推送账号二维码成为管理员 PushPlus 好友。二维码内含当前系统账号的签名绑定票据，扫码后会自动绑定。"
+                description="当前账号还没有绑定微信推送。请扫码完成绑定后再保存提醒。"
               />
               <Space align="start" className="pushplus-alert-bind-actions">
                 <Button
@@ -637,7 +637,7 @@ function PremiumPage() {
                   loading={qrCodeMutation.isPending}
                   onClick={() => qrCodeMutation.mutate()}
                 >
-                  生成系统推送账号二维码
+                  生成绑定二维码
                 </Button>
                 {qrCodeMutation.data?.qr_code_img_url ? (
                   <Image

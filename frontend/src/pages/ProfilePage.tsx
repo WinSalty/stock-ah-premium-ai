@@ -85,7 +85,7 @@ function ProfilePage({ user, onUserUpdated }: ProfilePageProps) {
         <div className="query-result-head">
           <div>
             <div className="panel-title">基础资料</div>
-            <Typography.Text type="secondary">这些信息只用于本系统内展示和用户识别。</Typography.Text>
+            <Typography.Text type="secondary">维护账号展示信息和提醒接收方式。</Typography.Text>
           </div>
         </div>
         <Form
@@ -116,6 +116,85 @@ function ProfilePage({ user, onUserUpdated }: ProfilePageProps) {
               <Input placeholder="可选" />
             </Form.Item>
           </div>
+          <div className="profile-pushplus-card">
+            <div className="profile-pushplus-head">
+              <div>
+                <Typography.Text strong>消息接收</Typography.Text>
+                <Typography.Text type="secondary">绑定后，自选股提醒会通过微信推送给你。</Typography.Text>
+              </div>
+              <Space wrap>
+                <Button
+                  htmlType="button"
+                  icon={<Send size={16} />}
+                  disabled={!binding.data?.is_bound}
+                  loading={testPushMutation.isPending}
+                  onClick={() => testPushMutation.mutate()}
+                >
+                  测试推送
+                </Button>
+                <Button
+                  htmlType="button"
+                  danger
+                  icon={<Link2Off size={16} />}
+                  disabled={!binding.data?.is_bound}
+                  loading={unbindMutation.isPending}
+                  onClick={() => unbindMutation.mutate()}
+                >
+                  解除绑定
+                </Button>
+              </Space>
+            </div>
+            {binding.data?.is_bound ? (
+              <Alert
+                showIcon
+                type="success"
+                message={`已绑定：${binding.data.friend_remark || binding.data.friend_nick_name || binding.data.friend_id}`}
+                description={binding.data.is_follow ? '后续提醒将发送到当前微信。' : '请先关注 PushPlus 微信公众号，避免错过提醒。'}
+              />
+            ) : (
+              <Alert
+                showIcon
+                type="info"
+                message="当前账号尚未绑定微信推送"
+                description="扫码完成绑定，绑定后回到本页刷新状态。"
+              />
+            )}
+            <div className="pushplus-bind-grid">
+              <div className="pushplus-qr-pane">
+                <Button
+                  htmlType="button"
+                  type="primary"
+                  icon={<QrCode size={16} />}
+                  loading={qrCodeMutation.isPending}
+                  onClick={() => qrCodeMutation.mutate()}
+                >
+                  生成绑定二维码
+                </Button>
+                {qrCodeMutation.data?.qr_code_img_url ? (
+                  <Image
+                    className="pushplus-qr-image"
+                    width={220}
+                    src={qrCodeMutation.data.qr_code_img_url}
+                    alt="PushPlus 绑定二维码"
+                  />
+                ) : (
+                  <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="生成后扫码绑定" />
+                )}
+              </div>
+              <div className="pushplus-friend-pane">
+                <Typography.Text strong>绑定状态</Typography.Text>
+                <Typography.Text type="secondary">扫码后回到本页查看状态；若页面未变化，可手动刷新。</Typography.Text>
+                <Button
+                  htmlType="button"
+                  icon={<RefreshCw size={16} />}
+                  loading={binding.isFetching}
+                  onClick={() => binding.refetch()}
+                >
+                  刷新绑定状态
+                </Button>
+              </div>
+            </div>
+          </div>
           <Form.Item label="简介" name="bio">
             <Input.TextArea rows={4} placeholder="投资偏好、关注市场或备注" />
           </Form.Item>
@@ -125,80 +204,6 @@ function ProfilePage({ user, onUserUpdated }: ProfilePageProps) {
             </Button>
           </div>
         </Form>
-      </section>
-      <section className="panel profile-panel profile-notification-panel">
-        <div className="query-result-head">
-          <div>
-            <div className="panel-title">PushPlus 好友推送</div>
-            <Typography.Text type="secondary">
-              扫描系统推送账号二维码成为管理员 PushPlus 好友后，提醒会通过好友消息推送。
-            </Typography.Text>
-          </div>
-          <Space wrap>
-            <Button
-              icon={<Send size={16} />}
-              disabled={!binding.data?.is_bound}
-              loading={testPushMutation.isPending}
-              onClick={() => testPushMutation.mutate()}
-            >
-              测试推送
-            </Button>
-            <Button
-              danger
-              icon={<Link2Off size={16} />}
-              disabled={!binding.data?.is_bound}
-              loading={unbindMutation.isPending}
-              onClick={() => unbindMutation.mutate()}
-            >
-              解除绑定
-            </Button>
-          </Space>
-        </div>
-        {binding.data?.is_bound ? (
-          <Alert
-            showIcon
-            type="success"
-            message={`已绑定：${binding.data.friend_remark || binding.data.friend_nick_name || binding.data.friend_id}`}
-            description={binding.data.is_follow ? '好友已关注 PushPlus 微信公众号。' : '好友尚未关注公众号，可能无法收到微信消息。'}
-          />
-        ) : (
-          <Alert showIcon type="info" message="当前账号尚未绑定 PushPlus 好友，扫码成为系统推送账号好友后会自动完成绑定。" />
-        )}
-        <div className="pushplus-bind-grid">
-          <div className="pushplus-qr-pane">
-            <Button
-              type="primary"
-              icon={<QrCode size={16} />}
-              loading={qrCodeMutation.isPending}
-              onClick={() => qrCodeMutation.mutate()}
-            >
-              生成系统推送账号二维码
-            </Button>
-            {qrCodeMutation.data?.qr_code_img_url ? (
-              <Image
-                className="pushplus-qr-image"
-                width={220}
-                src={qrCodeMutation.data.qr_code_img_url}
-                alt="PushPlus 绑定二维码"
-              />
-            ) : (
-              <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="二维码待生成" />
-            )}
-          </div>
-          <div className="pushplus-friend-pane">
-            <Typography.Text strong>绑定状态</Typography.Text>
-            <Typography.Text type="secondary">
-              二维码归属管理员 PushPlus 账号，内含当前系统账号的签名绑定票据；扫码后回调会把你的 PushPlus 好友身份绑定到当前系统账号。
-            </Typography.Text>
-            <Button
-              icon={<RefreshCw size={16} />}
-              loading={binding.isFetching}
-              onClick={() => binding.refetch()}
-            >
-              刷新绑定状态
-            </Button>
-          </div>
-        </div>
       </section>
     </main>
   );
