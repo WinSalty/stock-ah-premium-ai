@@ -137,7 +137,7 @@
   - `resources/doc/startup-guide.md`：完整启动、配置、验证和排错手册。
   - `resources/doc/phase-1-detailed-development-plan.md`：已同步当前实现口径，包括 `hk_daily` 禁用、官方 AH 比价主表、定时增量、长字段悬浮和东八区时间展示。
   - `resources/doc/ah-premium-review-and-display-design.md`：沉淀 A/H 溢价套现评审结论、官方主口径、自选股优先展示和后续落地优先级。
-  - `resources/doc/realtime-premium-and-wechat-push-plan.md`：沉淀实时 AH 溢价行情源、Qwen 联网搜索定位和个人微信推送落地方案。
+  - `resources/doc/realtime-premium-and-wechat-push-plan.md`：沉淀实时 AH 溢价行情源、Qwen 联网搜索定位和个人微信推送落地方案；已补充 `realtime_quote_snapshot` 喂数约定和实时读取 API。
   - `resources/doc/llm-knowledge/README.md`：沉淀 LLM 投资问答知识库分类、使用原则和新增材料登记方式。
 - 非真实功能测试资产：
   - 后端公式单元测试。
@@ -150,7 +150,7 @@
 - `hk_daily` 当前 token 无法请求，已禁用接口同步；`fx_daily` 请求成功但返回 0 行。
 - DeepSeek LLM 已完成最小调用和流式问答验证。
 - 依赖 Tushare 的完整端到端重新同步未重复执行。
-- 本轮已执行真实 MySQL 的 `alembic upgrade head`，本地库已应用到 `20260505_0015`。
+- 本轮已执行真实 MySQL 的 `alembic upgrade head`，本地库已应用到 `20260505_0016`。
 
 ## 已执行的非功能性检查
 
@@ -180,6 +180,7 @@
 - 新增总览随机锦囊、自选卡片股价/阈值展示和用户级趋势图指标配置后，`python3 -m compileall app tests`、`ruff check app tests`、`pytest`（56 个单元测试）、`npm run build`、`npm audit --omit=dev` 和 `./scripts/check.sh` 均通过。
 - 增强启动、停止和重启脚本后，`bash -n scripts/*.sh` 通过；已分别用 `BACKEND_PORT=18000`、`FRONTEND_PORT=15173` 验证启动诊断、整项目重启和停止诊断，并确认后端 `/api/health` 返回正常。
 - 新增 LLM 项目级日调用限流，默认 `LLM_DAILY_CALL_LIMIT=100`，按 `llm_call_metric` 中外部模型主调用 phase 统计，不计首包、SQL 执行和总耗时等辅助指标。
+- 新增实时行情抽象接口首版落地，创建 `realtime_quote_snapshot` 表、数据库行情 provider、实时 AH/H/A 溢价计算服务和 `GET /api/ah-premiums/realtime` 读取接口；`alembic upgrade head` 已应用 `20260505_0016`，`./scripts/check.sh` 通过。
 - 敏感信息扫描：只发现文档中的 `<local-only>` 占位符，未发现真实 Token、密码或 API Key。
 
 ## 待验证事项

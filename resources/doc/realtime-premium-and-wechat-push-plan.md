@@ -168,6 +168,28 @@ REALTIME_REQUIRE_REALTIME_FOR_ALERT=true
 
 ## 5. 数据库与 API 设计
 
+当前已落地第一版数据库 provider：外部任务只需写入 `realtime_quote_snapshot`，后端通过
+`DbRealtimeQuoteProvider` 实现 `RealtimeQuoteProvider` 协议，并由 `RealtimePremiumService`
+计算实时 AH/H/A 溢价。读取接口为：
+
+```text
+GET /api/ah-premiums/realtime
+```
+
+常用参数：
+
+- `a_ts_code`、`hk_ts_code`：按单个 AH 配对查询。
+- `only_watchlist=true`：只按当前用户自选股查询。
+- `page`、`page_size`：分页参数。
+
+实时表喂数约定：
+
+- A 股报价：`market='A'`，`symbol='600036.SH'`，`currency='CNY'`。
+- 港股报价：`market='HK'`，`symbol='03968.HK'`，`currency='HKD'`。
+- 港币兑人民币：`market='FX'`，`symbol='HKD/CNY'`，`currency='CNY'`。
+- `quality` 可填 `REALTIME`、`DELAYED`、`STALE`、`ERROR`、`UNAVAILABLE`。
+- 同一标的可保留多条快照，系统按 `quote_time desc, id desc` 读取最新的 `is_active=1` 记录。
+
 ### 5.1 新增实时行情快照表
 
 建议新增 `realtime_quote_snapshot`：

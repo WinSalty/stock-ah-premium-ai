@@ -150,3 +150,65 @@ class PremiumOfficialTrendPoint(BaseModel):
     premium_p80_60: Decimal | None = None
     premium_percentile_60: Decimal | None = None
     is_realtime: bool = False
+
+
+class RealtimeQuoteItem(BaseModel):
+    """实时行情标准化报价。
+
+    创建日期：2026-05-05
+    author: sunshengxian
+    """
+
+    market: str
+    symbol: str
+    last_price: Decimal | None
+    currency: str
+    quote_time: datetime | None
+    source: str | None
+    quality: str
+
+
+class RealtimePremiumResponse(BaseModel):
+    """实时 AH/H/A 溢价响应。
+
+    创建日期：2026-05-05
+    author: sunshengxian
+    """
+
+    a_ts_code: str
+    hk_ts_code: str
+    a_name: str | None = None
+    hk_name: str | None = None
+    display_name: str | None = None
+    a_last_price: Decimal | None
+    hk_last_price: Decimal | None
+    hkd_cny_rate: Decimal | None
+    ah_ratio: Decimal | None
+    ah_premium_pct: Decimal | None
+    ha_ratio: Decimal | None
+    ha_premium_pct: Decimal | None
+    metric_direction: str = "HA"
+    metric_premium_pct: Decimal | None = None
+    target_premium_pct: Decimal | None = None
+    distance_to_target_pct: Decimal | None = None
+    opportunity_status: str | None = None
+    quote_quality: str
+    is_realtime: bool
+    source: str | None = None
+    calculated_at: datetime
+    a_quote: RealtimeQuoteItem | None = None
+    hk_quote: RealtimeQuoteItem | None = None
+    fx_quote: RealtimeQuoteItem | None = None
+    watchlist_id: int | None = None
+    is_watchlist: bool = False
+
+
+class RealtimePremiumListResponse(BaseModel):
+    """实时 AH/H/A 溢价列表响应。
+
+    创建日期：2026-05-05
+    author: sunshengxian
+    """
+
+    total: int
+    items: list[RealtimePremiumResponse]

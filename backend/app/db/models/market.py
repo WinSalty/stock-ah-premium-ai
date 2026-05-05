@@ -201,6 +201,31 @@ class FxRateDaily(TimestampMixin, Base):
     is_cross_rate: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
 
+class RealtimeQuoteSnapshot(TimestampMixin, Base):
+    """实时行情快照表。
+
+    创建日期：2026-05-05
+    author: sunshengxian
+    """
+
+    __tablename__ = "realtime_quote_snapshot"
+    __table_args__ = (
+        Index("idx_realtime_quote_symbol_time", "market", "symbol", "quote_time"),
+        Index("idx_realtime_quote_source_time", "source", "quote_time"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    market: Mapped[str] = mapped_column(String(8), nullable=False)
+    symbol: Mapped[str] = mapped_column(String(32), nullable=False)
+    last_price: Mapped[Decimal | None] = mapped_column(DECIMAL(20, 8))
+    currency: Mapped[str] = mapped_column(String(8), nullable=False)
+    quote_time: Mapped[datetime | None] = mapped_column(DateTime)
+    source: Mapped[str] = mapped_column(String(64), nullable=False)
+    quality: Mapped[str] = mapped_column(String(32), nullable=False, default="UNAVAILABLE")
+    raw_payload_json: Mapped[str | None] = mapped_column(Text)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
+
 class AHStockPair(TimestampMixin, Base):
     """AH 股票配对表。
 

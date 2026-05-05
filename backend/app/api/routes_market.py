@@ -23,10 +23,12 @@ from app.schemas.market import (
     PremiumPairOption,
     PremiumQueryResponse,
     PremiumSummaryResponse,
+    RealtimePremiumListResponse,
 )
 from app.services.manual_import_service import ManualImportService
 from app.services.official_premium_calc_service import OfficialPremiumCalcService
 from app.services.premium_query_service import PremiumQueryFilters, PremiumQueryService
+from app.services.realtime_premium_service import RealtimePremiumService
 
 router = APIRouter()
 DbSession = Annotated[Session, Depends(get_db)]
@@ -136,6 +138,32 @@ def official_premium_trend(
         start_date,
         end_date,
         direction,
+    )
+
+
+@router.get("/ah-premiums/realtime", response_model=RealtimePremiumListResponse)
+def list_realtime_premiums(
+    db: DbSession,
+    current_user: CurrentUser,
+    a_ts_code: str | None = None,
+    hk_ts_code: str | None = None,
+    only_watchlist: bool = False,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, ge=1, le=200),
+) -> RealtimePremiumListResponse:
+    """查询实时 AH/H/A 溢价。
+
+    创建日期：2026-05-05
+    author: sunshengxian
+    """
+
+    return RealtimePremiumService(db).list_realtime_premiums(
+        user_id=current_user.id,
+        a_ts_code=a_ts_code,
+        hk_ts_code=hk_ts_code,
+        only_watchlist=only_watchlist,
+        page=page,
+        page_size=page_size,
     )
 
 

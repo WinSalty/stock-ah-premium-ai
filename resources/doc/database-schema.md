@@ -30,6 +30,7 @@ A/H 溢价与可交易性：
 - `fx_rate_daily`：外汇汇率日线。
 - `ah_stock_pair`：AH 股票配对。
 - `official_ah_comparison`：Tushare 官方 AH 比价快照，当前主展示口径。
+- `realtime_quote_snapshot`：实时行情快照表，作为 `RealtimeQuoteProvider` 的首个落地数据源；外部任务写入 A 股、港股和 HKD/CNY 报价，本项目按最新有效快照计算实时 AH/H/A 溢价。
 - `watchlist_stock`：用户自选 AH 股票，按 `user_id` 隔离。
 
 用户、角色与邀请码：

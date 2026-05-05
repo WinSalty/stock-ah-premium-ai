@@ -183,6 +183,24 @@ CREATE TABLE IF NOT EXISTS `official_ah_comparison` (
   KEY `idx_official_ah_trade_date` (`trade_date`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Tushare 官方 AH 比价快照表，当前主展示口径';
 
+CREATE TABLE IF NOT EXISTS `realtime_quote_snapshot` (
+  `id` INT NOT NULL AUTO_INCREMENT COMMENT '自增主键',
+  `market` VARCHAR(8) NOT NULL COMMENT '报价市场：A、HK、FX',
+  `symbol` VARCHAR(32) NOT NULL COMMENT '标准代码，如 600036.SH、03968.HK、HKD/CNY',
+  `last_price` DECIMAL(20,8) DEFAULT NULL COMMENT '最新价或汇率',
+  `currency` VARCHAR(8) NOT NULL COMMENT '价格币种，如 CNY、HKD',
+  `quote_time` DATETIME DEFAULT NULL COMMENT '行情源报价时间',
+  `source` VARCHAR(64) NOT NULL COMMENT '行情来源，如 MANUAL、QOS、FUTU_OPENAPI、FXAPI',
+  `quality` VARCHAR(32) NOT NULL DEFAULT 'UNAVAILABLE' COMMENT '报价质量：REALTIME、DELAYED、STALE、ERROR、UNAVAILABLE',
+  `raw_payload_json` TEXT DEFAULT NULL COMMENT '原始响应摘要 JSON，不存敏感字段',
+  `is_active` TINYINT(1) NOT NULL DEFAULT 1 COMMENT '是否作为有效快照参与读取',
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '记录创建时间',
+  `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '记录更新时间',
+  PRIMARY KEY (`id`),
+  KEY `idx_realtime_quote_symbol_time` (`market`, `symbol`, `quote_time`),
+  KEY `idx_realtime_quote_source_time` (`source`, `quote_time`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='实时行情快照表';
+
 CREATE TABLE IF NOT EXISTS `app_user` (
   `id` INT NOT NULL AUTO_INCREMENT COMMENT '自增主键',
   `username` VARCHAR(64) NOT NULL COMMENT '登录用户名',
