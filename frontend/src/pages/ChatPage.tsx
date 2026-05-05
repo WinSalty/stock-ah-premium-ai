@@ -1,4 +1,4 @@
-import { Button, Form, Input, Popconfirm, Segmented, Skeleton, Table, message } from 'antd';
+import { Button, Form, Input, Popconfirm, Segmented, Skeleton, Spin, Table, message } from 'antd';
 import { Plus, SendHorizontal, Trash2 } from 'lucide-react';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -491,7 +491,10 @@ function ChatPage() {
                           {turn.response?.answer || ''}
                         </ReactMarkdown>
                         {turn.streaming && !turn.response?.answer ? (
-                          <div className="chat-progress-note">{turn.progressText || '正在分析...'}</div>
+                          <div className="chat-progress-note">
+                            <Spin size="small" />
+                            <span>{turn.progressText || '正在分析...'}</span>
+                          </div>
                         ) : null}
                         {turn.streaming && turn.response?.answer ? <span className="stream-caret" /> : null}
                       </div>

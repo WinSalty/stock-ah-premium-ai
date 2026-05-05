@@ -1331,22 +1331,12 @@ body {
   line-height: 1.5;
 }
 
-.chat-progress-note::before {
-  content: "";
+.chat-progress-note .ant-spin {
   flex: 0 0 auto;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: #0f766e;
-  box-shadow: 14px 0 0 rgba(15, 118, 110, 0.42), 28px 0 0 rgba(15, 118, 110, 0.2);
-  animation: progress-pulse 1.4s ease-in-out infinite;
 }
 
-@keyframes progress-pulse {
-  50% {
-    opacity: 0.45;
-    transform: translateY(-1px);
-  }
+.chat-progress-note span:not(.ant-spin-dot-item) {
+  min-width: 0;
 }
 
 @keyframes caret-blink {
