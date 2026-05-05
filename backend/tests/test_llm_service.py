@@ -155,6 +155,28 @@ def test_investment_knowledge_selects_company_value_reports() -> None:
     )
 
 
+def test_investment_knowledge_expands_company_report_globs(tmp_path: Path) -> None:
+    """确认公司研究分类可从稳定子目录通配读取报告。
+
+    创建日期：2026-05-05
+    author: sunshengxian
+    """
+
+    report_path = tmp_path / "company-research" / "value-investing-2026" / "寒武纪报告.docx"
+    _write_minimal_docx(
+        report_path,
+        paragraphs=(
+            "寒武纪（688256.SH）深度价值投资分析报告",
+            "核心验证点：收入放量、毛利率和客户结构改善。",
+        ),
+    )
+
+    selection = InvestmentKnowledgeService(doc_root=tmp_path).select("寒武纪价值投资怎么看")
+
+    assert "个股深度投资报告" in selection.categories
+    assert any("核心验证点" in chunk["content"] for chunk in selection.chunks)
+
+
 def test_default_sql_uses_watchlist_and_correct_ha_discount_direction() -> None:
     """确认关注股票的 H/A 折价问题按 H 股折价方向排序。
 

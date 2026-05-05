@@ -153,13 +153,8 @@ class InvestmentKnowledgeService:
                 "股票投资报告",
             ),
             documents=(
-                "company-research/五粮液股票投资报告_2026.docx",
-                "公司价值投资分析报告_2026版/中国神华深度价值投资分析报告_完整版_2026版.docx",
-                "公司价值投资分析报告_2026版/gree_deep_value_report_2026.docx",
-                "公司价值投资分析报告_2026版/宁德时代深度价值投资分析报告_2026版.docx",
-                "公司价值投资分析报告_2026版/比亚迪深度价值投资分析报告_2026版.docx",
-                "公司价值投资分析报告_2026版/长江电力深度价值投资分析报告_2026版.docx",
-                "公司价值投资分析报告_2026版/寒武纪深度价值投资分析报告_2026版.docx",
+                "company-research/*.docx",
+                "company-research/value-investing-2026/*.docx",
             ),
             max_chunks=8,
         ),
@@ -265,7 +260,8 @@ class InvestmentKnowledgeService:
         """
 
         document_chunks = [
-            self._read_document_chunks(category, document) for document in category.documents
+            self._read_document_chunks(category, document)
+            for document in self._resolve_category_documents(category)
         ]
         selected: list[dict[str, str]] = []
         for chunk_index in range(category.max_chunks):
@@ -275,6 +271,26 @@ class InvestmentKnowledgeService:
                 if chunk_index < len(chunks):
                     selected.append(chunks[chunk_index])
         return selected
+
+    def _resolve_category_documents(self, category: InvestmentKnowledgeCategory) -> list[str]:
+        """展开分类中的文档路径和目录通配符。
+
+        创建日期：2026-05-05
+        author: sunshengxian
+        """
+
+        documents: list[str] = []
+        for document in category.documents:
+            if not any(marker in document for marker in ("*", "?", "[")):
+                documents.append(document)
+                continue
+            matches = sorted(
+                path
+                for path in self.doc_root.glob(document)
+                if path.is_file() and path.is_relative_to(self.doc_root)
+            )
+            documents.extend(path.relative_to(self.doc_root).as_posix() for path in matches)
+        return documents
 
     def _read_document_chunks(
         self,
