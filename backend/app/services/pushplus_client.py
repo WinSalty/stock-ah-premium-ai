@@ -149,11 +149,19 @@ class PushplusClient:
             raise PushplusError("PushPlus token 未配置")
         if not secret_key:
             raise PushplusError("PushPlus secretKey 未配置，无法调用好友开放接口")
-        data = self._request(
-            "POST",
-            "/api/common/openApi/getAccessKey",
-            json={"token": token, "secretKey": secret_key},
-        )
+        try:
+            data = self._request(
+                "POST",
+                "/api/common/openApi/getAccessKey",
+                json={"token": token, "secretKey": secret_key},
+            )
+        except PushplusError as exc:
+            if "请求未授权" in str(exc):
+                raise PushplusError(
+                    "PushPlus 开放接口请求未授权，请确认已开启开放接口、SecretKey 与 "
+                    "PushPlus 后台一致，并将当前服务器公网 IP 加入安全 IP 列表"
+                ) from exc
+            raise
         access_key = data.get("accessKey") if isinstance(data, dict) else None
         if not access_key:
             raise PushplusError("PushPlus 未返回 AccessKey")
