@@ -430,6 +430,10 @@ export interface PushplusBindRequest {
   friend_id: number;
 }
 
+export interface AdminPushplusBindRequest extends PushplusBindRequest {
+  user_id: number;
+}
+
 export interface TestPushRequest {
   title?: string;
   content?: string;

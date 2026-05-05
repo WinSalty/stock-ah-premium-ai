@@ -1,6 +1,7 @@
 import { requestJson } from './client';
 import type {
   AlertEvent,
+  AdminPushplusBindRequest,
   PushplusBindRequest,
   PushplusBinding,
   PushplusFriend,
@@ -27,6 +28,13 @@ export function fetchPushplusFriends() {
 
 export function fetchAdminPushplusBindings() {
   return requestJson<PushplusBinding[]>('/api/notifications/admin/pushplus/bindings');
+}
+
+export function adminBindPushplusFriend(payload: AdminPushplusBindRequest) {
+  return requestJson<PushplusBinding>('/api/notifications/admin/pushplus/bindings', {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  });
 }
 
 export function bindPushplusFriend(payload: PushplusBindRequest) {

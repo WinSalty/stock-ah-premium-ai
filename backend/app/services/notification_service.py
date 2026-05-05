@@ -152,14 +152,30 @@ class NotificationService:
         author: sunshengxian
         """
 
+        return self.bind_pushplus_friend_for_user(user.id, friend_id)
+
+    def bind_pushplus_friend_for_user(
+        self,
+        user_id: int,
+        friend_id: int,
+    ) -> PushplusBindingResponse:
+        """管理员将指定系统用户绑定到 PushPlus 好友令牌。
+
+        创建日期：2026-05-05
+        author: sunshengxian
+        """
+
+        user = self.db.get(AppUser, user_id)
+        if user is None or not user.is_active:
+            raise NotificationError("绑定用户不存在或已停用")
         friend = self._find_friend(friend_id)
         existing = self.db.scalar(
-            select(PushplusBinding).where(PushplusBinding.user_id == user.id)
+            select(PushplusBinding).where(PushplusBinding.user_id == user_id)
         )
         now = self._now_naive()
         if existing is None:
             existing = PushplusBinding(
-                user_id=user.id,
+                user_id=user_id,
                 friend_id=friend.friend_id,
                 friend_token=friend.token,
                 bound_at=now,

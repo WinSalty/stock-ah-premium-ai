@@ -23,6 +23,7 @@ from app.services.notification_service import (
     NotificationError,
     NotificationService,
 )
+from app.services.pushplus_client import PushplusFriend
 from app.services.watchlist_service import WatchlistError, WatchlistService
 
 
@@ -33,12 +34,16 @@ class FakePushplusClient:
     author: sunshengxian
     """
 
-    def __init__(self) -> None:
+    def __init__(self, friends: list[PushplusFriend] | None = None) -> None:
         self.sent: list[tuple[str, str, str]] = []
+        self.friends = friends or []
 
     def send_friend_message(self, to_token: str, title: str, content: str) -> str:
         self.sent.append((to_token, title, content))
         return f"msg-{len(self.sent)}"
+
+    def list_friends(self) -> list[PushplusFriend]:
+        return self.friends
 
 
 def add_user_with_binding(db: Session) -> AppUser:
@@ -220,6 +225,48 @@ def test_pushplus_callback_rejects_invalid_qr_signature() -> None:
             error_message = ""
 
     assert "签名无效" in error_message
+
+
+def test_admin_bind_pushplus_friend_for_user_stores_friend_token() -> None:
+    """确认管理员手动绑定指定用户时保存 PushPlus 好友令牌。
+
+    创建日期：2026-05-05
+    author: sunshengxian
+    """
+
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    fake_client = FakePushplusClient(
+        friends=[
+            PushplusFriend(
+                id=11,
+                friend_id=3001,
+                token="friend-token-3001",
+                nick_name="手动好友",
+                remark="",
+                is_follow=True,
+                create_time=None,
+            )
+        ]
+    )
+    with Session(engine) as db:
+        user = AppUser(username="manual-bind", password_hash="hash", role="USER", is_active=True)
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+        user_id = user.id
+
+        service = NotificationService(db, pushplus_client=fake_client)
+        binding = service.bind_pushplus_friend_for_user(
+            user_id,
+            3001,
+        )
+        stored = db.scalar(select(PushplusBinding).where(PushplusBinding.user_id == user_id))
+
+    assert binding.is_bound is True
+    assert binding.friend_id == 3001
+    assert stored is not None
+    assert stored.friend_token == "friend-token-3001"
 
 
 def test_watchlist_alert_requires_pushplus_binding() -> None:

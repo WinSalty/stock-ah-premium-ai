@@ -111,6 +111,16 @@ class PushplusBindRequest(BaseModel):
     friend_id: int
 
 
+class AdminPushplusBindRequest(PushplusBindRequest):
+    """管理员手动绑定系统用户和 PushPlus 好友请求。
+
+    创建日期：2026-05-05
+    author: sunshengxian
+    """
+
+    user_id: int
+
+
 class TestPushRequest(BaseModel):
     """测试推送请求。
 

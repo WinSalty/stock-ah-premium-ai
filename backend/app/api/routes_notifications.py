@@ -12,6 +12,7 @@ from app.db.models.notification import AlertEvent
 from app.db.session import get_db
 from app.schemas.notification import (
     AdminPushplusBindingResponse,
+    AdminPushplusBindRequest,
     AlertEventResponse,
     PushplusBindingResponse,
     PushplusBindRequest,
@@ -97,6 +98,30 @@ def bind_pushplus_friend(
 
     try:
         return NotificationService(db).bind_pushplus_friend(admin_user, payload.friend_id)
+    except NotificationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post(
+    "/notifications/admin/pushplus/bindings",
+    response_model=PushplusBindingResponse,
+)
+def admin_bind_pushplus_friend(
+    payload: AdminPushplusBindRequest,
+    db: DbSession,
+    admin_user: AdminUser,
+) -> PushplusBindingResponse:
+    """管理员手动绑定系统用户与 PushPlus 好友。
+
+    创建日期：2026-05-05
+    author: sunshengxian
+    """
+
+    try:
+        return NotificationService(db).bind_pushplus_friend_for_user(
+            payload.user_id,
+            payload.friend_id,
+        )
     except NotificationError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 

@@ -1,11 +1,12 @@
 import { Button, Checkbox, Form, Input, Modal, Select, Space, Switch, Table, Tag, Typography, message } from 'antd';
-import { Edit3, KeyRound, Plus, RefreshCw } from 'lucide-react';
+import { Edit3, KeyRound, Link2, Plus, RefreshCw } from 'lucide-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import PageHeader from '../components/PageHeader';
 import { createInvitation, fetchInvitations, fetchUsers, updateUser } from '../api/auth';
-import { fetchAdminPushplusBindings, fetchPushplusFriends } from '../api/notifications';
+import { adminBindPushplusFriend, fetchAdminPushplusBindings, fetchPushplusFriends } from '../api/notifications';
 import type {
+  AdminPushplusBindRequest,
   InvitationResponse,
   PushplusBinding,
   PushplusFriend,
@@ -38,6 +39,7 @@ interface UserAdminPageProps {
 function UserAdminPage({ currentUser, onUserUpdated }: UserAdminPageProps) {
   const [invitationForm] = Form.useForm<{ note?: string }>();
   const [editForm] = Form.useForm<UserUpdateRequest>();
+  const [pushplusBindForm] = Form.useForm<AdminPushplusBindRequest>();
   const [editingUser, setEditingUser] = useState<UserInfo | null>(null);
   const queryClient = useQueryClient();
   const users = useQuery({
@@ -77,6 +79,16 @@ function UserAdminPage({ currentUser, onUserUpdated }: UserAdminPageProps) {
       }
     },
     onError: (error) => message.error(error instanceof Error ? error.message : '保存失败')
+  });
+  const bindPushplusMutation = useMutation({
+    mutationFn: adminBindPushplusFriend,
+    onSuccess: () => {
+      message.success('PushPlus 好友绑定已保存');
+      pushplusBindForm.resetFields();
+      queryClient.invalidateQueries({ queryKey: ['pushplus-admin-bindings'] });
+      queryClient.invalidateQueries({ queryKey: ['pushplus-binding'] });
+    },
+    onError: (error) => message.error(error instanceof Error ? error.message : '绑定失败')
   });
 
   const openEditModal = (user: UserInfo) => {
@@ -184,6 +196,52 @@ function UserAdminPage({ currentUser, onUserUpdated }: UserAdminPageProps) {
             </Button>
           </Space>
         </div>
+        <Form
+          className="pushplus-manual-bind-form"
+          form={pushplusBindForm}
+          layout="inline"
+          onFinish={(values) => bindPushplusMutation.mutate(values)}
+        >
+          <Form.Item
+            name="user_id"
+            rules={[{ required: true, message: '请选择系统用户' }]}
+          >
+            <Select
+              className="pushplus-manual-bind-select"
+              placeholder="选择系统用户"
+              options={(users.data || []).map((item) => ({
+                value: item.id,
+                label: item.display_name ? `${item.display_name}（${item.username}）` : item.username
+              }))}
+              showSearch
+              optionFilterProp="label"
+            />
+          </Form.Item>
+          <Form.Item
+            name="friend_id"
+            rules={[{ required: true, message: '请选择 PushPlus 好友' }]}
+          >
+            <Select
+              className="pushplus-manual-bind-select"
+              placeholder="选择 PushPlus 好友"
+              options={(pushplusFriends.data || []).map((item) => ({
+                value: item.friend_id,
+                label: item.remark || item.nick_name || `好友 ${item.friend_id}`
+              }))}
+              showSearch
+              optionFilterProp="label"
+              notFoundContent="请先刷新好友列表"
+            />
+          </Form.Item>
+          <Button
+            type="primary"
+            htmlType="submit"
+            icon={<Link2 size={16} />}
+            loading={bindPushplusMutation.isPending}
+          >
+            手动绑定
+          </Button>
+        </Form>
         <div className="pushplus-admin-grid">
           <Table<PushplusBinding>
             rowKey={(record) => `${record.user_id}-${record.friend_id || 'none'}`}

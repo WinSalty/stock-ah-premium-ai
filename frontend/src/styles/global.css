@@ -617,6 +617,15 @@ body {
   gap: 16px;
 }
 
+.pushplus-manual-bind-form {
+  gap: 8px;
+  margin: 4px 0 16px;
+}
+
+.pushplus-manual-bind-select {
+  min-width: 220px;
+}
+
 .pushplus-binding-row {
   display: grid;
   min-width: 0;
@@ -1335,6 +1344,14 @@ body {
 
   .profile-pushplus-head {
     flex-direction: column;
+  }
+
+  .pushplus-manual-bind-form {
+    display: grid;
+  }
+
+  .pushplus-manual-bind-select {
+    width: 100%;
   }
 
   .overview-chart-head {
