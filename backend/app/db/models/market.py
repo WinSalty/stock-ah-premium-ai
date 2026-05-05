@@ -246,6 +246,7 @@ class WatchlistStock(TimestampMixin, Base):
     display_name: Mapped[str | None] = mapped_column(String(128))
     preferred_direction: Mapped[str] = mapped_column(String(8), nullable=False, default="HA")
     target_premium_pct: Mapped[Decimal | None] = mapped_column(DECIMAL(20, 8))
+    push_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     price_alert_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     price_alert_market: Mapped[str] = mapped_column(String(8), nullable=False, default="UNKNOWN")
     price_alert_operator: Mapped[str] = mapped_column(String(8), nullable=False, default="GTE")

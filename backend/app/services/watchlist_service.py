@@ -85,6 +85,7 @@ class WatchlistService:
             display_name=payload.display_name,
             preferred_direction=self._normalize_direction(payload.preferred_direction),
             target_premium_pct=payload.target_premium_pct,
+            push_enabled=payload.push_enabled,
             price_alert_enabled=payload.price_alert_enabled,
             price_alert_market=self._normalize_price_alert_market(payload.price_alert_market),
             price_alert_operator=self._normalize_price_alert_operator(payload.price_alert_operator),
@@ -180,7 +181,7 @@ class WatchlistService:
         return normalized if normalized in {"GTE", "LTE"} else "GTE"
 
     def _ensure_push_binding_for_alert(self, item: WatchlistStock) -> None:
-        if not self._has_alert_config(item):
+        if not item.push_enabled or not self._has_alert_config(item):
             return
         has_binding = self.db.scalar(
             select(PushplusBinding.id).where(

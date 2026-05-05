@@ -63,6 +63,7 @@ interface WatchlistFormValues {
   display_name?: string;
   preferred_direction: PremiumDirection;
   target_premium_pct?: number | null;
+  push_enabled?: boolean;
   price_alert_enabled?: boolean;
   price_alert_market?: PriceAlertMarket;
   price_alert_operator?: PriceAlertOperator;
@@ -164,6 +165,7 @@ function PremiumPage() {
   const [form] = Form.useForm<FilterValues>();
   const [watchlistForm] = Form.useForm<WatchlistFormValues>();
   const watchlistDirection = Form.useWatch('preferred_direction', watchlistForm);
+  const watchlistPushEnabled = Form.useWatch('push_enabled', watchlistForm);
   const watchlistTargetPremium = Form.useWatch('target_premium_pct', watchlistForm);
   const watchlistPriceAlertEnabled = Form.useWatch('price_alert_enabled', watchlistForm);
   const watchlistPriceAlertMarket = Form.useWatch('price_alert_market', watchlistForm);
@@ -217,6 +219,7 @@ function PremiumPage() {
           display_name: displayName || null,
           preferred_direction: values.preferred_direction,
           target_premium_pct: values.target_premium_pct ?? null,
+          push_enabled: values.push_enabled ?? true,
           price_alert_enabled: Boolean(values.price_alert_enabled),
           price_alert_market: values.price_alert_market || 'UNKNOWN',
           price_alert_operator: values.price_alert_operator || 'GTE',
@@ -230,6 +233,7 @@ function PremiumPage() {
         display_name: displayName || undefined,
         preferred_direction: values.preferred_direction,
         target_premium_pct: values.target_premium_pct ?? undefined,
+        push_enabled: values.push_enabled ?? true,
         price_alert_enabled: Boolean(values.price_alert_enabled),
         price_alert_market: values.price_alert_market || 'UNKNOWN',
         price_alert_operator: values.price_alert_operator || 'GTE',
@@ -307,6 +311,7 @@ function PremiumPage() {
     price_alert_target_price: watchlistPriceAlertTarget,
     holding_market: 'UNKNOWN'
   });
+  const modalRequiresBinding = modalHasAlertConfig && watchlistPushEnabled !== false;
   useEffect(() => {
     if (!qrCodeMutation.data || pushplusBinding.data?.is_bound) {
       return undefined;
@@ -395,6 +400,7 @@ function PremiumPage() {
       display_name: item.a_name || item.hk_name || undefined,
       preferred_direction: item.metric_direction || filters.direction || 'HA',
       target_premium_pct: undefined,
+      push_enabled: true,
       price_alert_enabled: false,
       price_alert_market: 'UNKNOWN',
       price_alert_operator: 'GTE',
@@ -412,6 +418,7 @@ function PremiumPage() {
       display_name: item.watchlist_display_name || item.a_name || item.hk_name || undefined,
       preferred_direction: item.preferred_direction || item.metric_direction || 'HA',
       target_premium_pct: numberValue(item.target_premium_pct),
+      push_enabled: item.push_enabled ?? true,
       price_alert_enabled: Boolean(item.price_alert_enabled),
       price_alert_market: (item.price_alert_market as PriceAlertMarket) || 'UNKNOWN',
       price_alert_operator: (item.price_alert_operator as PriceAlertOperator) || 'GTE',
@@ -429,7 +436,7 @@ function PremiumPage() {
       return;
     }
     const values = await watchlistForm.validateFields();
-    if (hasAlertConfig(values) && !pushplusBinding.data?.is_bound) {
+    if (hasAlertConfig(values) && values.push_enabled !== false && !pushplusBinding.data?.is_bound) {
       message.warning('设置提醒前请先完成 PushPlus 扫码绑定');
       if (!qrCodeMutation.data && !qrCodeMutation.isPending) {
         qrCodeMutation.mutate();
@@ -608,7 +615,15 @@ function PremiumPage() {
               )}
             </div>
           ) : null}
-          {modalHasAlertConfig && !pushplusBinding.data?.is_bound ? (
+          <Form.Item
+            label="消息推送"
+            name="push_enabled"
+            valuePropName="checked"
+            extra="默认开启；关闭后仍保留自选提醒配置，但不会发送 PushPlus 消息。"
+          >
+            <Switch checkedChildren="开启" unCheckedChildren="关闭" />
+          </Form.Item>
+          {modalRequiresBinding && !pushplusBinding.data?.is_bound ? (
             <div className="pushplus-alert-bind-box">
               <Alert
                 showIcon

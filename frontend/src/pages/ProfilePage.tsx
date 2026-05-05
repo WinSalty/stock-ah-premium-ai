@@ -1,4 +1,4 @@
-import { Alert, Button, Empty, Form, Image, Input, List, Space, Tag, Typography, message } from 'antd';
+import { Alert, Button, Empty, Form, Image, Input, Space, Typography, message } from 'antd';
 import { Link2Off, QrCode, RefreshCw, Save, Send } from 'lucide-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect } from 'react';
@@ -6,9 +6,7 @@ import PageHeader from '../components/PageHeader';
 import { updateProfile } from '../api/auth';
 import {
   createPushplusQrCode,
-  fetchAdminPushplusBindings,
   fetchPushplusBinding,
-  fetchPushplusFriends,
   sendTestPush,
   unbindPushplusFriend
 } from '../api/notifications';
@@ -30,16 +28,6 @@ function ProfilePage({ user, onUserUpdated }: ProfilePageProps) {
   const binding = useQuery({
     queryKey: ['pushplus-binding'],
     queryFn: fetchPushplusBinding
-  });
-  const friends = useQuery({
-    queryKey: ['pushplus-friends'],
-    queryFn: fetchPushplusFriends,
-    enabled: false
-  });
-  const adminBindings = useQuery({
-    queryKey: ['pushplus-admin-bindings'],
-    queryFn: fetchAdminPushplusBindings,
-    enabled: user.role === 'ADMIN'
   });
   const updateMutation = useMutation({
     mutationFn: updateProfile,
@@ -212,65 +200,6 @@ function ProfilePage({ user, onUserUpdated }: ProfilePageProps) {
           </div>
         </div>
       </section>
-      {user.role === 'ADMIN' ? (
-        <section className="panel profile-panel profile-notification-panel">
-          <div className="query-result-head">
-            <div>
-              <div className="panel-title">PushPlus 管理</div>
-              <Typography.Text type="secondary">管理员可查看 PushPlus 好友和系统内绑定状态。</Typography.Text>
-            </div>
-            <Space wrap>
-              <Button
-                icon={<RefreshCw size={16} />}
-                loading={friends.isFetching}
-                onClick={() => friends.refetch()}
-              >
-                刷新好友
-              </Button>
-              <Button
-                icon={<RefreshCw size={16} />}
-                loading={adminBindings.isFetching}
-                onClick={() => adminBindings.refetch()}
-              >
-                刷新绑定
-              </Button>
-            </Space>
-          </div>
-          <div className="pushplus-admin-grid">
-            <List
-              size="small"
-              header={<Typography.Text strong>好友列表</Typography.Text>}
-              bordered
-              dataSource={friends.data || []}
-              locale={{ emptyText: '点击刷新好友获取列表' }}
-              renderItem={(friend) => (
-                <List.Item>
-                  <Typography.Text>{friend.remark || friend.nick_name || `好友 ${friend.friend_id}`}</Typography.Text>
-                  <Tag color={friend.is_follow ? 'green' : 'orange'}>{friend.is_follow ? '已关注' : '未关注'}</Tag>
-                </List.Item>
-              )}
-            />
-            <List
-              size="small"
-              header={<Typography.Text strong>绑定列表</Typography.Text>}
-              bordered
-              dataSource={adminBindings.data || []}
-              locale={{ emptyText: '暂无绑定记录' }}
-              renderItem={(item) => (
-                <List.Item>
-                  <div className="pushplus-binding-row">
-                    <Typography.Text strong>{item.username || item.user_id}</Typography.Text>
-                    <Typography.Text type="secondary">
-                      {item.friend_remark || item.friend_nick_name || item.friend_id || '未绑定'}
-                    </Typography.Text>
-                  </div>
-                  <Tag color={item.is_bound ? 'green' : 'default'}>{item.is_bound ? '已绑定' : item.status}</Tag>
-                </List.Item>
-              )}
-            />
-          </div>
-        </section>
-      ) : null}
     </main>
   );
 }

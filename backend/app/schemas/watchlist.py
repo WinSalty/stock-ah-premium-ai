@@ -21,6 +21,7 @@ class WatchlistCreate(BaseModel):
     display_name: str | None = Field(default=None, max_length=128)
     preferred_direction: str = "HA"
     target_premium_pct: Decimal | None = None
+    push_enabled: bool = True
     price_alert_enabled: bool = False
     price_alert_market: str = "UNKNOWN"
     price_alert_operator: str = "GTE"
@@ -41,6 +42,7 @@ class WatchlistUpdate(BaseModel):
     display_name: str | None = Field(default=None, max_length=128)
     preferred_direction: str | None = None
     target_premium_pct: Decimal | None = None
+    push_enabled: bool | None = None
     price_alert_enabled: bool | None = None
     price_alert_market: str | None = None
     price_alert_operator: str | None = None
@@ -65,6 +67,7 @@ class WatchlistResponse(OrmModel):
     display_name: str | None
     preferred_direction: str
     target_premium_pct: Decimal | None
+    push_enabled: bool
     price_alert_enabled: bool
     price_alert_market: str
     price_alert_operator: str

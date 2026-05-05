@@ -224,6 +224,7 @@ CREATE TABLE IF NOT EXISTS `watchlist_stock` (
   `display_name` VARCHAR(128) DEFAULT NULL COMMENT '用户自定义展示名',
   `preferred_direction` VARCHAR(8) NOT NULL DEFAULT 'HA' COMMENT '关注方向，AH 或 HA',
   `target_premium_pct` DECIMAL(20,8) DEFAULT NULL COMMENT '目标溢价或折价阈值，单位百分比',
+  `push_enabled` TINYINT(1) NOT NULL DEFAULT 1 COMMENT '是否启用消息推送，默认开启',
   `price_alert_enabled` TINYINT(1) NOT NULL DEFAULT 0 COMMENT '是否启用股价提醒',
   `price_alert_market` VARCHAR(8) NOT NULL DEFAULT 'UNKNOWN' COMMENT '股价提醒市场，A、H 或 UNKNOWN',
   `price_alert_operator` VARCHAR(8) NOT NULL DEFAULT 'GTE' COMMENT '股价提醒触发方向，GTE 大于等于，LTE 小于等于',

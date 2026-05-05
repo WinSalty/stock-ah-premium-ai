@@ -285,6 +285,7 @@ ALERT_COOLDOWN_MINUTES=30
 - 真实推送仍调用 `/send`，使用 `to` 字段填写好友令牌；好友令牌仅存后端，不返回前端明文。
 - `/Users/salty/codeProject/ai/doc/pushplus.txt` 可同时保存用户 token 和 SecretKey，支持 `PUSHPLUS_TOKEN=...` / `PUSHPLUS_SECRET_KEY=...` 或前两行分别写 token、SecretKey。
 - 阈值提醒和股价提醒只在对应市场交易日发送；同一个提醒按 `用户 + 自选股 + 条件 + 交易日` 去重，每天最多推送一次。
+- 自选股提醒配置包含消息推送开关，默认开启；关闭后保留提醒条件但不发送 PushPlus 消息，也不要求用户完成绑定。
 
 推送内容建议：
 

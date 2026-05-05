@@ -215,6 +215,80 @@ def test_watchlist_alert_requires_pushplus_binding() -> None:
     assert "PushPlus" in error_message
 
 
+def test_watchlist_alert_can_disable_push_without_binding() -> None:
+    """确认关闭消息推送后可保存提醒配置且不要求 PushPlus 绑定。
+
+    创建日期：2026-05-05
+    author: sunshengxian
+    """
+
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    with Session(engine) as db:
+        user = AppUser(username="push-off", password_hash="hash", role="USER", is_active=True)
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+
+        item = WatchlistService(db).create(
+            payload=WatchlistCreate(
+                a_ts_code="600036.SH",
+                hk_ts_code="03968.HK",
+                target_premium_pct=Decimal("30"),
+                push_enabled=False,
+            ),
+            user_id=user.id,
+        )
+
+    assert item.push_enabled is False
+
+
+def test_scan_skips_watchlist_when_push_disabled() -> None:
+    """确认关闭消息推送后扫描任务不发送 PushPlus 消息。
+
+    创建日期：2026-05-05
+    author: sunshengxian
+    """
+
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    target_day = date(2026, 5, 5)
+    fake_client = FakePushplusClient()
+    with Session(engine) as db:
+        user = add_user_with_binding(db)
+        add_joint_trade_day(db, target_day)
+        db.add_all(
+            [
+                WatchlistStock(
+                    user_id=user.id,
+                    a_ts_code="600036.SH",
+                    hk_ts_code="03968.HK",
+                    target_premium_pct=Decimal("30"),
+                    push_enabled=False,
+                    is_active=True,
+                ),
+                OfficialAHComparison(
+                    trade_date=target_day,
+                    a_ts_code="600036.SH",
+                    hk_ts_code="03968.HK",
+                    ah_premium=Decimal("31"),
+                    ha_premium=Decimal("-23.664"),
+                    is_realtime=False,
+                    data_source="TUSHARE_OFFICIAL",
+                ),
+            ]
+        )
+        db.commit()
+
+        events = NotificationService(db, pushplus_client=fake_client).scan_alerts_for_day(
+            target_day,
+            user.id,
+        )
+
+    assert events == []
+    assert fake_client.sent == []
+
+
 def test_price_alert_skips_when_market_is_closed() -> None:
     """确认股价提醒不在休市日推送。
 

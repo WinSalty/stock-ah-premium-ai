@@ -1,10 +1,17 @@
 import { Button, Checkbox, Form, Input, Modal, Select, Space, Switch, Table, Tag, Typography, message } from 'antd';
-import { Edit3, KeyRound, Plus } from 'lucide-react';
+import { Edit3, KeyRound, Plus, RefreshCw } from 'lucide-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import PageHeader from '../components/PageHeader';
 import { createInvitation, fetchInvitations, fetchUsers, updateUser } from '../api/auth';
-import type { InvitationResponse, UserInfo, UserUpdateRequest } from '../types/domain';
+import { fetchAdminPushplusBindings, fetchPushplusFriends } from '../api/notifications';
+import type {
+  InvitationResponse,
+  PushplusBinding,
+  PushplusFriend,
+  UserInfo,
+  UserUpdateRequest
+} from '../types/domain';
 import { formatEast8DateTime } from '../utils/datetime';
 
 const menuPermissionOptions = [
@@ -40,6 +47,15 @@ function UserAdminPage({ currentUser, onUserUpdated }: UserAdminPageProps) {
   const invitations = useQuery({
     queryKey: ['invitations'],
     queryFn: fetchInvitations
+  });
+  const pushplusBindings = useQuery({
+    queryKey: ['pushplus-admin-bindings'],
+    queryFn: fetchAdminPushplusBindings
+  });
+  const pushplusFriends = useQuery({
+    queryKey: ['pushplus-friends'],
+    queryFn: fetchPushplusFriends,
+    enabled: false
   });
   const createMutation = useMutation({
     mutationFn: createInvitation,
@@ -142,6 +158,83 @@ function UserAdminPage({ currentUser, onUserUpdated }: UserAdminPageProps) {
             }
           ]}
         />
+      </section>
+      <section className="panel user-admin-table-panel">
+        <div className="query-result-head">
+          <div>
+            <div className="panel-title">PushPlus 绑定管理</div>
+            <Typography.Text type="secondary">
+              用户扫码成为系统推送账号好友后，绑定状态会写入这里；好友列表仅用于排查。
+            </Typography.Text>
+          </div>
+          <Space wrap>
+            <Button
+              icon={<RefreshCw size={16} />}
+              loading={pushplusBindings.isFetching}
+              onClick={() => pushplusBindings.refetch()}
+            >
+              刷新绑定
+            </Button>
+            <Button
+              icon={<RefreshCw size={16} />}
+              loading={pushplusFriends.isFetching}
+              onClick={() => pushplusFriends.refetch()}
+            >
+              刷新好友
+            </Button>
+          </Space>
+        </div>
+        <div className="pushplus-admin-grid">
+          <Table<PushplusBinding>
+            rowKey={(record) => `${record.user_id}-${record.friend_id || 'none'}`}
+            size="small"
+            loading={pushplusBindings.isLoading}
+            dataSource={pushplusBindings.data || []}
+            pagination={false}
+            columns={[
+              { title: '系统用户', dataIndex: 'username', width: 160 },
+              {
+                title: '绑定好友',
+                render: (_, record) => record.friend_remark || record.friend_nick_name || record.friend_id || '-'
+              },
+              {
+                title: '状态',
+                width: 110,
+                render: (_, record) => (
+                  <Tag color={record.is_bound ? 'green' : 'default'}>
+                    {record.is_bound ? '已绑定' : record.status}
+                  </Tag>
+                )
+              },
+              {
+                title: '关注',
+                width: 100,
+                render: (_, record) =>
+                  record.is_follow ? <Tag color="green">已关注</Tag> : <Tag color="orange">未关注</Tag>
+              }
+            ]}
+          />
+          <Table<PushplusFriend>
+            rowKey="friend_id"
+            size="small"
+            loading={pushplusFriends.isFetching}
+            dataSource={pushplusFriends.data || []}
+            pagination={false}
+            locale={{ emptyText: '点击刷新好友获取列表' }}
+            columns={[
+              {
+                title: 'PushPlus 好友',
+                render: (_, record) => record.remark || record.nick_name || `好友 ${record.friend_id}`
+              },
+              {
+                title: '状态',
+                width: 100,
+                render: (_, record) =>
+                  record.is_follow ? <Tag color="green">已关注</Tag> : <Tag color="orange">未关注</Tag>
+              }
+            ]}
+          />
+        </div>
       </section>
       <section className="panel user-admin-table-panel">
         <div className="query-result-head">

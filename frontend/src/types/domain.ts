@@ -182,6 +182,7 @@ export interface PremiumItem {
   watchlist_display_name: string | null;
   preferred_direction: PremiumDirection | null;
   target_premium_pct: string | null;
+  push_enabled: boolean | null;
   price_alert_enabled: boolean | null;
   price_alert_market: PriceAlertMarket | string | null;
   price_alert_operator: PriceAlertOperator | string | null;
@@ -340,6 +341,7 @@ export interface WatchlistStock {
   display_name: string | null;
   preferred_direction: PremiumDirection;
   target_premium_pct: string | null;
+  push_enabled: boolean;
   price_alert_enabled: boolean;
   price_alert_market: PriceAlertMarket | string;
   price_alert_operator: PriceAlertOperator | string;
@@ -363,6 +365,7 @@ export interface WatchlistCreate {
   display_name?: string;
   preferred_direction?: PremiumDirection;
   target_premium_pct?: string | number;
+  push_enabled?: boolean;
   price_alert_enabled?: boolean;
   price_alert_market?: PriceAlertMarket;
   price_alert_operator?: PriceAlertOperator;
@@ -377,6 +380,7 @@ export interface WatchlistUpdate {
   display_name?: string | null;
   preferred_direction?: PremiumDirection;
   target_premium_pct?: string | number | null;
+  push_enabled?: boolean | null;
   price_alert_enabled?: boolean | null;
   price_alert_market?: PriceAlertMarket | null;
   price_alert_operator?: PriceAlertOperator | null;

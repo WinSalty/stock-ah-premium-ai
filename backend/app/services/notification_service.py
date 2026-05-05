@@ -262,6 +262,8 @@ class NotificationService:
         watchlist_items = list(self.db.scalars(statement).all())
         events: list[AlertEvent] = []
         for item in watchlist_items:
+            if not item.push_enabled:
+                continue
             if self._active_binding(item.user_id) is None:
                 continue
             threshold_event = self._scan_threshold_alert(item, target_day)
