@@ -295,6 +295,7 @@ def create_message(
         exclude_none=True,
     )
     context["user_id"] = current_user.id
+    context["session_id"] = session_id
     context["conversation_history"] = history
     _touch_session(session, visible_question, has_history=bool(history))
     db.commit()
@@ -354,6 +355,7 @@ def create_message_stream(
         exclude_none=True,
     )
     context["user_id"] = current_user.id
+    context["session_id"] = session_id
     context["conversation_history"] = history
 
     def stream() -> Iterator[str]:

@@ -1,5 +1,5 @@
 from app.db.models.auth import AppUser, InvitationCode
-from app.db.models.chat import LlmChatMessage, LlmChatSession
+from app.db.models.chat import LlmCallMetric, LlmChatMessage, LlmChatSession
 from app.db.models.market import (
     ADailyQuote,
     AHStockPair,
@@ -29,6 +29,7 @@ __all__ = [
     "HKTradeCalendar",
     "HsgtConstituent",
     "InvitationCode",
+    "LlmCallMetric",
     "LlmChatMessage",
     "LlmChatSession",
     "OfficialAHComparison",

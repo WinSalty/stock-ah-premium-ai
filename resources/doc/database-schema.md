@@ -52,6 +52,7 @@ A 股选股因子：
 - `data_quality_issue`：数据质量问题记录。
 - `llm_chat_session`：LLM 问答会话，用于保存投资问答主题和更新时间，按 `user_id` 隔离，`deleted_at` 非空表示会话已逻辑删除。
 - `llm_chat_message`：LLM 问答消息，用于保存用户问题、助手回答、内部查询口径和结果预览，支持后续会话上下文记忆。
+- `llm_call_metric`：LLM 调用耗时指标，按 `question_id` 串联分类、SQL、回答和流式首包等阶段，不保存问题原文和 API Key。
 
 ## 使用建议
 

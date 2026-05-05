@@ -14,6 +14,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.core.config import Settings, get_settings
+from app.db.models.chat import LlmCallMetric
 from app.services.investment_knowledge_service import InvestmentKnowledgeService
 from app.services.sql_guard_service import SqlGuardError, SqlGuardService
 
@@ -222,6 +223,8 @@ class LlmCallTrace:
 
     question_id: str
     phase: str
+    user_id: int | None = None
+    session_id: int | None = None
 
 
 class LlmService:
@@ -250,17 +253,44 @@ class LlmService:
         """
 
         question_id = self._question_trace_id(question)
+        user_id, session_id = self._trace_scope(context or {})
         started_at = perf_counter()
         selected_model = self._normalize_chat_model(model or self.settings.llm_model)
-        if not self._is_investment_related_question(question, question_id=question_id):
-            self._log_total_elapsed("sync_out_of_scope", question_id, selected_model, started_at)
+        if not self._is_investment_related_question(
+            question,
+            question_id=question_id,
+            user_id=user_id,
+            session_id=session_id,
+        ):
+            self._log_total_elapsed(
+                "sync_out_of_scope",
+                question_id,
+                selected_model,
+                started_at,
+                user_id=user_id,
+                session_id=session_id,
+            )
             return ChatAnswer(answer=OUT_OF_SCOPE_MESSAGE, sql=None, rows=[])
         if self._is_service_intro_question(question):
-            self._log_total_elapsed("sync_intro", question_id, selected_model, started_at)
+            self._log_total_elapsed(
+                "sync_intro",
+                question_id,
+                selected_model,
+                started_at,
+                user_id=user_id,
+                session_id=session_id,
+            )
             return ChatAnswer(answer=SERVICE_INTRO_MESSAGE, sql=None, rows=[])
         endpoint = self._model_endpoint(selected_model)
         if not endpoint.api_key or not endpoint.model:
-            self._log_total_elapsed("sync_not_configured", question_id, selected_model, started_at)
+            self._log_total_elapsed(
+                "sync_not_configured",
+                question_id,
+                selected_model,
+                started_at,
+                user_id=user_id,
+                session_id=session_id,
+            )
             return ChatAnswer(
                 answer=(
                     f"{endpoint.provider} LLM 未配置。请设置对应 API Key 文件或环境变量，"
@@ -274,15 +304,30 @@ class LlmService:
             context or {},
             selected_model,
             question_id,
+            user_id,
+            session_id,
         )
         answer = self._chat_completion(
             prompt,
             system_prompt=INVESTMENT_ADVISOR_SYSTEM_PROMPT,
             model=selected_model,
-            trace=LlmCallTrace(question_id=question_id, phase="answer"),
+            trace=LlmCallTrace(
+                question_id=question_id,
+                phase="answer",
+                user_id=user_id,
+                session_id=session_id,
+            ),
         )
         answer = self._strip_forbidden_preamble(answer)
-        self._log_total_elapsed("sync_done", question_id, selected_model, started_at, len(rows))
+        self._log_total_elapsed(
+            "sync_done",
+            question_id,
+            selected_model,
+            started_at,
+            len(rows),
+            user_id=user_id,
+            session_id=session_id,
+        )
         return ChatAnswer(answer=answer, sql=sql, rows=rows)
 
     def stream_answer(
@@ -298,13 +343,33 @@ class LlmService:
         """
 
         question_id = self._question_trace_id(question)
+        user_id, session_id = self._trace_scope(context or {})
         started_at = perf_counter()
         selected_model = self._normalize_chat_model(model or self.settings.llm_model)
-        if not self._is_investment_related_question(question, question_id=question_id):
-            self._log_total_elapsed("stream_out_of_scope", question_id, selected_model, started_at)
+        if not self._is_investment_related_question(
+            question,
+            question_id=question_id,
+            user_id=user_id,
+            session_id=session_id,
+        ):
+            self._log_total_elapsed(
+                "stream_out_of_scope",
+                question_id,
+                selected_model,
+                started_at,
+                user_id=user_id,
+                session_id=session_id,
+            )
             return None, [], iter([OUT_OF_SCOPE_MESSAGE])
         if self._is_service_intro_question(question):
-            self._log_total_elapsed("stream_intro", question_id, selected_model, started_at)
+            self._log_total_elapsed(
+                "stream_intro",
+                question_id,
+                selected_model,
+                started_at,
+                user_id=user_id,
+                session_id=session_id,
+            )
             return None, [], iter([SERVICE_INTRO_MESSAGE])
         endpoint = self._model_endpoint(selected_model)
         if not endpoint.api_key or not endpoint.model:
@@ -317,6 +382,8 @@ class LlmService:
                 question_id,
                 selected_model,
                 started_at,
+                user_id=user_id,
+                session_id=session_id,
             )
             return None, [], iter([message])
         sql, rows, prompt = self._prepare_answer(
@@ -324,13 +391,20 @@ class LlmService:
             context or {},
             selected_model,
             question_id,
+            user_id,
+            session_id,
         )
         return sql, rows, self._clean_answer_stream(
             self._chat_completion_stream(
                 prompt,
                 system_prompt=INVESTMENT_ADVISOR_SYSTEM_PROMPT,
                 model=selected_model,
-                trace=LlmCallTrace(question_id=question_id, phase="answer_stream"),
+                trace=LlmCallTrace(
+                    question_id=question_id,
+                    phase="answer_stream",
+                    user_id=user_id,
+                    session_id=session_id,
+                ),
                 total_started_at=started_at,
                 row_count=len(rows),
             )
@@ -342,6 +416,8 @@ class LlmService:
         context: dict[str, Any],
         model: str,
         question_id: str,
+        user_id: int | None,
+        session_id: int | None,
     ) -> tuple[str | None, list[dict[str, Any]], str]:
         sql: str | None = None
         rows: list[dict[str, Any]] = []
@@ -352,6 +428,8 @@ class LlmService:
                     context,
                     model,
                     question_id,
+                    user_id,
+                    session_id,
                 )
                 for attempt in range(2):
                     try:
@@ -368,12 +446,32 @@ class LlmService:
                             len(rows),
                             (perf_counter() - sql_started_at) * 1000,
                         )
+                        self._record_llm_metric(
+                            phase="execute_sql",
+                            question_id=question_id,
+                            user_id=user_id,
+                            session_id=session_id,
+                            provider="Database",
+                            model=None,
+                            elapsed_ms=(perf_counter() - sql_started_at) * 1000,
+                            row_count=len(rows),
+                            success=True,
+                        )
                         sql = guarded.sql
                         break
                     except (SQLAlchemyError, SqlGuardError) as exc:
                         if attempt == 1:
                             raise
-                        sql = self._repair_sql(question, context, sql, str(exc), model, question_id)
+                        sql = self._repair_sql(
+                            question,
+                            context,
+                            sql,
+                            str(exc),
+                            model,
+                            question_id,
+                            user_id,
+                            session_id,
+                        )
             except (
                 SQLAlchemyError,
                 SqlGuardError,
@@ -392,13 +490,20 @@ class LlmService:
         context: dict[str, Any],
         model: str,
         question_id: str,
+        user_id: int | None,
+        session_id: int | None,
     ) -> str:
         prompt = self._sql_prompt(question, context)
         content = self._chat_completion(
             prompt,
             system_prompt=SQL_SYSTEM_PROMPT,
             model=model,
-            trace=LlmCallTrace(question_id=question_id, phase="generate_sql"),
+            trace=LlmCallTrace(
+                question_id=question_id,
+                phase="generate_sql",
+                user_id=user_id,
+                session_id=session_id,
+            ),
         )
         payload = self._extract_json(content)
         sql = payload.get("sql")
@@ -555,6 +660,8 @@ class LlmService:
                 endpoint.model,
                 total_started_at,
                 row_count,
+                user_id=trace.user_id,
+                session_id=trace.session_id,
             )
 
     def _normalize_chat_model(self, model: str | None) -> str:
@@ -628,6 +735,70 @@ class LlmService:
             return "-", "-"
         return trace.question_id, trace.phase
 
+    def _trace_scope(self, context: dict[str, Any]) -> tuple[int | None, int | None]:
+        """从问答上下文读取用户和会话范围。
+
+        创建日期：2026-05-05
+        author: sunshengxian
+        """
+
+        user_id = self._optional_int(context.get("user_id"))
+        session_id = self._optional_int(context.get("session_id"))
+        return user_id, session_id
+
+    def _optional_int(self, value: Any) -> int | None:
+        if value in (None, ""):
+            return None
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
+    def _record_llm_metric(
+        self,
+        *,
+        phase: str,
+        question_id: str,
+        user_id: int | None,
+        session_id: int | None,
+        provider: str | None,
+        model: str | None,
+        elapsed_ms: float | None = None,
+        first_chunk_ms: float | None = None,
+        output_chars: int = 0,
+        chunk_count: int = 0,
+        row_count: int = 0,
+        success: bool = True,
+        error_message: str | None = None,
+    ) -> None:
+        """记录 LLM 调用耗时指标，失败不影响问答主流程。
+
+        创建日期：2026-05-05
+        author: sunshengxian
+        """
+
+        metric = LlmCallMetric(
+            question_id=question_id,
+            user_id=user_id,
+            session_id=session_id,
+            phase=phase,
+            provider=provider,
+            model=model,
+            success=1 if success else 0,
+            elapsed_ms=elapsed_ms,
+            first_chunk_ms=first_chunk_ms,
+            output_chars=output_chars,
+            chunk_count=chunk_count,
+            row_count=row_count,
+            error_message=error_message[:512] if error_message else None,
+        )
+        try:
+            self.db.add(metric)
+            self.db.commit()
+        except Exception:
+            self.db.rollback()
+            logger.error("LLM 调用耗时指标落库失败", exc_info=True)
+
     def _log_llm_completion(
         self,
         endpoint: LlmEndpoint,
@@ -636,6 +807,7 @@ class LlmService:
         content: str,
     ) -> None:
         question_id, phase = self._trace_values(trace)
+        elapsed_ms = (perf_counter() - started_at) * 1000
         logger.info(
             "LLM 调用完成 question_id=%s phase=%s provider=%s model=%s elapsed_ms=%.1f "
             "output_chars=%s",
@@ -643,9 +815,21 @@ class LlmService:
             phase,
             endpoint.provider,
             endpoint.model,
-            (perf_counter() - started_at) * 1000,
+            elapsed_ms,
             len(content),
         )
+        if trace is not None:
+            self._record_llm_metric(
+                phase=trace.phase,
+                question_id=trace.question_id,
+                user_id=trace.user_id,
+                session_id=trace.session_id,
+                provider=endpoint.provider,
+                model=endpoint.model,
+                elapsed_ms=elapsed_ms,
+                output_chars=len(content),
+                success=True,
+            )
 
     def _log_llm_first_chunk(
         self,
@@ -654,14 +838,26 @@ class LlmService:
         started_at: float,
     ) -> None:
         question_id, phase = self._trace_values(trace)
+        first_chunk_ms = (perf_counter() - started_at) * 1000
         logger.info(
             "LLM 流式首包 question_id=%s phase=%s provider=%s model=%s first_chunk_ms=%.1f",
             question_id,
             phase,
             endpoint.provider,
             endpoint.model,
-            (perf_counter() - started_at) * 1000,
+            first_chunk_ms,
         )
+        if trace is not None:
+            self._record_llm_metric(
+                phase=f"{trace.phase}_first_chunk",
+                question_id=trace.question_id,
+                user_id=trace.user_id,
+                session_id=trace.session_id,
+                provider=endpoint.provider,
+                model=endpoint.model,
+                first_chunk_ms=first_chunk_ms,
+                success=True,
+            )
 
     def _log_llm_stream_done(
         self,
@@ -673,6 +869,7 @@ class LlmService:
         char_count: int,
     ) -> None:
         question_id, phase = self._trace_values(trace)
+        elapsed_ms = (perf_counter() - started_at) * 1000
         first_chunk_ms = (first_chunk_at - started_at) * 1000 if first_chunk_at else None
         logger.info(
             "LLM 流式完成 question_id=%s phase=%s provider=%s model=%s elapsed_ms=%.1f "
@@ -681,11 +878,25 @@ class LlmService:
             phase,
             endpoint.provider,
             endpoint.model,
-            (perf_counter() - started_at) * 1000,
+            elapsed_ms,
             f"{first_chunk_ms:.1f}" if first_chunk_ms is not None else "-",
             chunk_count,
             char_count,
         )
+        if trace is not None:
+            self._record_llm_metric(
+                phase=trace.phase,
+                question_id=trace.question_id,
+                user_id=trace.user_id,
+                session_id=trace.session_id,
+                provider=endpoint.provider,
+                model=endpoint.model,
+                elapsed_ms=elapsed_ms,
+                first_chunk_ms=first_chunk_ms,
+                output_chars=char_count,
+                chunk_count=chunk_count,
+                success=True,
+            )
 
     def _log_total_elapsed(
         self,
@@ -694,14 +905,28 @@ class LlmService:
         model: str,
         started_at: float,
         row_count: int = 0,
+        user_id: int | None = None,
+        session_id: int | None = None,
     ) -> None:
+        elapsed_ms = (perf_counter() - started_at) * 1000
         logger.info(
             "LLM 问答完成 question_id=%s phase=%s model=%s rows=%s total_elapsed_ms=%.1f",
             question_id,
             phase,
             model,
             row_count,
-            (perf_counter() - started_at) * 1000,
+            elapsed_ms,
+        )
+        self._record_llm_metric(
+            phase=phase,
+            question_id=question_id,
+            user_id=user_id,
+            session_id=session_id,
+            provider="Internal",
+            model=model,
+            elapsed_ms=elapsed_ms,
+            row_count=row_count,
+            success=True,
         )
 
     def _sql_prompt(self, question: str, context: dict[str, Any]) -> str:
@@ -739,6 +964,8 @@ class LlmService:
         error: str,
         model: str,
         question_id: str,
+        user_id: int | None,
+        session_id: int | None,
     ) -> str:
         payload = {
             "question": question,
@@ -758,7 +985,12 @@ class LlmService:
             prompt,
             system_prompt=SQL_SYSTEM_PROMPT,
             model=model,
-            trace=LlmCallTrace(question_id=question_id, phase="repair_sql"),
+            trace=LlmCallTrace(
+                question_id=question_id,
+                phase="repair_sql",
+                user_id=user_id,
+                session_id=session_id,
+            ),
         )
         payload = self._extract_json(content)
         repaired_sql = payload.get("sql")
@@ -919,6 +1151,8 @@ class LlmService:
         self,
         question: str,
         question_id: str | None = None,
+        user_id: int | None = None,
+        session_id: int | None = None,
     ) -> bool:
         if not question.strip():
             return False
@@ -931,6 +1165,8 @@ class LlmService:
                 trace=LlmCallTrace(
                     question_id=question_id or self._question_trace_id(question),
                     phase="classify",
+                    user_id=user_id,
+                    session_id=session_id,
                 ),
             )
             payload = self._extract_json(content)

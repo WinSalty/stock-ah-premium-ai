@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base, TimestampMixin
@@ -44,3 +44,28 @@ class LlmChatMessage(TimestampMixin, Base):
     sql_text: Mapped[str | None] = mapped_column(Text)
     result_preview_json: Mapped[str | None] = mapped_column(Text)
     session: Mapped[LlmChatSession] = relationship(back_populates="messages")
+
+
+class LlmCallMetric(TimestampMixin, Base):
+    """LLM 调用耗时指标。
+
+    创建日期：2026-05-05
+    author: sunshengxian
+    """
+
+    __tablename__ = "llm_call_metric"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    question_id: Mapped[str] = mapped_column(String(32), nullable=False)
+    user_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    session_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    phase: Mapped[str] = mapped_column(String(64), nullable=False)
+    provider: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    model: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    success: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    elapsed_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
+    first_chunk_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
+    output_chars: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    chunk_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    row_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    error_message: Mapped[str | None] = mapped_column(String(512), nullable=True)

@@ -3,14 +3,22 @@ from __future__ import annotations
 import json
 import zipfile
 from pathlib import Path
+from time import perf_counter
 from unittest.mock import Mock
 
+from sqlalchemy import create_engine, select
+from sqlalchemy.orm import Session
+
 from app.core.config import Settings
+from app.db.base import Base
+from app.db.models.chat import LlmCallMetric
 from app.services.investment_knowledge_service import InvestmentKnowledgeService
 from app.services.llm_service import (
     INVESTMENT_ADVISOR_SYSTEM_PROMPT,
     OUT_OF_SCOPE_MESSAGE,
     SERVICE_INTRO_MESSAGE,
+    LlmCallTrace,
+    LlmEndpoint,
     LlmService,
 )
 
@@ -378,6 +386,50 @@ def test_out_of_scope_message_is_soft_and_actionable() -> None:
 
     assert "不太在我的工作范围里" in OUT_OF_SCOPE_MESSAGE
     assert "你可以问我" in OUT_OF_SCOPE_MESSAGE
+
+
+def test_llm_completion_metric_is_persisted() -> None:
+    """确认 LLM 调用耗时指标会落库。
+
+    创建日期：2026-05-05
+    author: sunshengxian
+    """
+
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    with Session(engine) as db:
+        service = LlmService(
+            db,
+            settings=Settings(llm_api_key="test-key", llm_api_key_file=None),
+        )
+
+        service._log_llm_completion(
+            LlmEndpoint(
+                provider="Qwen",
+                base_url="https://example.test",
+                api_key="test-key",
+                model="qwen3.6-max-preview",
+            ),
+            LlmCallTrace(
+                question_id="1234567",
+                phase="answer",
+                user_id=9,
+                session_id=18,
+            ),
+            perf_counter() - 0.01,
+            "ok",
+        )
+
+        metric = db.scalar(select(LlmCallMetric).where(LlmCallMetric.question_id == "1234567"))
+
+    assert metric is not None
+    assert metric.phase == "answer"
+    assert metric.provider == "Qwen"
+    assert metric.model == "qwen3.6-max-preview"
+    assert metric.user_id == 9
+    assert metric.session_id == 18
+    assert metric.output_chars == 2
+    assert metric.elapsed_ms is not None
 
 
 def _write_minimal_docx(path: Path, paragraphs: tuple[str, ...]) -> None:

@@ -76,6 +76,7 @@ def test_chat_message_stores_display_question_without_internal_prompt(monkeypatc
             assert "内部阈值推荐提示词" in question
             assert "display_question" not in context
             assert "llm_model" not in context
+            assert context["session_id"] == 1
             assert model == "qwen3.6-max-preview"
             return ChatAnswer(answer="建议将 H/A 目标阈值设为 8.0%。", sql=None, rows=[])
 

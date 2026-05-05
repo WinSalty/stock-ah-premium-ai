@@ -350,3 +350,27 @@ CREATE TABLE IF NOT EXISTS `llm_chat_message` (
   CONSTRAINT `fk_llm_chat_message_session`
     FOREIGN KEY (`session_id`) REFERENCES `llm_chat_session` (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='LLM 问答消息表';
+
+CREATE TABLE IF NOT EXISTS `llm_call_metric` (
+  `id` INT NOT NULL AUTO_INCREMENT COMMENT '自增主键',
+  `question_id` VARCHAR(32) NOT NULL COMMENT '单轮问题追踪 ID，不包含问题原文',
+  `user_id` INT DEFAULT NULL COMMENT '所属用户 ID',
+  `session_id` INT DEFAULT NULL COMMENT '所属会话 ID',
+  `phase` VARCHAR(64) NOT NULL COMMENT '调用阶段，如 classify、generate_sql、answer_stream',
+  `provider` VARCHAR(32) DEFAULT NULL COMMENT '调用提供方，如 Qwen、DeepSeek、Database、Internal',
+  `model` VARCHAR(64) DEFAULT NULL COMMENT '模型名称',
+  `success` INT NOT NULL DEFAULT 1 COMMENT '是否成功，1 成功，0 失败',
+  `elapsed_ms` DOUBLE DEFAULT NULL COMMENT '阶段耗时毫秒',
+  `first_chunk_ms` DOUBLE DEFAULT NULL COMMENT '流式首包耗时毫秒',
+  `output_chars` INT NOT NULL DEFAULT 0 COMMENT '输出字符数',
+  `chunk_count` INT NOT NULL DEFAULT 0 COMMENT '流式 chunk 数',
+  `row_count` INT NOT NULL DEFAULT 0 COMMENT '关联数据行数',
+  `error_message` VARCHAR(512) DEFAULT NULL COMMENT '错误摘要，不包含密钥和问题全文',
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '记录创建时间',
+  `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '记录更新时间',
+  PRIMARY KEY (`id`),
+  KEY `idx_llm_call_metric_question` (`question_id`),
+  KEY `idx_llm_call_metric_user_created` (`user_id`, `created_at`),
+  KEY `idx_llm_call_metric_session_created` (`session_id`, `created_at`),
+  KEY `idx_llm_call_metric_phase_model` (`phase`, `model`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='LLM 调用耗时指标表';
