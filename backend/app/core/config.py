@@ -76,7 +76,7 @@ class Settings(BaseSettings):
         default=Path("/Users/salty/codeProject/ai/doc/pushplus.txt"),
         alias="PUSHPLUS_SECRET_KEY_FILE",
     )
-    pushplus_template: str = Field(default="markdown", alias="PUSHPLUS_TEMPLATE")
+    pushplus_template: str = Field(default="html", alias="PUSHPLUS_TEMPLATE")
     pushplus_channel: str = Field(default="wechat", alias="PUSHPLUS_CHANNEL")
     pushplus_timeout_seconds: float = Field(default=15.0, alias="PUSHPLUS_TIMEOUT_SECONDS")
 

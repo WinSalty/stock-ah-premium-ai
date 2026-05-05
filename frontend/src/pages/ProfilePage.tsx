@@ -152,48 +152,52 @@ function ProfilePage({ user, onUserUpdated }: ProfilePageProps) {
                 description={binding.data.is_follow ? '后续提醒将发送到当前微信。' : '请先关注 PushPlus 微信公众号，避免错过提醒。'}
               />
             ) : (
-              <Alert
-                showIcon
-                type="info"
-                message="当前账号尚未绑定微信推送"
-                description="扫码完成绑定，绑定后回到本页刷新状态。"
-              />
+              <>
+                <Alert
+                  showIcon
+                  type="info"
+                  message="当前账号尚未绑定微信推送"
+                  description="扫码完成绑定，绑定后回到本页刷新状态。"
+                />
+                <div className="pushplus-bind-grid">
+                  <div className="pushplus-qr-pane">
+                    <Button
+                      htmlType="button"
+                      type="primary"
+                      icon={<QrCode size={16} />}
+                      loading={qrCodeMutation.isPending}
+                      onClick={() => qrCodeMutation.mutate()}
+                    >
+                      生成绑定二维码
+                    </Button>
+                    {qrCodeMutation.data?.qr_code_img_url ? (
+                      <Image
+                        className="pushplus-qr-image"
+                        width={220}
+                        src={qrCodeMutation.data.qr_code_img_url}
+                        alt="PushPlus 绑定二维码"
+                      />
+                    ) : (
+                      <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="生成后扫码绑定" />
+                    )}
+                  </div>
+                  <div className="pushplus-friend-pane">
+                    <Typography.Text strong>绑定状态</Typography.Text>
+                    <Typography.Text type="secondary">
+                      扫码后回到本页查看状态；若页面未变化，可手动刷新。
+                    </Typography.Text>
+                    <Button
+                      htmlType="button"
+                      icon={<RefreshCw size={16} />}
+                      loading={binding.isFetching}
+                      onClick={() => binding.refetch()}
+                    >
+                      刷新绑定状态
+                    </Button>
+                  </div>
+                </div>
+              </>
             )}
-            <div className="pushplus-bind-grid">
-              <div className="pushplus-qr-pane">
-                <Button
-                  htmlType="button"
-                  type="primary"
-                  icon={<QrCode size={16} />}
-                  loading={qrCodeMutation.isPending}
-                  onClick={() => qrCodeMutation.mutate()}
-                >
-                  生成绑定二维码
-                </Button>
-                {qrCodeMutation.data?.qr_code_img_url ? (
-                  <Image
-                    className="pushplus-qr-image"
-                    width={220}
-                    src={qrCodeMutation.data.qr_code_img_url}
-                    alt="PushPlus 绑定二维码"
-                  />
-                ) : (
-                  <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="生成后扫码绑定" />
-                )}
-              </div>
-              <div className="pushplus-friend-pane">
-                <Typography.Text strong>绑定状态</Typography.Text>
-                <Typography.Text type="secondary">扫码后回到本页查看状态；若页面未变化，可手动刷新。</Typography.Text>
-                <Button
-                  htmlType="button"
-                  icon={<RefreshCw size={16} />}
-                  loading={binding.isFetching}
-                  onClick={() => binding.refetch()}
-                >
-                  刷新绑定状态
-                </Button>
-              </div>
-            </div>
           </div>
           <Form.Item label="简介" name="bio">
             <Input.TextArea rows={4} placeholder="投资偏好、关注市场或备注" />

@@ -9,6 +9,7 @@ from app.core.config import Settings, get_settings
 
 PUSHPLUS_SUCCESS_CODE = 200
 DEFAULT_PAGE_SIZE = 50
+PUSHPLUS_HTML_TEMPLATE = "html"
 
 
 class PushplusError(RuntimeError):
@@ -136,7 +137,7 @@ class PushplusClient:
                 "title": title,
                 "content": content,
                 "to": to_token,
-                "template": self.settings.pushplus_template,
+                "template": PUSHPLUS_HTML_TEMPLATE,
                 "channel": self.settings.pushplus_channel,
             },
         )

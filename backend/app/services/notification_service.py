@@ -5,6 +5,7 @@ import hmac
 import logging
 from datetime import UTC, date, datetime
 from decimal import Decimal
+from html import escape
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import desc, select
@@ -41,6 +42,21 @@ PRICE_OPERATOR_LTE = "LTE"
 MARKET_A = "A"
 MARKET_H = "H"
 LOCAL_TZ = ZoneInfo("Asia/Shanghai")
+HTML_CARD_STYLE = (
+    "font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"
+    "color:#102033;background:#f6f8fb;padding:16px;"
+)
+HTML_PANEL_STYLE = (
+    "max-width:640px;margin:0 auto;background:#ffffff;border:1px solid #d8e1ec;"
+    "border-radius:10px;overflow:hidden;"
+)
+HTML_BODY_STYLE = "padding:18px 18px 20px;"
+HTML_MUTED_STYLE = "color:#64748b;font-size:13px;line-height:1.7;margin:8px 0 0;"
+HTML_TABLE_STYLE = "width:100%;border-collapse:collapse;margin-top:14px;font-size:14px;"
+HTML_LABEL_CELL_STYLE = (
+    "width:34%;padding:10px 12px;border-top:1px solid #e8edf3;color:#64748b;background:#f8fafc;"
+)
+HTML_VALUE_CELL_STYLE = "padding:10px 12px;border-top:1px solid #e8edf3;color:#102033;"
 
 
 class NotificationError(ValueError):
@@ -116,6 +132,8 @@ class NotificationService:
         author: sunshengxian
         """
 
+        if self._active_binding(user.id) is not None:
+            raise NotificationError("当前用户已绑定 PushPlus，不支持重复绑定")
         content = self._binding_ticket_for_user(user.id)
         try:
             return self.pushplus_client.get_personal_qr_code(content, expire_seconds, scan_count)
@@ -168,10 +186,12 @@ class NotificationService:
         user = self.db.get(AppUser, user_id)
         if user is None or not user.is_active:
             raise NotificationError("绑定用户不存在或已停用")
-        friend = self._find_friend(friend_id)
         existing = self.db.scalar(
             select(PushplusBinding).where(PushplusBinding.user_id == user_id)
         )
+        if existing is not None and existing.is_active:
+            raise NotificationError("当前用户已绑定 PushPlus，不支持重复绑定")
+        friend = self._find_friend(friend_id)
         now = self._now_naive()
         if existing is None:
             existing = PushplusBinding(
@@ -213,6 +233,8 @@ class NotificationService:
         binding = self.db.scalar(
             select(PushplusBinding).where(PushplusBinding.user_id == user_id)
         )
+        if binding is not None and binding.is_active:
+            raise NotificationError("当前用户已绑定 PushPlus，不支持重复绑定")
         now = self._now_naive()
         if binding is None:
             binding = PushplusBinding(
@@ -255,8 +277,13 @@ class NotificationService:
         """
 
         binding = self._require_active_binding(user_id)
+        html_content = self._test_message(title, content)
         try:
-            return self.pushplus_client.send_friend_message(binding.friend_token, title, content)
+            return self.pushplus_client.send_friend_message(
+                binding.friend_token,
+                title,
+                html_content,
+            )
         except PushplusError as exc:
             raise NotificationError(str(exc)) from exc
 
@@ -459,18 +486,29 @@ class NotificationService:
         direction: str,
         metric: Decimal,
     ) -> str:
-        return "\n".join(
-            [
-                "# AH 阈值触发",
-                "",
-                f"{self._stock_label(item)} {direction} 溢价达到 {metric}%",
-                "",
-                f"- A 股：{item.a_ts_code}",
-                f"- H 股：{item.hk_ts_code}",
-                f"- 方向：{direction}",
-                f"- 目标阈值：{item.target_premium_pct}%",
-                f"- 交易日：{trading_day.isoformat()}",
-            ]
+        target = item.target_premium_pct or Decimal("0")
+        distance = metric - target
+        current_text = self._format_decimal(metric)
+        target_text = self._format_decimal(target)
+        return self._html_message(
+            title="AH 溢价阈值触发",
+            badge="阈值提醒",
+            accent="#2563eb",
+            summary=(
+                f"{self._stock_label(item)} {direction} 溢价当前为 {current_text}%，"
+                f"已达到目标阈值 {target_text}%。"
+            ),
+            details=[
+                ("触发类型", "溢价阈值提醒"),
+                ("标的名称", self._stock_label(item)),
+                ("A 股代码", item.a_ts_code),
+                ("H 股代码", item.hk_ts_code),
+                ("提醒方向", f"{direction} 溢价"),
+                ("当前溢价", f"{current_text}%"),
+                ("目标阈值", f"{target_text}%"),
+                ("超过阈值", f"{self._format_decimal(distance)}%"),
+                ("交易日", trading_day.isoformat()),
+            ],
         )
 
     def _price_message(
@@ -481,23 +519,84 @@ class NotificationService:
         last_price: Decimal,
         operator: str,
     ) -> str:
-        operator_label = ">=" if operator == PRICE_OPERATOR_GTE else "<="
+        operator_symbol = ">=" if operator == PRICE_OPERATOR_GTE else "<="
+        operator_text = "大于等于" if operator == PRICE_OPERATOR_GTE else "小于等于"
         market_label = "A 股" if item.price_alert_market == MARKET_A else "H 股"
-        return "\n".join(
-            [
-                "# 股价提醒触发",
-                "",
-                (
-                    f"{self._stock_label(item)} {market_label}价格 "
-                    f"{last_price} {operator_label} {item.price_alert_target_price}"
-                ),
-                "",
-                f"- 证券代码：{ts_code}",
-                f"- 市场：{market_label}",
-                f"- 触发条件：{operator_label} {item.price_alert_target_price}",
-                f"- 交易日：{trading_day.isoformat()}",
-            ]
+        target_price = item.price_alert_target_price or Decimal("0")
+        price_text = self._format_decimal(last_price)
+        target_text = self._format_decimal(target_price)
+        currency = "人民币" if item.price_alert_market == MARKET_A else "港币"
+        return self._html_message(
+            title="股价提醒触发",
+            badge="股价提醒",
+            accent="#0f766e",
+            summary=(
+                f"{self._stock_label(item)} {market_label}最新收盘价 {price_text} "
+                f"已{operator_text}目标价格 {target_text}。"
+            ),
+            details=[
+                ("触发类型", "股价提醒"),
+                ("标的名称", self._stock_label(item)),
+                ("证券代码", ts_code),
+                ("提醒市场", market_label),
+                ("当前价格", f"{price_text} {currency}"),
+                ("目标价格", f"{target_text} {currency}"),
+                ("触发条件", f"当前价格 {operator_symbol} {target_text}"),
+                ("交易日", trading_day.isoformat()),
+            ],
         )
+
+    def _test_message(self, title: str, content: str) -> str:
+        return self._html_message(
+            title=title,
+            badge="测试推送",
+            accent="#7c3aed",
+            summary=content or "PushPlus 好友消息推送已连通。",
+            details=[
+                ("消息类型", "PushPlus HTML 测试消息"),
+                ("发送时间", self._now_naive().strftime("%Y-%m-%d %H:%M:%S")),
+                ("结果说明", "收到本消息表示当前账号 PushPlus 好友消息链路已连通。"),
+            ],
+        )
+
+    def _html_message(
+        self,
+        title: str,
+        badge: str,
+        accent: str,
+        summary: str,
+        details: list[tuple[str, str]],
+    ) -> str:
+        rows = "".join(
+            (
+                "<tr>"
+                f'<td style="{HTML_LABEL_CELL_STYLE}">{escape(label)}</td>'
+                f'<td style="{HTML_VALUE_CELL_STYLE}">{escape(value)}</td>'
+                "</tr>"
+            )
+            for label, value in details
+        )
+        return (
+            f'<div style="{HTML_CARD_STYLE}">'
+            f'<div style="{HTML_PANEL_STYLE}">'
+            f'<div style="background:{accent};padding:14px 18px;color:#ffffff;">'
+            f'<div style="font-size:13px;opacity:.86;">{escape(badge)}</div>'
+            f'<div style="font-size:20px;font-weight:700;margin-top:4px;">{escape(title)}</div>'
+            "</div>"
+            f'<div style="{HTML_BODY_STYLE}">'
+            f'<div style="font-size:16px;font-weight:600;line-height:1.7;">{escape(summary)}</div>'
+            f'<div style="{HTML_MUTED_STYLE}">'
+            "以下为本次触发的具体信息，请按交易日和标的复核。"
+            "</div>"
+            f'<table style="{HTML_TABLE_STYLE}"><tbody>{rows}</tbody></table>'
+            "</div>"
+            "</div>"
+            "</div>"
+        )
+
+    def _format_decimal(self, value: Decimal) -> str:
+        text = format(value.normalize(), "f")
+        return text.rstrip("0").rstrip(".") if "." in text else text
 
     def _latest_close(self, market: str, ts_code: str, trading_day: date) -> Decimal | None:
         model = ADailyQuote if market == MARKET_A else HKDailyQuote

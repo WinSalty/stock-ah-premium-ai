@@ -23,7 +23,7 @@ from app.services.notification_service import (
     NotificationError,
     NotificationService,
 )
-from app.services.pushplus_client import PushplusFriend
+from app.services.pushplus_client import PushplusClient, PushplusFriend
 from app.services.watchlist_service import WatchlistError, WatchlistService
 
 
@@ -37,6 +37,14 @@ class FakePushplusClient:
     def __init__(self, friends: list[PushplusFriend] | None = None) -> None:
         self.sent: list[tuple[str, str, str]] = []
         self.friends = friends or []
+
+    def get_personal_qr_code(
+        self,
+        content: str,
+        expire_seconds: int,
+        scan_count: int,
+    ) -> str:
+        return f"https://pushplus.example/qr?content={content}"
 
     def send_friend_message(self, to_token: str, title: str, content: str) -> str:
         self.sent.append((to_token, title, content))
@@ -108,6 +116,84 @@ def test_pushplus_credentials_can_share_one_file(tmp_path) -> None:
     assert settings.resolve_pushplus_secret_key() == "test-secret"
 
 
+def test_pushplus_client_send_uses_html_template(monkeypatch) -> None:
+    """确认 PushPlus 发送消息固定使用 HTML 模板。
+
+    创建日期：2026-05-05
+    author: sunshengxian
+    """
+
+    captured: dict[str, object] = {}
+    client = PushplusClient(Settings(pushplus_token="test-token"))
+
+    def fake_request(method: str, path: str, **kwargs: object) -> str:
+        captured["method"] = method
+        captured["path"] = path
+        captured["json"] = kwargs["json"]
+        return "message-id"
+
+    monkeypatch.setattr(client, "_request", fake_request)
+
+    message_id = client.send_friend_message("friend-token", "测试", "<b>连通</b>")
+
+    assert message_id == "message-id"
+    assert captured["path"] == "/send"
+    assert isinstance(captured["json"], dict)
+    assert captured["json"]["template"] == "html"
+
+
+def test_test_push_wraps_content_as_html() -> None:
+    """确认测试推送会包装为 HTML 内容。
+
+    创建日期：2026-05-05
+    author: sunshengxian
+    """
+
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    fake_client = FakePushplusClient()
+    with Session(engine) as db:
+        user = add_user_with_binding(db)
+
+        message_id = NotificationService(db, pushplus_client=fake_client).send_test_push(
+            user.id,
+            "AH 提醒测试",
+            "PushPlus 好友消息推送已连通。",
+        )
+
+    assert message_id == "msg-1"
+    assert len(fake_client.sent) == 1
+    sent_content = fake_client.sent[0][2]
+    assert "<table" in sent_content
+    assert "PushPlus HTML 测试消息" in sent_content
+    assert "消息链路已连通" in sent_content
+
+
+def test_bound_user_cannot_create_pushplus_qr_code() -> None:
+    """确认已绑定用户不能再次生成绑定二维码。
+
+    创建日期：2026-05-05
+    author: sunshengxian
+    """
+
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    with Session(engine) as db:
+        user = add_user_with_binding(db)
+        try:
+            NotificationService(db, pushplus_client=FakePushplusClient()).create_pushplus_qr_code(
+                user,
+                expire_seconds=604800,
+                scan_count=1,
+            )
+        except NotificationError as exc:
+            error_message = str(exc)
+        else:
+            error_message = ""
+
+    assert "不支持重复绑定" in error_message
+
+
 def test_threshold_alert_pushes_once_per_trading_day() -> None:
     """确认阈值触发仅在共同交易日推送且同一天去重。
 
@@ -161,6 +247,9 @@ def test_threshold_alert_pushes_once_per_trading_day() -> None:
     assert second_events == []
     assert total_events is not None
     assert len(fake_client.sent) == 1
+    assert "<table" in fake_client.sent[0][2]
+    assert "当前溢价" in fake_client.sent[0][2]
+    assert "目标阈值" in fake_client.sent[0][2]
 
 
 def test_pushplus_callback_binds_user_from_qr_content() -> None:
@@ -469,3 +558,5 @@ def test_price_alert_pushes_once_per_trading_day() -> None:
     assert first_event_type == EVENT_PRICE_REACHED
     assert second_events == []
     assert len(fake_client.sent) == 1
+    assert "当前价格" in fake_client.sent[0][2]
+    assert "目标价格" in fake_client.sent[0][2]

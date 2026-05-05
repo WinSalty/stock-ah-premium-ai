@@ -271,7 +271,7 @@ PUSHPLUS_TOKEN_FILE=/Users/salty/codeProject/ai/doc/pushplus.txt
 PUSHPLUS_SECRET_KEY_FILE=/Users/salty/codeProject/ai/doc/pushplus.txt
 PUSHPLUS_TOKEN=
 PUSHPLUS_SECRET_KEY=
-PUSHPLUS_TEMPLATE=markdown
+PUSHPLUS_TEMPLATE=html
 PUSHPLUS_CHANNEL=wechat
 ALERT_COOLDOWN_MINUTES=30
 ```
@@ -284,6 +284,7 @@ ALERT_COOLDOWN_MINUTES=30
 - 后端通过开放接口 `friend/list` 拉取好友列表，该能力仅对管理员开放，用于排查好友与绑定状态。
 - 本地或无公网回调环境下，管理员可在用户管理中手动选择系统用户和 PushPlus 好友完成绑定；系统会从好友列表读取好友令牌并仅保存到后端。
 - 真实推送仍调用 `/send`，使用 `to` 字段填写好友令牌；好友令牌仅存后端，不返回前端明文。
+- 真实推送统一使用 `html` 模板；测试消息、阈值提醒和股价提醒都会带简洁卡片样式，并列出触发类型、标的、交易日、当前阈值/价格和目标阈值/价格等具体信息。
 - `/Users/salty/codeProject/ai/doc/pushplus.txt` 可同时保存用户 token 和 SecretKey，支持 `PUSHPLUS_TOKEN=...` / `PUSHPLUS_SECRET_KEY=...` 或前两行分别写 token、SecretKey。
 - 阈值提醒和股价提醒只在对应市场交易日发送；同一个提醒按 `用户 + 自选股 + 条件 + 交易日` 去重，每天最多推送一次。
 - 自选股提醒配置包含消息推送开关，默认开启；关闭后保留提醒条件但不发送 PushPlus 消息，也不要求用户完成绑定。
