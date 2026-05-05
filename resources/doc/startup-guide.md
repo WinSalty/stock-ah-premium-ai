@@ -1,6 +1,6 @@
 # 项目启动手册
 
-更新日期：2026-05-04
+更新日期：2026-05-05
 
 ## 1. 目录与端口
 
@@ -129,6 +129,20 @@ pro._DataApi__http_url = "http://tsy.xiaodefa.cn"
 ./scripts/start-backend.sh
 ```
 
+启动脚本会输出：
+
+- 项目根目录、后端目录、绑定地址和健康检查地址。
+- `backend/.env` 是否存在，以及数据库连接的脱敏摘要。
+- Tushare、DeepSeek、Qwen 本机密钥文件是否存在。
+- 后端调度开关、Python 版本、Uvicorn 版本。
+- 端口占用诊断；如果 `8000` 已被占用，会列出占用进程并提示停止命令。
+
+可改端口启动：
+
+```bash
+BACKEND_PORT=8001 ./scripts/start-backend.sh
+```
+
 健康检查：
 
 ```bash
@@ -150,13 +164,62 @@ cd /Users/salty/codeProject/ai/coding/stock-ah-premium-ai
 ./scripts/start-frontend.sh
 ```
 
+启动脚本会输出：
+
+- 项目根目录、前端目录、绑定地址和后端代理目标。
+- `VITE_API_BASE_URL` 当前状态。
+- Node.js、npm 版本。
+- 端口占用诊断；如果 `5173` 已被占用，会列出占用进程并提示停止命令。
+
+可改端口启动：
+
+```bash
+FRONTEND_PORT=5174 ./scripts/start-frontend.sh
+```
+
 浏览器访问：
 
 ```text
 http://127.0.0.1:5173
 ```
 
-## 8. 常用命令
+## 8. 停止和重启
+
+停止单个服务：
+
+```bash
+./scripts/stop-backend.sh
+./scripts/stop-frontend.sh
+```
+
+停止前后端：
+
+```bash
+./scripts/stop.sh
+```
+
+重启单个服务，默认仍以前台方式启动：
+
+```bash
+./scripts/restart-backend.sh
+./scripts/restart-frontend.sh
+```
+
+重启整个项目会先停止前后端，再后台拉起两个服务，并把日志写入 `.runtime/logs/`：
+
+```bash
+./scripts/restart.sh
+tail -f .runtime/logs/backend.log
+tail -f .runtime/logs/frontend.log
+```
+
+使用非默认端口重启：
+
+```bash
+BACKEND_PORT=8001 FRONTEND_PORT=5174 ./scripts/restart.sh
+```
+
+## 9. 常用命令
 
 ```bash
 make bootstrap
@@ -164,6 +227,8 @@ make check
 make init-db
 make backend
 make frontend
+make stop
+make restart
 ```
 
 等价脚本：
@@ -174,9 +239,11 @@ make frontend
 ./scripts/init-db.sh
 ./scripts/start-backend.sh
 ./scripts/start-frontend.sh
+./scripts/stop.sh
+./scripts/restart.sh
 ```
 
-## 9. 非外部依赖检查
+## 10. 非外部依赖检查
 
 ```bash
 ./scripts/check.sh
@@ -191,7 +258,7 @@ make frontend
 
 该命令不调用 Tushare、不调用 LLM、不执行真实数据同步。
 
-## 10. 低权限兜底导入
+## 11. 低权限兜底导入
 
 当 Tushare AH 比价或外汇接口权限不足时，可以在前端“数据同步 / 人工导入”页粘贴 CSV。
 
@@ -217,7 +284,7 @@ curl -X POST http://127.0.0.1:8000/api/manual-import/ah-pairs/csv \
   -d '{"content":"a_ts_code,hk_ts_code\n600000.SH,00005.HK\n"}'
 ```
 
-## 11. 数据同步顺序
+## 12. 数据同步顺序
 
 同步入口在前端“数据同步 / 接口同步”页。
 
@@ -286,14 +353,14 @@ curl -X POST "http://127.0.0.1:8000/api/sync/batches/stock-selection-factors" \
 
 定时任务仍走 `sync_run` 记录和 checkpoint。若某次接口权限不足或返回失败，任务会落 `FAILED`，下一次仍按 checkpoint 加 2 天重叠窗口继续补齐。`hk_daily` 已禁用，不会被定时任务调用。
 
-## 12. 页面显示规则
+## 13. 页面显示规则
 
 - 时间字段统一按东八区 `yyyy-MM-dd HH:mm:ss` 展示；纯日期字段保持 `yyyy-MM-dd`。
 - 同步任务、统一查询、智能问答结果和溢价表格中的长字段会单行省略，悬浮展示完整内容。
 - 错误信息过长时，可在同步任务记录中悬浮查看完整错误，也可以点击“查看”打开详情弹窗。
 - 日期类表格列已适当加宽，避免固定长度字段被换行挤压。
 
-## 13. 常见问题
+## 14. 常见问题
 
 ### Python 版本不对
 
@@ -366,14 +433,20 @@ QWEN_QUESTION_ROUTER_MODEL=qwen3.6-flash
 
 AH 溢价、折价和套利相关问题可按前置路由补充本地候选池、市场分布、自选机会，以及 `resources/doc/llm-knowledge/ah-premium/` 中的研究片段，避免只基于单行 SQL 结果作答。银行/非银、个股报告、宏观地产金融推演等问题会先给 Qwen 轻量知识库目录简介，由模型选择是否读取对应子目录中的投研报告片段。回答提示词要求 LLM 给出评级口径、配置倾向、优先级、仓位思路、阈值和触发条件，并避免输出模板化免责句。
 
-## 14. 当前验证状态
+## 15. 当前验证状态
 
 已验证：
 
 - `./scripts/bootstrap.sh`
 - `./scripts/check.sh`
 - `./scripts/init-db.sh`
+- `./scripts/start-backend.sh`：已用 `BACKEND_PORT=18000` 验证启动诊断和 `/api/health`。
+- `./scripts/start-frontend.sh`：已用 `FRONTEND_PORT=15173` 验证启动诊断。
+- `./scripts/restart.sh`：已用 `BACKEND_PORT=18000 FRONTEND_PORT=15173` 验证整项目后台重启。
+- `./scripts/stop.sh`：已用非默认端口验证停止诊断。
+- `bash -n scripts/*.sh`：启动、停止、重启脚本语法检查通过。
 - 本地 MySQL `stock_ah_ai` 表和视图创建
+- 本地 MySQL 已执行 `alembic upgrade head`，应用到 `20260505_0015`。
 - Tushare 中转 SDK 最大范围同步：A 股基础、港股基础、交易日历、官方 AH 比价、港股通名单、A 股日线
 - Tushare 中转 SDK `stock_basic limit=1` 最小连通性，不落库
 

@@ -26,4 +26,5 @@ dist/
 
 # Runtime
 *.log
+.runtime/
 tmp/

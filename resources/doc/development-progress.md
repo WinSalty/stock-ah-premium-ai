@@ -130,8 +130,10 @@
   - `scripts/bootstrap.sh`：安装后端和前端依赖。
   - `scripts/check.sh`：执行 Ruff、pytest、前端构建和生产依赖审计。
   - `scripts/init-db.sh`：创建数据库、执行 Alembic 迁移和只读视图 SQL。
-  - `scripts/start-backend.sh`、`scripts/start-frontend.sh`：启动本地服务。
-  - `Makefile`：提供 `make bootstrap/check/init-db/backend/frontend` 快捷入口。
+  - `scripts/start-backend.sh`、`scripts/start-frontend.sh`：启动本地服务，启动前输出目录、端口、版本、关键配置文件和端口占用诊断。
+  - `scripts/stop-backend.sh`、`scripts/stop-frontend.sh`、`scripts/stop.sh`：按端口停止后端、前端或全部服务。
+  - `scripts/restart-backend.sh`、`scripts/restart-frontend.sh`、`scripts/restart.sh`：重启服务；整项目重启会后台拉起前后端并将日志写入 `.runtime/logs/`。
+  - `Makefile`：提供 `make bootstrap/check/init-db/backend/frontend/stop/restart` 快捷入口。
   - `resources/doc/startup-guide.md`：完整启动、配置、验证和排错手册。
   - `resources/doc/phase-1-detailed-development-plan.md`：已同步当前实现口径，包括 `hk_daily` 禁用、官方 AH 比价主表、定时增量、长字段悬浮和东八区时间展示。
   - `resources/doc/ah-premium-review-and-display-design.md`：沉淀 A/H 溢价套现评审结论、官方主口径、自选股优先展示和后续落地优先级。
@@ -148,7 +150,7 @@
 - `hk_daily` 当前 token 无法请求，已禁用接口同步；`fx_daily` 请求成功但返回 0 行。
 - DeepSeek LLM 已完成最小调用和流式问答验证。
 - 依赖 Tushare 的完整端到端重新同步未重复执行。
-- 本轮未执行真实 MySQL 的 `alembic upgrade head`；需确认本机数据库环境后应用 `20260505_0015`。
+- 本轮已执行真实 MySQL 的 `alembic upgrade head`，本地库已应用到 `20260505_0015`。
 
 ## 已执行的非功能性检查
 
@@ -176,6 +178,7 @@
 - 调整 PushPlus 扫码自动绑定和提醒保存绑定校验后，`ruff check app tests` 通过，`pytest` 42 个单元测试通过，`npm run build` 通过。
 - 拆分个人绑定、提醒弹窗绑定、用户管理页 PushPlus 管理，并新增消息推送开关后，`alembic upgrade head` 已应用 `20260505_0014`，`ruff check app tests` 通过，`pytest` 44 个单元测试通过，`npm run build` 通过。
 - 新增总览随机锦囊、自选卡片股价/阈值展示和用户级趋势图指标配置后，`python3 -m compileall app tests`、`ruff check app tests`、`pytest`（56 个单元测试）、`npm run build`、`npm audit --omit=dev` 和 `./scripts/check.sh` 均通过。
+- 增强启动、停止和重启脚本后，`bash -n scripts/*.sh` 通过；已分别用 `BACKEND_PORT=18000`、`FRONTEND_PORT=15173` 验证启动诊断、整项目重启和停止诊断，并确认后端 `/api/health` 返回正常。
 - 敏感信息扫描：只发现文档中的 `<local-only>` 占位符，未发现真实 Token、密码或 API Key。
 
 ## 待验证事项
@@ -187,7 +190,7 @@
 
 ## 下一步建议
 
-1. 执行本地 `alembic upgrade head` 或 `./scripts/init-db.sh`，将 `20260504_0004` 自选股表和新版只读视图应用到本地数据库。
+1. 新环境执行 `alembic upgrade head` 或 `./scripts/init-db.sh`，确保表结构和只读视图与当前代码一致。
 2. 启动前后端后添加几只自选股票，验证首页机会卡片、阈值距离、通道、趋势中位数和分位参考线、溢价页加入自选流程。
 3. 持续补充 AH 套利研究片段和候选池字段，观察 LLM 宽问题回答质量。
 4. 后续修复真实实时接口，再恢复或增强实时刷新能力。

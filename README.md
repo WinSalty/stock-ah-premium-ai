@@ -74,3 +74,4 @@ cp backend/.env.example backend/.env
 ```
 
 也可以使用 `make bootstrap`、`make check`、`make init-db`、`make backend`、`make frontend`。
+停止和重启可使用 `make stop`、`make restart`，或直接执行 `./scripts/stop.sh`、`./scripts/restart.sh`；整项目重启日志写入 `.runtime/logs/`。
