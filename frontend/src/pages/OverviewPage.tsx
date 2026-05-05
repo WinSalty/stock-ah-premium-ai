@@ -2,9 +2,11 @@ import {
   Alert,
   Button,
   Card,
+  Checkbox,
   Col,
   Empty,
   Modal,
+  Popover,
   Row,
   Select,
   Skeleton,
@@ -17,30 +19,57 @@ import {
 import ReactECharts from 'echarts-for-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import ReactMarkdown from 'react-markdown';
-import { Bot, GripVertical } from 'lucide-react';
+import { Bot, GripVertical, SlidersHorizontal } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type WheelEvent } from 'react';
 import PageHeader from '../components/PageHeader';
 import PremiumTable from '../components/PremiumTable';
 import { createChatSession, sendChatMessage } from '../api/chat';
 import { fetchOfficialPremiumTrend, fetchPremiumPairs, fetchPremiumSummary } from '../api/market';
+import { fetchOverviewChartSettings, updateOverviewChartSettings } from '../api/settings';
 import { deleteWatchlistItem, fetchWatchlist, updateWatchlistItem } from '../api/watchlist';
-import type { PremiumDirection, PremiumItem, PremiumPairOption, WatchlistOpportunity } from '../types/domain';
+import type {
+  OverviewChartSettings,
+  PremiumDirection,
+  PremiumItem,
+  PremiumPairOption,
+  WatchlistOpportunity
+} from '../types/domain';
 import { formatEast8DateTime } from '../utils/datetime';
 import {
   getCachedThresholdRecommendation,
   setCachedThresholdRecommendation
 } from '../utils/thresholdRecommendationCache';
+import { OVERVIEW_SNIPPETS } from '../constants/overviewSnippets';
 
 const DEFAULT_PAIR_KEY = '600036.SH|03968.HK';
 const DEFAULT_VISIBLE_MONTHS = 3;
 const MIN_VISIBLE_POINTS = 20;
 const TRACKPAD_WHEEL_UNIT = 80;
-const AH_COLOR = '#2563eb';
-const HA_COLOR = '#0f766e';
-const MEDIAN60_COLOR = '#334155';
-const P20_COLOR = '#14b8a6';
-const P80_COLOR = '#f97316';
-const TARGET_COLOR = '#dc2626';
+const AH_COLOR = '#e11d48';
+const HA_COLOR = '#0891b2';
+const MEDIAN60_COLOR = '#475569';
+const P20_COLOR = '#16a34a';
+const P80_COLOR = '#f59e0b';
+const TARGET_COLOR = '#7f1d1d';
+const RANDOM_SNIPPET_COUNT = 4;
+const DEFAULT_OVERVIEW_CHART_SETTINGS: OverviewChartSettings = {
+  metric_premium: true,
+  median_60: true,
+  p20_60: true,
+  p80_60: true,
+  target_threshold: true
+};
+const CHART_INDICATOR_OPTIONS: Array<{
+  label: string;
+  value: keyof OverviewChartSettings;
+  required?: boolean;
+}> = [
+  { label: '溢价走势', value: 'metric_premium', required: true },
+  { label: '60日中位数', value: 'median_60' },
+  { label: '20%分位', value: 'p20_60' },
+  { label: '80%分位', value: 'p80_60' },
+  { label: '目标阈值', value: 'target_threshold' }
+];
 
 function splitPairKey(value: string) {
   const [aTsCode, hkTsCode] = value.split('|');
@@ -119,6 +148,25 @@ function formatPercent(value?: string | null) {
   return parsed === null ? '-' : `${parsed.toFixed(2)}%`;
 }
 
+function formatPrice(value?: string | null, market: 'A' | 'H' = 'A') {
+  const parsed = numberValue(value);
+  if (parsed === null) {
+    return '-';
+  }
+  const symbol = market === 'H' ? 'HK$' : '¥';
+  return `${symbol}${parsed.toFixed(market === 'H' ? 3 : 2)}`;
+}
+
+function priceAlertText(item: WatchlistOpportunity) {
+  const market = item.watchlist.price_alert_market;
+  const targetPrice = item.watchlist.price_alert_target_price;
+  if (!item.watchlist.price_alert_enabled || (market !== 'A' && market !== 'H') || targetPrice === null) {
+    return '股价阈值未设';
+  }
+  const operator = item.watchlist.price_alert_operator === 'LTE' ? '≤' : '≥';
+  return `${market} 股 ${operator} ${formatPrice(targetPrice, market)}`;
+}
+
 function statusTag(status?: string | null) {
   const labelMap: Record<string, string> = {
     REACHED: '已达阈值',
@@ -172,6 +220,15 @@ function holdingMarketLabel(value?: string | null) {
 
 function promptValue(value?: string | null, suffix = '') {
   return value === null || value === undefined || value === '' ? '缺失' : `${value}${suffix}`;
+}
+
+function pickRandomSnippets(source: readonly string[], count: number) {
+  const pool = [...source];
+  for (let index = pool.length - 1; index > 0; index -= 1) {
+    const randomIndex = Math.floor(Math.random() * (index + 1));
+    [pool[index], pool[randomIndex]] = [pool[randomIndex], pool[index]];
+  }
+  return pool.slice(0, count);
 }
 
 function reorderOpportunities(items: WatchlistOpportunity[], sourceId: number, targetId: number) {
@@ -252,6 +309,14 @@ function OverviewPage() {
   });
   const pairs = useQuery({ queryKey: ['premium-pairs'], queryFn: () => fetchPremiumPairs() });
   const watchlist = useQuery({ queryKey: ['watchlist'], queryFn: () => fetchWatchlist() });
+  const chartSettingsQuery = useQuery({
+    queryKey: ['overview-chart-settings'],
+    queryFn: fetchOverviewChartSettings
+  });
+  const principleSnippets = useMemo(
+    () => pickRandomSnippets(OVERVIEW_SNIPPETS, RANDOM_SNIPPET_COUNT),
+    []
+  );
   const pairOptions = useMemo(() => {
     const optionMap = new Map<string, PremiumPairOption>();
     pairs.data?.forEach((item) => {
@@ -349,6 +414,14 @@ function OverviewPage() {
     },
     onError: (error) => message.error(error instanceof Error ? error.message : 'AI 推荐失败')
   });
+  const chartSettingsMutation = useMutation({
+    mutationFn: updateOverviewChartSettings,
+    onSuccess: (settings) => {
+      queryClient.setQueryData(['overview-chart-settings'], settings);
+      message.success('图表指标已保存');
+    },
+    onError: (error) => message.error(error instanceof Error ? error.message : '指标配置保存失败')
+  });
 
   useEffect(() => {
     setOrderedOpportunities(serverOpportunities);
@@ -403,6 +476,10 @@ function OverviewPage() {
   const minZoomValueSpan =
     trendDates.length > 1 ? Math.min(Math.max(trendDates.length - 1, 1), MIN_VISIBLE_POINTS) : undefined;
   const targetValue = numberValue(chartWatchlist?.watchlist.target_premium_pct);
+  const chartSettings = chartSettingsQuery.data || DEFAULT_OVERVIEW_CHART_SETTINGS;
+  const chartIndicatorValues = CHART_INDICATOR_OPTIONS.filter(
+    (item) => chartSettings[item.value]
+  ).map((item) => item.value);
 
   useEffect(() => {
     zoomRangeRef.current = {
@@ -488,6 +565,18 @@ function OverviewPage() {
     aiRecommendationMutation.mutate(selectedOpportunity);
   };
 
+  const onChangeChartIndicators = (values: Array<string | number | boolean>) => {
+    const selectedValues = new Set(values.map(String));
+    selectedValues.add('metric_premium');
+    chartSettingsMutation.mutate({
+      metric_premium: true,
+      median_60: selectedValues.has('median_60'),
+      p20_60: selectedValues.has('p20_60'),
+      p80_60: selectedValues.has('p80_60'),
+      target_threshold: selectedValues.has('target_threshold')
+    });
+  };
+
   const onChartDataZoom = useCallback(
     (params: {
       batch?: Array<{
@@ -558,13 +647,75 @@ function OverviewPage() {
     [chartKey, defaultZoomStartIndex, trendDates]
   );
 
-  const trendChartOption = useMemo(
-    () => ({
-      color:
-        targetValue === null
-          ? [premiumColor, MEDIAN60_COLOR, P20_COLOR, P80_COLOR]
-          : [premiumColor, MEDIAN60_COLOR, P20_COLOR, P80_COLOR, TARGET_COLOR],
-      tooltip: { trigger: 'axis', valueFormatter: (value: number) => `${value.toFixed(2)}%` },
+  const trendChartOption = useMemo(() => {
+    const series: Array<
+      Record<string, unknown> & { lineStyle: { color: string; width: number; type?: string } }
+    > = [];
+    if (chartSettings.metric_premium) {
+      series.push({
+        name: `${directionLabel} 溢价`,
+        type: 'line',
+        smooth: false,
+        showSymbol: false,
+        data: trend.data?.map((item) => numberValue(item.metric_premium_pct)) || [],
+        lineStyle: { width: 3, color: premiumColor },
+        itemStyle: { color: premiumColor },
+        areaStyle: { color: premiumColor, opacity: 0.08 },
+        emphasis: { focus: 'series' }
+      });
+    }
+    if (chartSettings.median_60) {
+      series.push({
+        name: '60日中位数',
+        type: 'line',
+        smooth: false,
+        showSymbol: false,
+        data: trend.data?.map((item) => numberValue(item.premium_median_60)) || [],
+        lineStyle: { width: 1.8, color: MEDIAN60_COLOR, type: 'dashed' },
+        itemStyle: { color: MEDIAN60_COLOR }
+      });
+    }
+    if (chartSettings.p20_60) {
+      series.push({
+        name: '20%分位',
+        type: 'line',
+        smooth: false,
+        showSymbol: false,
+        data: trend.data?.map((item) => numberValue(item.premium_p20_60)) || [],
+        lineStyle: { width: 1.4, color: P20_COLOR, type: 'dotted' },
+        itemStyle: { color: P20_COLOR }
+      });
+    }
+    if (chartSettings.p80_60) {
+      series.push({
+        name: '80%分位',
+        type: 'line',
+        smooth: false,
+        showSymbol: false,
+        data: trend.data?.map((item) => numberValue(item.premium_p80_60)) || [],
+        lineStyle: { width: 1.4, color: P80_COLOR, type: 'dotted' },
+        itemStyle: { color: P80_COLOR }
+      });
+    }
+    if (chartSettings.target_threshold && targetValue !== null) {
+      series.push({
+        name: '目标阈值',
+        type: 'line',
+        showSymbol: false,
+        data: trendDates.map(() => targetValue),
+        lineStyle: { width: 2, color: TARGET_COLOR, type: 'dotted' },
+        itemStyle: { color: TARGET_COLOR }
+      });
+    }
+    return {
+      color: series.map((item) => item.lineStyle.color),
+      tooltip: {
+        trigger: 'axis',
+        valueFormatter: (value: number | string) => {
+          const parsed = Number(value);
+          return Number.isFinite(parsed) ? `${parsed.toFixed(2)}%` : '-';
+        }
+      },
       legend: { top: 0, right: 16 },
       grid: { left: 54, right: 24, top: 42, bottom: 78 },
       dataZoom: [
@@ -595,58 +746,15 @@ function OverviewPage() {
         axisLabel: { hideOverlap: true }
       },
       yAxis: { type: 'value', scale: true, axisLabel: { formatter: '{value}%' } },
-      series: [
-        {
-          name: `${directionLabel} 溢价`,
-          type: 'line',
-          smooth: false,
-          showSymbol: false,
-          data: trend.data?.map((item) => numberValue(item.metric_premium_pct)) || [],
-          lineStyle: { width: 3, color: premiumColor },
-          itemStyle: { color: premiumColor },
-          areaStyle: { color: premiumColor, opacity: 0.08 },
-          emphasis: { focus: 'series' }
-        },
-        {
-          name: '60日中位数',
-          type: 'line',
-          smooth: false,
-          showSymbol: false,
-          data: trend.data?.map((item) => numberValue(item.premium_median_60)) || [],
-          lineStyle: { width: 1.8, color: MEDIAN60_COLOR, type: 'dashed' },
-          itemStyle: { color: MEDIAN60_COLOR }
-        },
-        {
-          name: '20%分位',
-          type: 'line',
-          smooth: false,
-          showSymbol: false,
-          data: trend.data?.map((item) => numberValue(item.premium_p20_60)) || [],
-          lineStyle: { width: 1.4, color: P20_COLOR, type: 'dotted' },
-          itemStyle: { color: P20_COLOR }
-        },
-        {
-          name: '80%分位',
-          type: 'line',
-          smooth: false,
-          showSymbol: false,
-          data: trend.data?.map((item) => numberValue(item.premium_p80_60)) || [],
-          lineStyle: { width: 1.4, color: P80_COLOR, type: 'dotted' },
-          itemStyle: { color: P80_COLOR }
-        },
-        targetValue === null
-          ? null
-          : {
-              name: '目标阈值',
-              type: 'line',
-              showSymbol: false,
-              data: trendDates.map(() => targetValue),
-              lineStyle: { width: 2, color: TARGET_COLOR, type: 'dotted' },
-              itemStyle: { color: TARGET_COLOR }
-            }
-      ].filter(Boolean)
-    }),
+      series
+    };
+  },
     [
+      chartSettings.median_60,
+      chartSettings.metric_premium,
+      chartSettings.p20_60,
+      chartSettings.p80_60,
+      chartSettings.target_threshold,
       defaultZoomEndValue,
       defaultZoomStartValue,
       direction,
@@ -686,19 +794,18 @@ function OverviewPage() {
       </Row>
 
       <section className="panel premium-principle-panel">
-        <div>
-          <div className="panel-title">A/H 价差怎么用</div>
+        <div className="principle-main">
+          <div className="panel-title">今日价差锦囊</div>
           <Typography.Paragraph className="principle-text">
-            A/H 比价把 A 股人民币价格与 H 股港币价格按汇率折成人民币后比较。A/H 溢价高，通常表示
-            A 股相对 H 股更贵；H/A 溢价高，通常表示 H 股相对 A 股更贵。实际使用时更适合作为跨市场换仓、
-            替代配置和提醒阈值，不应理解为无风险套利。
+            {principleSnippets[0]}
           </Typography.Paragraph>
         </div>
         <div className="principle-points">
-          <Tag color="blue">看方向</Tag>
-          <Tag color="green">看港股通</Tag>
-          <Tag color="gold">看分位</Tag>
-          <Tag color="red">看成本与流动性</Tag>
+          {principleSnippets.slice(1).map((item) => (
+            <span className="principle-chip" key={item}>
+              {item}
+            </span>
+          ))}
         </div>
       </section>
 
@@ -751,10 +858,24 @@ function OverviewPage() {
                 <div className="opportunity-card-codes">
                   {item.watchlist.a_ts_code} / {item.watchlist.hk_ts_code}
                 </div>
+                <div className="opportunity-card-prices">
+                  <span>
+                    A 最新价
+                    <b>{formatPrice(item.premium?.a_close, 'A')}</b>
+                  </span>
+                  <span>
+                    H 最新价
+                    <b>{formatPrice(item.premium?.hk_close, 'H')}</b>
+                  </span>
+                </div>
                 <div className="opportunity-card-metrics">
                   <span>
                     {item.premium?.metric_direction || item.watchlist.preferred_direction}
                     <b>{formatPercent(item.premium?.metric_premium_pct)}</b>
+                  </span>
+                  <span>
+                    目标阈值
+                    <b>{formatPercent(item.watchlist.target_premium_pct)}</b>
                   </span>
                   <span>
                     距阈值
@@ -764,6 +885,12 @@ function OverviewPage() {
                     60日分位
                     <b>{formatPercent(item.premium?.premium_percentile_60)}</b>
                   </span>
+                </div>
+                <div className="opportunity-card-thresholds">
+                  <span>
+                    溢价阈值：{opportunityDirection(item)} {formatPercent(item.watchlist.target_premium_pct)}
+                  </span>
+                  <span>{priceAlertText(item)}</span>
                 </div>
                 <div className="opportunity-card-foot">
                   <Tag color={item.premium?.is_hk_connect ? 'green' : 'default'}>
@@ -831,6 +958,30 @@ function OverviewPage() {
                 ]}
                 onChange={onChangeDirection}
               />
+              <Popover
+                trigger="click"
+                placement="bottomRight"
+                content={
+                  <Checkbox.Group
+                    className="overview-indicator-group"
+                    value={chartIndicatorValues}
+                    onChange={onChangeChartIndicators}
+                  >
+                    {CHART_INDICATOR_OPTIONS.map((item) => (
+                      <Checkbox key={item.value} value={item.value} disabled={item.required}>
+                        {item.label}
+                      </Checkbox>
+                    ))}
+                  </Checkbox.Group>
+                }
+              >
+                <Button
+                  icon={<SlidersHorizontal size={16} />}
+                  loading={chartSettingsQuery.isLoading || chartSettingsMutation.isPending}
+                >
+                  指标
+                </Button>
+              </Popover>
             </Space>
           </div>
           {trend.data?.length ? (

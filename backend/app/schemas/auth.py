@@ -75,6 +75,20 @@ class ProfileUpdateRequest(BaseModel):
     bio: str | None = Field(default=None, max_length=500)
 
 
+class OverviewChartSettings(BaseModel):
+    """总览趋势图用户级指标设置。
+
+    创建日期：2026-05-05
+    author: sunshengxian
+    """
+
+    metric_premium: bool = True
+    median_60: bool = True
+    p20_60: bool = True
+    p80_60: bool = True
+    target_threshold: bool = True
+
+
 class AuthTokenResponse(BaseModel):
     """登录令牌响应。
 

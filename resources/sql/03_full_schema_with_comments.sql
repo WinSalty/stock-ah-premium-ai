@@ -194,6 +194,7 @@ CREATE TABLE IF NOT EXISTS `app_user` (
   `phone` VARCHAR(32) DEFAULT NULL COMMENT '电话',
   `bio` TEXT DEFAULT NULL COMMENT '个人简介或备注',
   `menu_permissions_json` TEXT DEFAULT NULL COMMENT '用户粒度菜单权限 JSON',
+  `overview_chart_settings_json` TEXT DEFAULT NULL COMMENT '总览趋势图用户粒度指标显示配置 JSON',
   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '记录创建时间',
   `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '记录更新时间',
   PRIMARY KEY (`id`),

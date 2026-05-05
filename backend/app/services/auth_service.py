@@ -13,7 +13,12 @@ from sqlalchemy.orm import Session
 
 from app.core.config import Settings, get_settings
 from app.db.models.auth import AppUser, InvitationCode
-from app.schemas.auth import ProfileUpdateRequest, UserResponse, UserUpdateRequest
+from app.schemas.auth import (
+    OverviewChartSettings,
+    ProfileUpdateRequest,
+    UserResponse,
+    UserUpdateRequest,
+)
 
 ROLE_ADMIN = "ADMIN"
 ROLE_USER = "USER"
@@ -42,6 +47,8 @@ DEFAULT_ROLE_PERMISSIONS: dict[str, list[str]] = {
     ],
     ROLE_USER: ["overview", "premium", "chat", "profile"],
 }
+
+DEFAULT_OVERVIEW_CHART_SETTINGS = OverviewChartSettings()
 
 PASSWORD_HASH_ITERATIONS = 120_000
 
@@ -229,6 +236,42 @@ class AuthService:
         self.db.refresh(user)
         return user
 
+    def get_overview_chart_settings(self, user: AppUser) -> OverviewChartSettings:
+        """读取当前用户总览趋势图指标设置。
+
+        创建日期：2026-05-05
+        author: sunshengxian
+        """
+
+        if user.overview_chart_settings_json:
+            try:
+                payload = json.loads(user.overview_chart_settings_json)
+            except json.JSONDecodeError:
+                payload = {}
+            if isinstance(payload, dict):
+                return self._sanitize_overview_chart_settings(payload)
+        return DEFAULT_OVERVIEW_CHART_SETTINGS
+
+    def update_overview_chart_settings(
+        self,
+        user: AppUser,
+        payload: OverviewChartSettings,
+    ) -> OverviewChartSettings:
+        """保存当前用户总览趋势图指标设置。
+
+        创建日期：2026-05-05
+        author: sunshengxian
+        """
+
+        settings = self._sanitize_overview_chart_settings(payload.model_dump())
+        user.overview_chart_settings_json = json.dumps(
+            settings.model_dump(),
+            ensure_ascii=False,
+        )
+        self.db.commit()
+        self.db.refresh(user)
+        return settings
+
     def create_token(self, user: AppUser) -> str:
         """生成自签登录 token。
 
@@ -293,6 +336,18 @@ class AuthService:
 
         requested = set(permissions)
         return [key for key in ALL_MENU_PERMISSIONS if key in requested]
+
+    def _sanitize_overview_chart_settings(
+        self,
+        payload: dict[str, object],
+    ) -> OverviewChartSettings:
+        defaults = DEFAULT_OVERVIEW_CHART_SETTINGS.model_dump()
+        values = {
+            key: bool(payload.get(key, default_value))
+            for key, default_value in defaults.items()
+        }
+        values["metric_premium"] = True
+        return OverviewChartSettings(**values)
 
     def parse_token(self, token: str) -> dict[str, Any]:
         """校验并解析 token。

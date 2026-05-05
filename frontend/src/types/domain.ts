@@ -21,6 +21,14 @@ export interface UserInfo {
   permissions: string[];
 }
 
+export interface OverviewChartSettings {
+  metric_premium: boolean;
+  median_60: boolean;
+  p20_60: boolean;
+  p80_60: boolean;
+  target_threshold: boolean;
+}
+
 export interface LoginRequest {
   username: string;
   password: string;

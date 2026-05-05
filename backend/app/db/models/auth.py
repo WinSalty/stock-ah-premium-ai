@@ -27,6 +27,7 @@ class AppUser(TimestampMixin, Base):
     phone: Mapped[str | None] = mapped_column(String(32))
     bio: Mapped[str | None] = mapped_column(Text)
     menu_permissions_json: Mapped[str | None] = mapped_column(Text)
+    overview_chart_settings_json: Mapped[str | None] = mapped_column(Text)
 
 
 class InvitationCode(TimestampMixin, Base):
