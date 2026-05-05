@@ -22,7 +22,7 @@ cd /Users/salty/codeProject/ai/coding/stock-ah-premium-ai
 - Node.js：支持 Vite 5 的版本。
 - MySQL：本机 MySQL 5.7，连接说明见 `/Users/salty/codeProject/ai/doc/mysqluse.md`。
 - Tushare：使用 Python `tushare` SDK，默认中转地址 `http://tsy.xiaodefa.cn`，同步接口运行时优先读取本机文件 `/Users/salty/codeProject/ai/doc/tushare-token.txt`，环境变量 `TUSHARE_TOKEN` 作为兜底。
-- LLM：运行智能问答时默认接入 DeepSeek OpenAI-compatible API，优先读取本机文件 `/Users/salty/codeProject/ai/doc/deepseek-apikey.txt`，环境变量 `LLM_API_KEY` 作为兜底，默认 API 模型 `deepseek-v4-flash`；页面可切换 DeepSeek Pro `deepseek-v4-pro` 或阿里 Qwen `qwen3.6-flash`，Qwen Key 优先读取 `/Users/salty/codeProject/ai/doc/qwen-apikey.txt`。
+- LLM：运行智能问答时默认接入 DeepSeek OpenAI-compatible API，优先读取本机文件 `/Users/salty/codeProject/ai/doc/deepseek-apikey.txt`，环境变量 `LLM_API_KEY` 作为兜底，默认 API 模型 `deepseek-v4-flash`；页面可切换 DeepSeek Pro `deepseek-v4-pro` 或阿里 Qwen `qwen3.6-flash`，Qwen Key 优先读取 `/Users/salty/codeProject/ai/doc/qwen-apikey.txt`；项目级外部模型调用默认日限额为 `LLM_DAILY_CALL_LIMIT=100`。
 
 启动 MySQL：
 
@@ -81,6 +81,7 @@ LLM_BASE_URL=https://api.deepseek.com
 LLM_API_KEY_FILE=/Users/salty/codeProject/ai/doc/deepseek-apikey.txt
 LLM_API_KEY=
 LLM_MODEL=deepseek-v4-flash
+LLM_DAILY_CALL_LIMIT=100
 QWEN_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
 QWEN_API_KEY_FILE=/Users/salty/codeProject/ai/doc/qwen-apikey.txt
 QWEN_API_KEY=
@@ -423,13 +424,14 @@ LLM_BASE_URL=https://api.deepseek.com
 LLM_API_KEY_FILE=/Users/salty/codeProject/ai/doc/deepseek-apikey.txt
 LLM_API_KEY=
 LLM_MODEL=deepseek-v4-flash
+LLM_DAILY_CALL_LIMIT=100
 QWEN_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
 QWEN_API_KEY_FILE=/Users/salty/codeProject/ai/doc/qwen-apikey.txt
 QWEN_API_KEY=
 QWEN_QUESTION_ROUTER_MODEL=qwen3.6-flash
 ```
 
-问答页面使用流式响应，输入框按 Enter 发送，Shift+Enter 换行，并支持选择 `deepseek-v4-flash`、`deepseek-v4-pro` 或 `qwen3.6-flash`，默认 DeepSeek Flash。空会话会从 LLM 投资知识库主题中随机展示投研问题，便于直接生成更完整的投资分析报告。若页面一直没有响应，先确认后端 `/api/health` 正常，再查看后端日志中是否有 LLM 生成 SQL 字段名、Qwen 前置路由或数据库执行错误。
+问答页面使用流式响应，输入框按 Enter 发送，Shift+Enter 换行，并支持选择 `deepseek-v4-flash`、`deepseek-v4-pro` 或 `qwen3.6-flash`，默认 DeepSeek Flash。空会话会从 LLM 投资知识库主题中随机展示投研问题，便于直接生成更完整的投资分析报告。外部模型主调用会按项目维度做日限流，默认每天 100 次，统计范围包括 Qwen 前置路由、SQL 生成/修复和最终回答调用，不包含首包耗时、SQL 执行和总耗时等内部指标。若页面一直没有响应，先确认后端 `/api/health` 正常，再查看后端日志中是否有 LLM 日限流、生成 SQL 字段名、Qwen 前置路由或数据库执行错误。
 
 AH 溢价、折价和套利相关问题可按前置路由补充本地候选池、市场分布、自选机会，以及 `resources/doc/llm-knowledge/ah-premium/` 中的研究片段，避免只基于单行 SQL 结果作答。银行/非银、个股报告、宏观地产金融推演等问题会先给 Qwen 轻量知识库目录简介，由模型选择是否读取对应子目录中的投研报告片段。回答提示词要求 LLM 给出评级口径、配置倾向、优先级、仓位思路、阈值和触发条件，并避免输出模板化免责句。
 

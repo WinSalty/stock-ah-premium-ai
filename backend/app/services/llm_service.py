@@ -5,11 +5,13 @@ import logging
 import re
 from collections.abc import Iterator
 from dataclasses import dataclass
+from datetime import datetime, time, timedelta
 from time import perf_counter
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import httpx
-from sqlalchemy import text
+from sqlalchemy import func, select, text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -22,6 +24,17 @@ logger = logging.getLogger(__name__)
 
 LLM_CHAT_TIMEOUT_SECONDS = 90.0
 LLM_STREAM_TIMEOUT_SECONDS = 240.0
+LLM_LIMIT_TIMEZONE = ZoneInfo("Asia/Shanghai")
+LLM_LIMIT_EXCEEDED_MESSAGE = (
+    "今日智能问答模型调用次数已达到项目日限额 100 次，请明天再试或联系管理员调整配置。"
+)
+LLM_EXTERNAL_CALL_PHASES = (
+    "question_router",
+    "generate_sql",
+    "repair_sql",
+    "answer",
+    "answer_stream",
+)
 DEFAULT_CHAT_MODEL = "deepseek-v4-flash"
 ANSWER_MARKET_ROW_LIMIT = 60
 ANSWER_KNOWLEDGE_CHUNK_LIMIT = 5
@@ -285,6 +298,14 @@ class QuestionRoute:
     use_knowledge: bool
     knowledge_category_keys: tuple[str, ...] = ()
     reason: str = ""
+
+
+class LlmDailyLimitExceeded(Exception):
+    """LLM 项目级日调用限流异常。
+
+    创建日期：2026-05-05
+    author: sunshengxian
+    """
 
 
 class LlmService:
@@ -656,6 +677,7 @@ class LlmService:
         endpoint = self._model_endpoint(model)
         if not endpoint.api_key:
             raise ValueError(f"{endpoint.provider} LLM 未配置 API Key")
+        self._enforce_daily_llm_call_limit(endpoint, trace)
         url = f"{endpoint.base_url.rstrip('/')}/chat/completions"
         headers = {"Authorization": f"Bearer {endpoint.api_key}"}
         messages: list[dict[str, str]] = []
@@ -688,6 +710,7 @@ class LlmService:
         endpoint = self._model_endpoint(model)
         if not endpoint.api_key:
             raise ValueError(f"{endpoint.provider} LLM 未配置 API Key")
+        self._enforce_daily_llm_call_limit(endpoint, trace)
         url = f"{endpoint.base_url.rstrip('/')}/chat/completions"
         headers = {"Authorization": f"Bearer {endpoint.api_key}"}
         messages: list[dict[str, str]] = []
@@ -796,6 +819,76 @@ class LlmService:
                 body[:2000],
             )
             raise
+
+    def _enforce_daily_llm_call_limit(
+        self,
+        endpoint: LlmEndpoint,
+        trace: LlmCallTrace | None,
+    ) -> None:
+        """检查项目级 LLM 日调用限额。
+
+        创建日期：2026-05-05
+        author: sunshengxian
+        """
+
+        limit = self.settings.llm_daily_call_limit
+        if limit <= 0:
+            return
+        used_count = self._today_external_llm_call_count()
+        if used_count < limit:
+            return
+        question_id, phase = self._trace_values(trace)
+        logger.error(
+            "LLM 日调用限额已用尽 question_id=%s phase=%s provider=%s model=%s used=%s limit=%s",
+            question_id,
+            phase,
+            endpoint.provider,
+            endpoint.model,
+            used_count,
+            limit,
+        )
+        raise LlmDailyLimitExceeded(self._daily_limit_message(limit))
+
+    def _today_external_llm_call_count(self) -> int:
+        """统计当天已发生的外部 LLM 主调用次数。
+
+        创建日期：2026-05-05
+        author: sunshengxian
+        """
+
+        now = datetime.now(LLM_LIMIT_TIMEZONE).replace(tzinfo=None)
+        today_start = datetime.combine(now.date(), time.min)
+        tomorrow_start = today_start + timedelta(days=1)
+        statement = select(func.count(LlmCallMetric.id)).where(
+            LlmCallMetric.phase.in_(LLM_EXTERNAL_CALL_PHASES),
+            LlmCallMetric.created_at >= today_start,
+            LlmCallMetric.created_at < tomorrow_start,
+        )
+        try:
+            raw_count = self.db.scalar(statement)
+        except Exception:
+            self.db.rollback()
+            logger.error("LLM 日调用次数统计失败，临时放行本次模型调用", exc_info=True)
+            return 0
+        if isinstance(raw_count, int):
+            return raw_count
+        if isinstance(raw_count, float):
+            return int(raw_count)
+        return 0
+
+    def _daily_limit_message(self, limit: int) -> str:
+        """生成可展示的 LLM 日限流提示。
+
+        创建日期：2026-05-05
+        author: sunshengxian
+        """
+
+        if limit == 100:
+            return LLM_LIMIT_EXCEEDED_MESSAGE
+        return (
+            f"今日智能问答模型调用次数已达到项目日限额 {limit} 次，"
+            "请明天再试或联系管理员调整配置。"
+        )
 
     def _question_trace_id(self, question: str) -> str:
         """生成不暴露问题原文的短追踪 ID。

@@ -39,6 +39,7 @@ class Settings(BaseSettings):
         alias="LLM_API_KEY_FILE",
     )
     llm_model: str | None = Field(default="deepseek-v4-flash", alias="LLM_MODEL")
+    llm_daily_call_limit: int = Field(default=100, alias="LLM_DAILY_CALL_LIMIT")
     qwen_base_url: str = Field(
         default="https://dashscope.aliyuncs.com/compatible-mode/v1",
         alias="QWEN_BASE_URL",

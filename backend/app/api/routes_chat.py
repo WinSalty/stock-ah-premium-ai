@@ -23,7 +23,7 @@ from app.schemas.chat import (
     ChatSessionResponse,
     ChatStoredMessageResponse,
 )
-from app.services.llm_service import LlmService
+from app.services.llm_service import LlmDailyLimitExceeded, LlmService
 
 router = APIRouter()
 DbSession = Annotated[Session, Depends(get_db)]
@@ -301,6 +301,10 @@ def create_message(
     db.commit()
     try:
         answer = LlmService(db).answer(payload.question, context, model=payload.llm_model)
+    except LlmDailyLimitExceeded as exc:
+        db.rollback()
+        logger.error("LLM 非流式问答触发日限流")
+        raise HTTPException(status_code=429, detail=str(exc)) from exc
     except Exception as exc:
         db.rollback()
         logger.error("LLM 非流式问答失败", exc_info=True)
@@ -386,6 +390,23 @@ def create_message_stream(
             _touch_session(session, visible_question, has_history=True)
             db.commit()
             yield _json_line({"type": "done", "answer": answer_text, "rows": rows})
+        except LlmDailyLimitExceeded as exc:
+            db.rollback()
+            logger.error("LLM 流式问答触发日限流")
+            answer_text = str(exc)
+            assistant_message = LlmChatMessage(
+                session_id=session_id,
+                role="assistant",
+                content=answer_text,
+                sql_text=sql,
+                result_preview_json=json.dumps(rows[:20], ensure_ascii=False, default=str),
+                created_at=_now_east8(),
+                updated_at=_now_east8(),
+            )
+            db.add(assistant_message)
+            _touch_session(session, visible_question, has_history=True)
+            db.commit()
+            yield _json_line({"type": "error", "answer": answer_text, "rows": rows})
         except Exception:
             db.rollback()
             logger.error("LLM 流式问答失败", exc_info=True)

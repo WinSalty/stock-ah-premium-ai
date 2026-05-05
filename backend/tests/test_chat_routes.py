@@ -17,7 +17,7 @@ from app.db.base import Base
 from app.db.models.auth import AppUser
 from app.db.models.chat import LlmChatMessage
 from app.schemas.chat import ChatMessageCreate, ChatSessionCreate
-from app.services.llm_service import ChatAnswer
+from app.services.llm_service import ChatAnswer, LlmDailyLimitExceeded
 
 
 def add_user(db: Session, username: str = "tester") -> AppUser:
@@ -109,3 +109,41 @@ def test_chat_message_stores_display_question_without_internal_prompt(monkeypatc
 
     assert user_message is not None
     assert user_message.content == "为招商银行推荐 H/A 目标阈值"
+
+
+def test_chat_message_returns_429_when_daily_llm_limit_exceeded(monkeypatch) -> None:
+    """确认非流式问答触发项目日限流时返回 429。
+
+    创建日期：2026-05-05
+    author: sunshengxian
+    """
+
+    class FakeLlmService:
+        def __init__(self, db: Session) -> None:
+            self.db = db
+
+        def answer(
+            self,
+            question: str,
+            context: dict[str, object],
+            model: str | None = None,
+        ) -> ChatAnswer:
+            raise LlmDailyLimitExceeded("今日智能问答模型调用次数已达到项目日限额 100 次。")
+
+    monkeypatch.setattr(routes_chat, "LlmService", FakeLlmService)
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    with Session(engine) as db:
+        user = add_user(db)
+        session = create_session(ChatSessionCreate(title="新的数据问答"), db, user)
+
+        with pytest.raises(HTTPException) as exc_info:
+            create_message(
+                session.id,
+                ChatMessageCreate(question="招商银行当前估值怎么看？"),
+                db,
+                user,
+            )
+
+    assert exc_info.value.status_code == 429
+    assert "日限额 100 次" in exc_info.value.detail

@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import json
 import zipfile
+from datetime import datetime
 from pathlib import Path
 from time import perf_counter
 from unittest.mock import Mock
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
@@ -15,9 +17,11 @@ from app.db.models.chat import LlmCallMetric
 from app.services.investment_knowledge_service import InvestmentKnowledgeService
 from app.services.llm_service import (
     INVESTMENT_ADVISOR_SYSTEM_PROMPT,
+    LLM_LIMIT_EXCEEDED_MESSAGE,
     OUT_OF_SCOPE_MESSAGE,
     SERVICE_INTRO_MESSAGE,
     LlmCallTrace,
+    LlmDailyLimitExceeded,
     LlmEndpoint,
     LlmService,
     QuestionRoute,
@@ -580,6 +584,71 @@ def test_llm_completion_metric_is_persisted() -> None:
     assert metric.session_id == 18
     assert metric.output_chars == 2
     assert metric.elapsed_ms is not None
+
+
+def test_daily_llm_call_limit_counts_external_main_phases_only() -> None:
+    """确认项目级日限流只统计真实外部模型主调用。
+
+    创建日期：2026-05-05
+    author: sunshengxian
+    """
+
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    today = datetime.now(ZoneInfo("Asia/Shanghai")).replace(tzinfo=None)
+    with Session(engine) as db:
+        for index in range(99):
+            db.add(
+                LlmCallMetric(
+                    question_id=f"q{index}",
+                    phase="answer",
+                    provider="DeepSeek",
+                    model="deepseek-v4-flash",
+                    created_at=today,
+                    updated_at=today,
+                )
+            )
+        db.add(
+            LlmCallMetric(
+                question_id="first-chunk",
+                phase="answer_stream_first_chunk",
+                provider="DeepSeek",
+                model="deepseek-v4-flash",
+                created_at=today,
+                updated_at=today,
+            )
+        )
+        db.commit()
+        service = LlmService(
+            db,
+            settings=Settings(llm_api_key="test-key", llm_api_key_file=None),
+        )
+        endpoint = LlmEndpoint(
+            provider="DeepSeek",
+            base_url="https://example.test",
+            api_key="test-key",
+            model="deepseek-v4-flash",
+        )
+
+        service._enforce_daily_llm_call_limit(endpoint, None)
+        db.add(
+            LlmCallMetric(
+                question_id="router",
+                phase="question_router",
+                provider="Qwen",
+                model="qwen3.6-flash",
+                created_at=today,
+                updated_at=today,
+            )
+        )
+        db.commit()
+
+        try:
+            service._enforce_daily_llm_call_limit(endpoint, None)
+        except LlmDailyLimitExceeded as exc:
+            assert str(exc) == LLM_LIMIT_EXCEEDED_MESSAGE
+        else:
+            raise AssertionError("daily LLM limit should be enforced")
 
 
 def _write_minimal_docx(path: Path, paragraphs: tuple[str, ...]) -> None:
