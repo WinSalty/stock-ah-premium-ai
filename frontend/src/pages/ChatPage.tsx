@@ -135,12 +135,17 @@ const markdownComponents: Components = {
 };
 
 /**
- * 兼容模型偶发输出的非标准标题，如 ##一、 缺少空格时 ReactMarkdown 不会按标题解析。
+ * 兼容模型偶发输出的非标准 Markdown，例如标题缺少空格或标题与表格表头粘在一行。
  * 创建日期：2026-05-05
  * author: sunshengxian
  */
 function normalizeMarkdownForRender(content: string) {
-  return content.replace(/^(#{1,6})(?=\S)/gm, '$1 ');
+  return content
+    .replace(/^(#{1,6})(?=\S)/gm, '$1 ')
+    .replace(
+      /^(#{1,6}\s+[^\n|]+)(\|[^\n]*\|)\n(\|(?:\s*:?-{3,}:?\s*\|)+\s*)$/gm,
+      '$1\n\n$2\n$3'
+    );
 }
 
 const PRESET_QUESTION_COUNT = 4;
