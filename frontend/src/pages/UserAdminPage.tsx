@@ -13,6 +13,7 @@ const menuPermissionOptions = [
   { label: '查询', value: 'query' },
   { label: 'AH 机会筛选', value: 'premium' },
   { label: '问答', value: 'chat' },
+  { label: 'LLM 耗时', value: 'llm_metrics' },
   { label: '用户管理', value: 'users' },
   { label: '个人信息', value: 'profile' }
 ];

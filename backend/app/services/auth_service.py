@@ -24,12 +24,22 @@ ALL_MENU_PERMISSIONS: dict[str, str] = {
     "query": "查询",
     "premium": "AH 机会筛选",
     "chat": "问答",
+    "llm_metrics": "LLM 耗时",
     "users": "用户管理",
     "profile": "个人信息",
 }
 
 DEFAULT_ROLE_PERMISSIONS: dict[str, list[str]] = {
-    ROLE_ADMIN: ["overview", "sync", "query", "premium", "chat", "users", "profile"],
+    ROLE_ADMIN: [
+        "overview",
+        "sync",
+        "query",
+        "premium",
+        "chat",
+        "llm_metrics",
+        "users",
+        "profile",
+    ],
     ROLE_USER: ["overview", "premium", "chat", "profile"],
 }
 

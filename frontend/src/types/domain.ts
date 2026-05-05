@@ -68,6 +68,54 @@ export interface ProfileUpdateRequest {
   bio?: string | null;
 }
 
+export interface LlmMetricSummary {
+  total: number;
+  success_count: number;
+  avg_elapsed_ms: number | null;
+  max_elapsed_ms: number | null;
+  avg_first_chunk_ms: number | null;
+}
+
+export interface LlmMetricItem {
+  id: number;
+  question_id: string;
+  user_id: number | null;
+  session_id: number | null;
+  phase: string;
+  provider: string | null;
+  model: string | null;
+  success: boolean;
+  elapsed_ms: number | null;
+  first_chunk_ms: number | null;
+  output_chars: number;
+  chunk_count: number;
+  row_count: number;
+  error_message: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface LlmMetricResponse {
+  total: number;
+  page: number;
+  page_size: number;
+  summary: LlmMetricSummary;
+  rows: LlmMetricItem[];
+}
+
+export interface LlmMetricParams {
+  page: number;
+  page_size: number;
+  question_id?: string;
+  provider?: string;
+  model?: string;
+  phase?: string;
+  session_id?: number;
+  user_id?: number;
+  start_date?: string;
+  end_date?: string;
+}
+
 export interface SyncRun {
   id: number;
   dataset: string;

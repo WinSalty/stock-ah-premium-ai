@@ -613,6 +613,38 @@ body {
   align-items: end;
 }
 
+.llm-metric-filter-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(160px, 1fr));
+  gap: 12px;
+  align-items: end;
+}
+
+.metrics-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.metric-card {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid #e5ebf3;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.metric-card strong {
+  overflow: hidden;
+  color: #172033;
+  font-size: 22px;
+  line-height: 1.15;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .field-label {
   display: block;
   margin-bottom: 8px;
@@ -1200,8 +1232,13 @@ body {
   .sync-batch-grid,
   .sync-dataset-note,
   .sync-run-filter-grid,
+  .llm-metric-filter-grid,
   .premium-filter-grid {
     grid-template-columns: repeat(2, minmax(160px, 1fr));
+  }
+
+  .metrics-summary-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .manual-import-grid {
@@ -1260,6 +1297,8 @@ body {
   .sync-run-filter-grid,
   .premium-filter-grid,
   .manual-import-grid,
+  .llm-metric-filter-grid,
+  .metrics-summary-grid,
   .query-filter-grid {
     grid-template-columns: 1fr;
   }

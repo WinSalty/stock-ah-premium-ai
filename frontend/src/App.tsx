@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Button, Layout, Menu, Skeleton, Typography, message } from 'antd';
 import { useQueryClient } from '@tanstack/react-query';
 import {
+  Activity,
   BarChart3,
   Bot,
   DatabaseZap,
@@ -19,11 +20,12 @@ import DataQueryPage from './pages/DataQueryPage';
 import AuthPage from './pages/AuthPage';
 import UserAdminPage from './pages/UserAdminPage';
 import ProfilePage from './pages/ProfilePage';
+import LlmMetricsPage from './pages/LlmMetricsPage';
 import { fetchCurrentUser } from './api/auth';
 import { clearAuthToken, getAuthToken } from './api/client';
 import type { AuthTokenResponse, UserInfo } from './types/domain';
 
-type PageKey = 'overview' | 'sync' | 'query' | 'premium' | 'chat' | 'users' | 'profile';
+type PageKey = 'overview' | 'sync' | 'query' | 'premium' | 'chat' | 'llm_metrics' | 'users' | 'profile';
 
 const allMenuItems = [
   { key: 'overview', icon: <LayoutDashboard size={18} />, label: '总览' },
@@ -31,6 +33,7 @@ const allMenuItems = [
   { key: 'query', icon: <TableProperties size={18} />, label: '查询' },
   { key: 'premium', icon: <BarChart3 size={18} />, label: 'AH 机会筛选' },
   { key: 'chat', icon: <Bot size={18} />, label: '问答' },
+  { key: 'llm_metrics', icon: <Activity size={18} />, label: 'LLM 耗时' },
   { key: 'users', icon: <Users size={18} />, label: '用户管理' },
   { key: 'profile', icon: <UserCircle size={18} />, label: '个人信息' }
 ];
@@ -51,6 +54,7 @@ function App() {
     query: <DataQueryPage />,
     premium: <PremiumPage />,
     chat: <ChatPage />,
+    llm_metrics: <LlmMetricsPage />,
     users: user ? <UserAdminPage currentUser={user} onUserUpdated={setUser} /> : null,
     profile: user ? <ProfilePage user={user} onUserUpdated={setUser} /> : null
   };
