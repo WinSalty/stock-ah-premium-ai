@@ -157,6 +157,10 @@ function opportunityDirection(item: WatchlistOpportunity): PremiumDirection {
   return item.premium?.metric_direction || item.watchlist.preferred_direction;
 }
 
+function premiumDirection(value?: string | null): PremiumDirection {
+  return value === 'AH' ? 'AH' : 'HA';
+}
+
 function holdingMarketLabel(value?: string | null) {
   const map: Record<string, string> = {
     A: 'A 股',
@@ -452,6 +456,15 @@ function OverviewPage() {
       cancelText: '保留',
       onOk: () => removeWatchlistMutation.mutateAsync(item)
     });
+  };
+
+  const onShowPremiumTrend = (item: PremiumItem) => {
+    setIsManualChart(!item.watchlist_id);
+    setSelectedWatchlistId(item.watchlist_id || null);
+    setPairKey(`${item.a_ts_code}|${item.hk_ts_code}`);
+    setFallbackDirection(premiumDirection(item.metric_direction));
+    setAiRecommendation('');
+    setAiRecommendationSource('fresh');
   };
 
   const onDropOpportunity = (targetId: number) => {
@@ -839,9 +852,14 @@ function OverviewPage() {
           {watchlist.isLoading ? (
             <Skeleton active />
           ) : watchlistPremiums.length ? (
-            <PremiumTable data={watchlistPremiums} pagination={false} onRemoveWatchlist={onRemoveWatchlist} />
+            <PremiumTable
+              data={watchlistPremiums}
+              pagination={false}
+              onTrend={onShowPremiumTrend}
+              onRemoveWatchlist={onRemoveWatchlist}
+            />
           ) : data?.top_premiums.length ? (
-            <PremiumTable data={data.top_premiums} pagination={false} />
+            <PremiumTable data={data.top_premiums} pagination={false} onTrend={onShowPremiumTrend} />
           ) : (
             <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} />
           )}

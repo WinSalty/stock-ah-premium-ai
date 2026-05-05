@@ -44,30 +44,37 @@ MARKET_H = "H"
 LOCAL_TZ = ZoneInfo("Asia/Shanghai")
 HTML_CARD_STYLE = (
     "font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"
-    "color:#102033;background:#eef3f8;padding:14px;"
+    "color:#14202e;background:#f3f6f2;padding:14px;"
 )
 HTML_PANEL_STYLE = (
-    "max-width:640px;margin:0 auto;background:#ffffff;border:1px solid #d7e0ea;"
-    "border-radius:12px;overflow:hidden;box-shadow:0 4px 16px rgba(15,35,55,.08);"
+    "max-width:640px;margin:0 auto;background:#ffffff;border:1px solid #d9e4dc;"
+    "border-radius:12px;overflow:hidden;box-shadow:0 4px 16px rgba(40,64,48,.08);"
 )
 HTML_HEADER_STYLE = "padding:16px 18px;color:#ffffff;"
 HTML_BODY_STYLE = "padding:16px 18px 18px;"
 HTML_BADGE_STYLE = (
-    "display:inline-block;padding:3px 8px;border-radius:999px;background:rgba(255,255,255,.18);"
+    "display:inline-block;padding:3px 8px;border-radius:999px;background:rgba(255,255,255,.2);"
     "font-size:12px;line-height:1.4;"
 )
 HTML_SUMMARY_STYLE = (
-    "font-size:15px;font-weight:600;line-height:1.75;background:#f8fafc;"
-    "border:1px solid #e2e8f0;border-radius:8px;padding:10px 12px;"
+    "font-size:15px;font-weight:600;line-height:1.75;background:#fbf8ef;"
+    "border:1px solid #eadfbe;border-radius:8px;padding:10px 12px;"
 )
-HTML_MUTED_STYLE = "color:#64748b;font-size:12px;line-height:1.7;margin:10px 0 0;"
+HTML_MUTED_STYLE = "color:#66705f;font-size:12px;line-height:1.7;margin:10px 0 0;"
 HTML_TABLE_STYLE = (
     "width:100%;border-collapse:separate;border-spacing:0;margin-top:12px;font-size:14px;"
 )
 HTML_LABEL_CELL_STYLE = (
-    "width:34%;padding:9px 10px;border-top:1px solid #edf2f7;color:#64748b;background:#fbfdff;"
+    "width:34%;padding:9px 10px;border-top:1px solid #edf0e8;color:#68715f;background:#fbfcf7;"
 )
-HTML_VALUE_CELL_STYLE = "padding:9px 10px;border-top:1px solid #edf2f7;color:#102033;"
+HTML_VALUE_CELL_STYLE = "padding:9px 10px;border-top:1px solid #edf0e8;color:#14202e;"
+HTML_VISUAL_WRAP_STYLE = (
+    "margin-top:14px;padding:10px 12px;border-radius:10px;background:rgba(255,255,255,.16);"
+)
+HTML_VISUAL_BAR_BASE_STYLE = (
+    "display:inline-block;width:8px;margin-right:5px;border-radius:6px 6px 2px 2px;"
+    "vertical-align:bottom;background:#f5e6b8;"
+)
 
 
 class NotificationError(ValueError):
@@ -506,7 +513,7 @@ class NotificationService:
         return self._html_message(
             title="AH 溢价阈值触发",
             badge="阈值提醒",
-            accent="#2563eb",
+            accent="#2f6f4e",
             summary=(
                 f"{self._stock_label(item)} {direction} 溢价当前为 {current_text}%，"
                 f"已达到目标阈值 {target_text}%。"
@@ -542,7 +549,7 @@ class NotificationService:
         return self._html_message(
             title="股价提醒触发",
             badge="股价提醒",
-            accent="#0f766e",
+            accent="#b7791f",
             summary=(
                 f"{self._stock_label(item)} {market_label}最新收盘价 {price_text} "
                 f"已{operator_text}目标价格 {target_text}。"
@@ -563,7 +570,7 @@ class NotificationService:
         return self._html_message(
             title=title,
             badge="测试推送",
-            accent="#7c3aed",
+            accent="#2f5f7f",
             summary=content or "PushPlus 好友消息推送已连通。",
             details=[
                 ("消息类型", "PushPlus HTML 测试消息"),
@@ -597,6 +604,7 @@ class NotificationService:
             f'<div style="font-size:19px;font-weight:700;margin-top:8px;line-height:1.35;">'
             f"{escape(title)}"
             "</div>"
+            f"{self._html_signal_visual()}"
             "</div>"
             f'<div style="{HTML_BODY_STYLE}">'
             f'<div style="{HTML_SUMMARY_STYLE}">{escape(summary)}</div>'
@@ -612,6 +620,26 @@ class NotificationService:
     def _format_decimal(self, value: Decimal) -> str:
         text = format(value.normalize(), "f")
         return text.rstrip("0").rstrip(".") if "." in text else text
+
+    def _html_signal_visual(self) -> str:
+        bar_specs = ((10, "0.48"), (18, "0.66"), (13, "0.58"), (25, "0.9"), (32, "1"))
+        bars = "".join(
+            (
+                f'<span style="{HTML_VISUAL_BAR_BASE_STYLE}'
+                f'height:{height}px;opacity:{opacity};"></span>'
+            )
+            for height, opacity in bar_specs
+        )
+        return (
+            f'<div style="{HTML_VISUAL_WRAP_STYLE}">'
+            '<span style="display:inline-block;margin-right:10px;font-size:12px;opacity:.86;">'
+            "价差信号"
+            "</span>"
+            f"{bars}"
+            '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;'
+            'background:#ffffff;margin-left:4px;vertical-align:middle;"></span>'
+            "</div>"
+        )
 
     def _ensure_friend_not_bound(
         self,

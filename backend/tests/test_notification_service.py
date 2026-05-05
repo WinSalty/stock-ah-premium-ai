@@ -167,6 +167,8 @@ def test_test_push_wraps_content_as_html() -> None:
     assert "<table" in sent_content
     assert "PushPlus HTML 测试消息" in sent_content
     assert "消息链路已连通" in sent_content
+    assert "价差信号" in sent_content
+    assert "#7c3aed" not in sent_content
 
 
 def test_bound_user_cannot_create_pushplus_qr_code() -> None:
