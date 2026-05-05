@@ -2,7 +2,7 @@ import { Button, Form, Input, Popconfirm, Segmented, Skeleton, Table, message } 
 import { Plus, SendHorizontal, Trash2 } from 'lucide-react';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import PageHeader from '../components/PageHeader';
 import OverflowCell from '../components/OverflowCell';
 import {
@@ -188,6 +188,7 @@ function randomPresetQuestions(previous: string[] = []) {
  */
 function ChatPage() {
   const [form] = Form.useForm<ChatFormValues>();
+  const historyEndRef = useRef<HTMLDivElement | null>(null);
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [session, setSession] = useState<ChatSession | null>(null);
   const [turns, setTurns] = useState<ChatTurn[]>([]);
@@ -200,6 +201,10 @@ function ChatPage() {
   useEffect(() => {
     void loadInitialSessions();
   }, []);
+
+  useEffect(() => {
+    historyEndRef.current?.scrollIntoView({ block: 'end' });
+  }, [turns, isLoadingHistory]);
 
   const loadInitialSessions = async () => {
     setIsLoadingSessions(true);
@@ -496,6 +501,7 @@ function ChatPage() {
                 ))
               : null}
             {isSending && turns.length === 0 ? <Skeleton active paragraph={{ rows: 4 }} /> : null}
+            <div className="chat-history-end" ref={historyEndRef} />
           </section>
 
           <section className="chat-composer">

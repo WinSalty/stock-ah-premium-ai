@@ -1087,7 +1087,8 @@ body {
   overflow: auto;
   min-width: 0;
   min-height: 0;
-  padding: 22px 24px;
+  padding: 26px 24px 30px;
+  scroll-padding: 26px 24px 30px;
   overscroll-behavior: contain;
 }
 
@@ -1115,9 +1116,9 @@ body {
 
 .chat-turn {
   display: grid;
-  gap: 12px;
+  gap: 18px;
   min-width: 0;
-  margin-bottom: 20px;
+  margin-bottom: 28px;
 }
 
 .chat-question {
@@ -1138,10 +1139,15 @@ body {
   overflow: hidden;
   width: min(980px, 100%);
   min-width: 0;
+  margin-top: 2px;
   padding: 16px 18px;
   border: 1px solid #dbe4ef;
   border-radius: 6px;
   background: #ffffff;
+}
+
+.chat-history-end {
+  height: 1px;
 }
 
 .chat-data-summary {
