@@ -17,7 +17,9 @@ from app.db.models.market import (
     WatchlistStock,
 )
 from app.db.models.notification import AlertEvent, PushplusBinding
+from app.schemas.watchlist import WatchlistCreate
 from app.services.notification_service import EVENT_PRICE_REACHED, NotificationService
+from app.services.watchlist_service import WatchlistError, WatchlistService
 
 
 class FakePushplusClient:
@@ -150,6 +152,67 @@ def test_threshold_alert_pushes_once_per_trading_day() -> None:
     assert second_events == []
     assert total_events is not None
     assert len(fake_client.sent) == 1
+
+
+def test_pushplus_callback_binds_user_from_qr_content() -> None:
+    """确认 PushPlus 新增好友回调按二维码用户参数自动绑定。
+
+    创建日期：2026-05-05
+    author: sunshengxian
+    """
+
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    with Session(engine) as db:
+        user = AppUser(username="callback-user", password_hash="hash", role="USER", is_active=True)
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+
+        service = NotificationService(db)
+        binding = service.bind_pushplus_callback(
+            service._qr_content_for_user(user.id),
+            friend_id=2001,
+            friend_token="callback-token",
+            nick_name="扫码用户",
+            is_follow=True,
+        )
+
+    assert binding.is_bound is True
+    assert binding.friend_id == 2001
+    assert binding.friend_nick_name == "扫码用户"
+
+
+def test_watchlist_alert_requires_pushplus_binding() -> None:
+    """确认用户设置提醒前必须完成 PushPlus 绑定。
+
+    创建日期：2026-05-05
+    author: sunshengxian
+    """
+
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    with Session(engine) as db:
+        user = AppUser(username="no-binding", password_hash="hash", role="USER", is_active=True)
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+
+        try:
+            WatchlistService(db).create(
+                payload=WatchlistCreate(
+                    a_ts_code="600036.SH",
+                    hk_ts_code="03968.HK",
+                    target_premium_pct=Decimal("30"),
+                ),
+                user_id=user.id,
+            )
+        except WatchlistError as exc:
+            error_message = str(exc)
+        else:
+            error_message = ""
+
+    assert "PushPlus" in error_message
 
 
 def test_price_alert_skips_when_market_is_closed() -> None:

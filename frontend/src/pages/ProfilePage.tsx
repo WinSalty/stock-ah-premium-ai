@@ -1,12 +1,12 @@
-import { Alert, Button, Empty, Form, Image, Input, Select, Space, Typography, message } from 'antd';
+import { Alert, Button, Empty, Form, Image, Input, List, Space, Tag, Typography, message } from 'antd';
 import { Link2Off, QrCode, RefreshCw, Save, Send } from 'lucide-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
 import PageHeader from '../components/PageHeader';
 import { updateProfile } from '../api/auth';
 import {
-  bindPushplusFriend,
   createPushplusQrCode,
+  fetchAdminPushplusBindings,
   fetchPushplusBinding,
   fetchPushplusFriends,
   sendTestPush,
@@ -26,7 +26,6 @@ interface ProfilePageProps {
  */
 function ProfilePage({ user, onUserUpdated }: ProfilePageProps) {
   const [form] = Form.useForm<ProfileUpdateRequest>();
-  const [selectedFriendId, setSelectedFriendId] = useState<number | null>(null);
   const queryClient = useQueryClient();
   const binding = useQuery({
     queryKey: ['pushplus-binding'],
@@ -36,6 +35,11 @@ function ProfilePage({ user, onUserUpdated }: ProfilePageProps) {
     queryKey: ['pushplus-friends'],
     queryFn: fetchPushplusFriends,
     enabled: false
+  });
+  const adminBindings = useQuery({
+    queryKey: ['pushplus-admin-bindings'],
+    queryFn: fetchAdminPushplusBindings,
+    enabled: user.role === 'ADMIN'
   });
   const updateMutation = useMutation({
     mutationFn: updateProfile,
@@ -48,15 +52,6 @@ function ProfilePage({ user, onUserUpdated }: ProfilePageProps) {
   const qrCodeMutation = useMutation({
     mutationFn: () => createPushplusQrCode({ expire_seconds: 604800, scan_count: 1 }),
     onError: (error) => message.error(error instanceof Error ? error.message : '生成二维码失败')
-  });
-  const bindMutation = useMutation({
-    mutationFn: (friendId: number) => bindPushplusFriend({ friend_id: friendId }),
-    onSuccess: () => {
-      message.success('PushPlus 好友已绑定');
-      setSelectedFriendId(null);
-      queryClient.invalidateQueries({ queryKey: ['pushplus-binding'] });
-    },
-    onError: (error) => message.error(error instanceof Error ? error.message : '绑定失败')
   });
   const testPushMutation = useMutation({
     mutationFn: () =>
@@ -84,6 +79,16 @@ function ProfilePage({ user, onUserUpdated }: ProfilePageProps) {
       bio: user.bio
     });
   }, [form, user]);
+
+  useEffect(() => {
+    if (!qrCodeMutation.data || binding.data?.is_bound) {
+      return undefined;
+    }
+    const timer = window.setInterval(() => {
+      queryClient.invalidateQueries({ queryKey: ['pushplus-binding'] });
+    }, 3000);
+    return () => window.clearInterval(timer);
+  }, [binding.data?.is_bound, qrCodeMutation.data, queryClient]);
 
   return (
     <main className="page">
@@ -169,7 +174,7 @@ function ProfilePage({ user, onUserUpdated }: ProfilePageProps) {
             description={binding.data.is_follow ? '好友已关注 PushPlus 微信公众号。' : '好友尚未关注公众号，可能无法收到微信消息。'}
           />
         ) : (
-          <Alert showIcon type="info" message="当前账号尚未绑定 PushPlus 好友。" />
+          <Alert showIcon type="info" message="当前账号尚未绑定 PushPlus 好友，扫码后会自动完成绑定。" />
         )}
         <div className="pushplus-bind-grid">
           <div className="pushplus-qr-pane">
@@ -202,30 +207,79 @@ function ProfilePage({ user, onUserUpdated }: ProfilePageProps) {
             )}
           </div>
           <div className="pushplus-friend-pane">
-            <Typography.Text strong>选择扫码后的好友</Typography.Text>
-            <Space.Compact className="pushplus-friend-control">
-              <Select
-                className="full-width"
-                placeholder="刷新后选择好友"
-                value={selectedFriendId}
-                onChange={setSelectedFriendId}
-                options={(friends.data || []).map((friend) => ({
-                  value: friend.friend_id,
-                  label: friend.remark || friend.nick_name || `好友 ${friend.friend_id}`
-                }))}
-              />
-              <Button
-                type="primary"
-                disabled={!selectedFriendId}
-                loading={bindMutation.isPending}
-                onClick={() => selectedFriendId && bindMutation.mutate(selectedFriendId)}
-              >
-                绑定
-              </Button>
-            </Space.Compact>
+            <Typography.Text strong>绑定状态</Typography.Text>
+            <Typography.Text type="secondary">
+              二维码包含当前账号标识。扫码关注后，PushPlus 回调会自动把好友绑定到当前账号。
+            </Typography.Text>
+            <Button
+              icon={<RefreshCw size={16} />}
+              loading={binding.isFetching}
+              onClick={() => binding.refetch()}
+            >
+              刷新绑定状态
+            </Button>
           </div>
         </div>
       </section>
+      {user.role === 'ADMIN' ? (
+        <section className="panel profile-panel profile-notification-panel">
+          <div className="query-result-head">
+            <div>
+              <div className="panel-title">PushPlus 管理</div>
+              <Typography.Text type="secondary">管理员可查看 PushPlus 好友和系统内绑定状态。</Typography.Text>
+            </div>
+            <Space wrap>
+              <Button
+                icon={<RefreshCw size={16} />}
+                loading={friends.isFetching}
+                onClick={() => friends.refetch()}
+              >
+                刷新好友
+              </Button>
+              <Button
+                icon={<RefreshCw size={16} />}
+                loading={adminBindings.isFetching}
+                onClick={() => adminBindings.refetch()}
+              >
+                刷新绑定
+              </Button>
+            </Space>
+          </div>
+          <div className="pushplus-admin-grid">
+            <List
+              size="small"
+              header={<Typography.Text strong>好友列表</Typography.Text>}
+              bordered
+              dataSource={friends.data || []}
+              locale={{ emptyText: '点击刷新好友获取列表' }}
+              renderItem={(friend) => (
+                <List.Item>
+                  <Typography.Text>{friend.remark || friend.nick_name || `好友 ${friend.friend_id}`}</Typography.Text>
+                  <Tag color={friend.is_follow ? 'green' : 'orange'}>{friend.is_follow ? '已关注' : '未关注'}</Tag>
+                </List.Item>
+              )}
+            />
+            <List
+              size="small"
+              header={<Typography.Text strong>绑定列表</Typography.Text>}
+              bordered
+              dataSource={adminBindings.data || []}
+              locale={{ emptyText: '暂无绑定记录' }}
+              renderItem={(item) => (
+                <List.Item>
+                  <div className="pushplus-binding-row">
+                    <Typography.Text strong>{item.username || item.user_id}</Typography.Text>
+                    <Typography.Text type="secondary">
+                      {item.friend_remark || item.friend_nick_name || item.friend_id || '未绑定'}
+                    </Typography.Text>
+                  </div>
+                  <Tag color={item.is_bound ? 'green' : 'default'}>{item.is_bound ? '已绑定' : item.status}</Tag>
+                </List.Item>
+              )}
+            />
+          </div>
+        </section>
+      ) : null}
     </main>
   );
 }

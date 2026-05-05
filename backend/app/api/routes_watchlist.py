@@ -14,7 +14,7 @@ from app.schemas.watchlist import (
     WatchlistResponse,
     WatchlistUpdate,
 )
-from app.services.watchlist_service import WatchlistService
+from app.services.watchlist_service import WatchlistError, WatchlistService
 
 router = APIRouter()
 DbSession = Annotated[Session, Depends(get_db)]
@@ -47,7 +47,10 @@ def create_watchlist_item(
     author: sunshengxian
     """
 
-    return WatchlistService(db).create(payload, current_user.id)
+    try:
+        return WatchlistService(db).create(payload, current_user.id)
+    except WatchlistError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.patch("/watchlist/{item_id}", response_model=WatchlistResponse)
@@ -63,7 +66,10 @@ def update_watchlist_item(
     author: sunshengxian
     """
 
-    item = WatchlistService(db).update(item_id, payload, current_user.id)
+    try:
+        item = WatchlistService(db).update(item_id, payload, current_user.id)
+    except WatchlistError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     if item is None:
         raise HTTPException(status_code=404, detail="自选股不存在")
     return item

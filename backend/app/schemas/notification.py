@@ -16,11 +16,25 @@ class PushplusBindingResponse(OrmModel):
     """
 
     is_bound: bool
+    status: str = "NOT_BOUND"
     friend_id: int | None = None
     friend_nick_name: str | None = None
     friend_remark: str | None = None
     is_follow: bool | None = None
     bound_at: datetime | None = None
+
+
+class AdminPushplusBindingResponse(PushplusBindingResponse):
+    """管理员查看 PushPlus 绑定响应。
+
+    创建日期：2026-05-05
+    author: sunshengxian
+    """
+
+    id: int
+    user_id: int
+    username: str
+    is_active: bool
 
 
 class PushplusQrCodeRequest(BaseModel):
@@ -57,6 +71,34 @@ class PushplusFriendResponse(BaseModel):
     remark: str | None = None
     is_follow: bool
     create_time: str | None = None
+
+
+class PushplusCallbackFriendInfo(BaseModel):
+    """PushPlus 新增好友回调中的好友信息。
+
+    创建日期：2026-05-05
+    author: sunshengxian
+    """
+
+    token: str
+    friendId: int
+    isFollow: int | None = None
+    nickName: str | None = None
+    havePhone: int | None = None
+    createTime: str | None = None
+    emailStatus: int | None = None
+
+
+class PushplusCallbackRequest(BaseModel):
+    """PushPlus 回调请求。
+
+    创建日期：2026-05-05
+    author: sunshengxian
+    """
+
+    event: str
+    qrCode: str | None = None
+    friendInfo: PushplusCallbackFriendInfo | None = None
 
 
 class PushplusBindRequest(BaseModel):

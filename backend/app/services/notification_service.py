@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import hmac
 import logging
 from datetime import UTC, date, datetime
 from decimal import Decimal
@@ -19,7 +21,11 @@ from app.db.models.market import (
     WatchlistStock,
 )
 from app.db.models.notification import AlertEvent, PushplusBinding
-from app.schemas.notification import PushplusBindingResponse, PushplusFriendResponse
+from app.schemas.notification import (
+    AdminPushplusBindingResponse,
+    PushplusBindingResponse,
+    PushplusFriendResponse,
+)
 from app.services.premium_query_service import PremiumQueryService
 from app.services.pushplus_client import PushplusClient, PushplusError, PushplusFriend
 
@@ -70,10 +76,33 @@ class NotificationService:
         author: sunshengxian
         """
 
-        binding = self._active_binding(user_id)
+        binding = self._latest_binding(user_id)
         if binding is None:
             return PushplusBindingResponse(is_bound=False)
         return self._binding_response(binding)
+
+    def list_pushplus_bindings(self) -> list[AdminPushplusBindingResponse]:
+        """管理员查询所有 PushPlus 绑定状态。
+
+        创建日期：2026-05-05
+        author: sunshengxian
+        """
+
+        rows = self.db.execute(
+            select(PushplusBinding, AppUser)
+            .join(AppUser, AppUser.id == PushplusBinding.user_id)
+            .order_by(desc(PushplusBinding.updated_at), PushplusBinding.id)
+        ).all()
+        return [
+            AdminPushplusBindingResponse(
+                id=binding.id,
+                user_id=binding.user_id,
+                username=user.username,
+                is_active=binding.is_active,
+                **self._binding_response(binding, include_names=True).model_dump(),
+            )
+            for binding, user in rows
+        ]
 
     def create_pushplus_qr_code(
         self,
@@ -87,7 +116,7 @@ class NotificationService:
         author: sunshengxian
         """
 
-        content = f"stock-ah-premium-ai:user:{user.id}"
+        content = self._qr_content_for_user(user.id)
         try:
             return self.pushplus_client.get_personal_qr_code(content, expire_seconds, scan_count)
         except PushplusError as exc:
@@ -146,6 +175,47 @@ class NotificationService:
         self.db.commit()
         self.db.refresh(existing)
         return self._binding_response(existing)
+
+    def bind_pushplus_callback(
+        self,
+        content: str | None,
+        friend_id: int,
+        friend_token: str,
+        nick_name: str | None,
+        is_follow: bool,
+    ) -> PushplusBindingResponse:
+        """处理 PushPlus 新增好友回调并自动绑定到二维码中的用户。
+
+        创建日期：2026-05-05
+        author: sunshengxian
+        """
+
+        user_id = self._parse_qr_user_id(content)
+        user = self.db.get(AppUser, user_id)
+        if user is None or not user.is_active:
+            raise NotificationError("二维码绑定的用户不存在或已停用")
+        binding = self.db.scalar(
+            select(PushplusBinding).where(PushplusBinding.user_id == user_id)
+        )
+        now = self._now_naive()
+        if binding is None:
+            binding = PushplusBinding(
+                user_id=user_id,
+                friend_id=friend_id,
+                friend_token=friend_token,
+                bound_at=now,
+            )
+            self.db.add(binding)
+        binding.friend_id = friend_id
+        binding.friend_token = friend_token
+        binding.friend_nick_name = self._normalize_optional_text(nick_name)
+        binding.friend_remark = None
+        binding.is_follow = is_follow
+        binding.is_active = True
+        binding.bound_at = now
+        self.db.commit()
+        self.db.refresh(binding)
+        return self._binding_response(binding)
 
     def unbind_pushplus_friend(self, user_id: int) -> bool:
         """停用当前用户 PushPlus 绑定。
@@ -465,21 +535,68 @@ class NotificationService:
             )
         )
 
+    def _latest_binding(self, user_id: int) -> PushplusBinding | None:
+        return self.db.scalar(
+            select(PushplusBinding)
+            .where(PushplusBinding.user_id == user_id)
+            .order_by(desc(PushplusBinding.updated_at), desc(PushplusBinding.id))
+            .limit(1)
+        )
+
     def _require_active_binding(self, user_id: int) -> PushplusBinding:
         binding = self._active_binding(user_id)
         if binding is None:
             raise NotificationError("当前用户尚未绑定 PushPlus 好友")
         return binding
 
-    def _binding_response(self, binding: PushplusBinding) -> PushplusBindingResponse:
+    def _binding_response(
+        self,
+        binding: PushplusBinding,
+        include_names: bool | None = None,
+    ) -> PushplusBindingResponse:
+        show_names = binding.is_active if include_names is None else include_names
         return PushplusBindingResponse(
-            is_bound=True,
+            is_bound=binding.is_active,
+            status="BOUND" if binding.is_active else "DISABLED",
             friend_id=binding.friend_id,
-            friend_nick_name=binding.friend_nick_name,
-            friend_remark=binding.friend_remark,
+            friend_nick_name=binding.friend_nick_name if show_names else None,
+            friend_remark=binding.friend_remark if show_names else None,
             is_follow=binding.is_follow,
             bound_at=binding.bound_at,
         )
+
+    def _parse_qr_user_id(self, content: str | None) -> int:
+        prefix = "stock-ah-premium-ai:user:"
+        if not content or not content.startswith(prefix):
+            raise NotificationError("PushPlus 回调二维码参数无效")
+        if ":sig:" not in content:
+            raise NotificationError("PushPlus 回调二维码签名缺失")
+        user_part, signature = content.split(":sig:", maxsplit=1)
+        try:
+            user_id = int(user_part.removeprefix(prefix))
+        except ValueError as exc:
+            raise NotificationError("PushPlus 回调二维码用户参数无效") from exc
+        expected = self._qr_signature(user_id)
+        if not hmac.compare_digest(signature, expected):
+            raise NotificationError("PushPlus 回调二维码签名无效")
+        return user_id
+
+    def _qr_content_for_user(self, user_id: int) -> str:
+        return f"stock-ah-premium-ai:user:{user_id}:sig:{self._qr_signature(user_id)}"
+
+    def _qr_signature(self, user_id: int) -> str:
+        digest = hmac.new(
+            self.settings.auth_secret_key.encode("utf-8"),
+            f"pushplus-binding:{user_id}".encode(),
+            hashlib.sha256,
+        ).hexdigest()
+        return digest[:24]
+
+    def _normalize_optional_text(self, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        return normalized or None
 
     def _stock_label(self, item: WatchlistStock) -> str:
         return item.display_name or item.a_ts_code

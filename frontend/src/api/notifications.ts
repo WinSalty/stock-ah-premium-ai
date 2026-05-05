@@ -25,6 +25,10 @@ export function fetchPushplusFriends() {
   return requestJson<PushplusFriend[]>('/api/notifications/pushplus/friends');
 }
 
+export function fetchAdminPushplusBindings() {
+  return requestJson<PushplusBinding[]>('/api/notifications/admin/pushplus/bindings');
+}
+
 export function bindPushplusFriend(payload: PushplusBindRequest) {
   return requestJson<PushplusBinding>('/api/notifications/pushplus/bind', {
     method: 'POST',

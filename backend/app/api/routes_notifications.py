@@ -6,13 +6,16 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
-from app.api.deps_auth import CurrentUser
+from app.api.deps_auth import CurrentUser, require_permission
+from app.db.models.auth import AppUser
 from app.db.models.notification import AlertEvent
 from app.db.session import get_db
 from app.schemas.notification import (
+    AdminPushplusBindingResponse,
     AlertEventResponse,
     PushplusBindingResponse,
     PushplusBindRequest,
+    PushplusCallbackRequest,
     PushplusFriendResponse,
     PushplusQrCodeRequest,
     PushplusQrCodeResponse,
@@ -23,6 +26,7 @@ from app.services.notification_service import NotificationError, NotificationSer
 
 router = APIRouter()
 DbSession = Annotated[Session, Depends(get_db)]
+AdminUser = Annotated[AppUser, Depends(require_permission("users"))]
 
 
 @router.get("/notifications/pushplus/binding", response_model=PushplusBindingResponse)
@@ -65,9 +69,9 @@ def create_pushplus_qrcode(
 @router.get("/notifications/pushplus/friends", response_model=list[PushplusFriendResponse])
 def list_pushplus_friends(
     db: DbSession,
-    current_user: CurrentUser,
+    admin_user: AdminUser,
 ) -> list[PushplusFriendResponse]:
-    """查询 PushPlus 好友列表。
+    """管理员查询 PushPlus 好友列表。
 
     创建日期：2026-05-05
     author: sunshengxian
@@ -83,18 +87,61 @@ def list_pushplus_friends(
 def bind_pushplus_friend(
     payload: PushplusBindRequest,
     db: DbSession,
-    current_user: CurrentUser,
+    admin_user: AdminUser,
 ) -> PushplusBindingResponse:
-    """绑定当前用户到 PushPlus 好友。
+    """管理员手动绑定自己的 PushPlus 好友。
 
     创建日期：2026-05-05
     author: sunshengxian
     """
 
     try:
-        return NotificationService(db).bind_pushplus_friend(current_user, payload.friend_id)
+        return NotificationService(db).bind_pushplus_friend(admin_user, payload.friend_id)
     except NotificationError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/notifications/pushplus/callback")
+def pushplus_callback(
+    payload: PushplusCallbackRequest,
+    db: DbSession,
+) -> dict[str, bool]:
+    """接收 PushPlus 新增好友回调并自动完成用户绑定。
+
+    创建日期：2026-05-05
+    author: sunshengxian
+    """
+
+    if payload.event != "add_friend" or payload.friendInfo is None:
+        return {"ok": True}
+    try:
+        NotificationService(db).bind_pushplus_callback(
+            payload.qrCode,
+            payload.friendInfo.friendId,
+            payload.friendInfo.token,
+            payload.friendInfo.nickName,
+            payload.friendInfo.isFollow == 1,
+        )
+    except NotificationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"ok": True}
+
+
+@router.get(
+    "/notifications/admin/pushplus/bindings",
+    response_model=list[AdminPushplusBindingResponse],
+)
+def list_pushplus_bindings(
+    db: DbSession,
+    admin_user: AdminUser,
+) -> list[AdminPushplusBindingResponse]:
+    """管理员查询 PushPlus 用户绑定列表。
+
+    创建日期：2026-05-05
+    author: sunshengxian
+    """
+
+    return NotificationService(db).list_pushplus_bindings()
 
 
 @router.delete("/notifications/pushplus/binding")

@@ -4,8 +4,17 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db.models.market import WatchlistStock
+from app.db.models.notification import PushplusBinding
 from app.schemas.watchlist import WatchlistCreate, WatchlistOpportunityResponse, WatchlistUpdate
 from app.services.premium_query_service import PremiumQueryService
+
+
+class WatchlistError(ValueError):
+    """自选股业务错误。
+
+    创建日期：2026-05-05
+    author: sunshengxian
+    """
 
 
 class WatchlistService:
@@ -65,6 +74,7 @@ class WatchlistService:
         existing = self._get_by_pair(payload.a_ts_code, payload.hk_ts_code, user_id)
         if existing is not None:
             self._apply_update(existing, payload.model_dump(exclude_none=False))
+            self._ensure_push_binding_for_alert(existing)
             self.db.commit()
             self.db.refresh(existing)
             return existing
@@ -84,6 +94,7 @@ class WatchlistService:
             note=payload.note,
             is_active=payload.is_active,
         )
+        self._ensure_push_binding_for_alert(item)
         self.db.add(item)
         self.db.commit()
         self.db.refresh(item)
@@ -105,6 +116,7 @@ class WatchlistService:
         if item is None or (user_id is not None and item.user_id != user_id):
             return None
         self._apply_update(item, payload.model_dump(exclude_unset=True))
+        self._ensure_push_binding_for_alert(item)
         self.db.commit()
         self.db.refresh(item)
         return item
@@ -166,3 +178,22 @@ class WatchlistService:
     def _normalize_price_alert_operator(self, value: str) -> str:
         normalized = value.upper()
         return normalized if normalized in {"GTE", "LTE"} else "GTE"
+
+    def _ensure_push_binding_for_alert(self, item: WatchlistStock) -> None:
+        if not self._has_alert_config(item):
+            return
+        has_binding = self.db.scalar(
+            select(PushplusBinding.id).where(
+                PushplusBinding.user_id == item.user_id,
+                PushplusBinding.is_active.is_(True),
+            )
+        )
+        if has_binding is None:
+            raise WatchlistError("设置提醒前请先完成 PushPlus 扫码绑定")
+
+    def _has_alert_config(self, item: WatchlistStock) -> bool:
+        return item.target_premium_pct is not None or (
+            item.price_alert_enabled
+            and item.price_alert_market in {"A", "H"}
+            and item.price_alert_target_price is not None
+        )

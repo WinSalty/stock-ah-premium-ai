@@ -1,9 +1,11 @@
 import {
+  Alert,
   Button,
   Checkbox,
   DatePicker,
   Drawer,
   Form,
+  Image,
   Input,
   InputNumber,
   Modal,
@@ -15,14 +17,15 @@ import {
 } from 'antd';
 import ReactECharts from 'echarts-for-react';
 import ReactMarkdown from 'react-markdown';
-import { Bot, Calculator, Search } from 'lucide-react';
+import { Bot, Calculator, QrCode, Search } from 'lucide-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import dayjs from 'dayjs';
 import PageHeader from '../components/PageHeader';
 import PremiumTable from '../components/PremiumTable';
 import { createChatSession, sendChatMessage } from '../api/chat';
 import { calculatePremium, fetchPremiumTrend, fetchPremiums } from '../api/market';
+import { createPushplusQrCode, fetchPushplusBinding } from '../api/notifications';
 import { createWatchlistItem, deleteWatchlistItem, updateWatchlistItem } from '../api/watchlist';
 import type {
   HoldingMarket,
@@ -90,6 +93,19 @@ function promptValue(value?: string | number | null, suffix = '') {
   return value === null || value === undefined || value === '' ? '缺失' : `${value}${suffix}`;
 }
 
+function hasAlertConfig(values: WatchlistFormValues) {
+  return (
+    values.target_premium_pct !== null &&
+    values.target_premium_pct !== undefined
+  ) || Boolean(
+    values.price_alert_enabled &&
+      values.price_alert_market &&
+      values.price_alert_market !== 'UNKNOWN' &&
+      values.price_alert_target_price !== null &&
+      values.price_alert_target_price !== undefined
+  );
+}
+
 function holdingMarketLabel(value?: HoldingMarket | string | null) {
   const map: Record<string, string> = {
     A: 'A 股',
@@ -148,6 +164,10 @@ function PremiumPage() {
   const [form] = Form.useForm<FilterValues>();
   const [watchlistForm] = Form.useForm<WatchlistFormValues>();
   const watchlistDirection = Form.useWatch('preferred_direction', watchlistForm);
+  const watchlistTargetPremium = Form.useWatch('target_premium_pct', watchlistForm);
+  const watchlistPriceAlertEnabled = Form.useWatch('price_alert_enabled', watchlistForm);
+  const watchlistPriceAlertMarket = Form.useWatch('price_alert_market', watchlistForm);
+  const watchlistPriceAlertTarget = Form.useWatch('price_alert_target_price', watchlistForm);
   const [page, setPage] = useState(1);
   const [filters, setFilters] = useState<PremiumQueryParams>({
     direction: 'HA',
@@ -163,6 +183,10 @@ function PremiumPage() {
     queryKey: ['premiums', filters, page],
     queryFn: () => fetchPremiums({ ...filters, page, page_size: 30 })
   });
+  const pushplusBinding = useQuery({
+    queryKey: ['pushplus-binding'],
+    queryFn: fetchPushplusBinding
+  });
   const trend = useQuery({
     queryKey: ['premium-trend', selected?.a_ts_code, selected?.hk_ts_code, selected?.metric_direction],
     queryFn: () => fetchPremiumTrend(selected!.a_ts_code, selected!.hk_ts_code, selected!.metric_direction),
@@ -176,6 +200,10 @@ function PremiumPage() {
       queryClient.invalidateQueries({ queryKey: ['premium-summary'] });
     },
     onError: (error) => message.error(error instanceof Error ? error.message : '计算失败')
+  });
+  const qrCodeMutation = useMutation({
+    mutationFn: () => createPushplusQrCode({ expire_seconds: 604800, scan_count: 1 }),
+    onError: (error) => message.error(error instanceof Error ? error.message : '生成二维码失败')
   });
   const watchlistMutation = useMutation({
     mutationFn: ({ mode, item, values }: WatchlistModalState & { values: WatchlistFormValues }) => {
@@ -271,6 +299,24 @@ function PremiumPage() {
   });
 
   const trendMetricColor = selected?.metric_direction === 'AH' ? AH_COLOR : HA_COLOR;
+  const modalHasAlertConfig = hasAlertConfig({
+    preferred_direction: watchlistDirection || 'HA',
+    target_premium_pct: watchlistTargetPremium,
+    price_alert_enabled: watchlistPriceAlertEnabled,
+    price_alert_market: watchlistPriceAlertMarket,
+    price_alert_target_price: watchlistPriceAlertTarget,
+    holding_market: 'UNKNOWN'
+  });
+  useEffect(() => {
+    if (!qrCodeMutation.data || pushplusBinding.data?.is_bound) {
+      return undefined;
+    }
+    const timer = window.setInterval(() => {
+      queryClient.invalidateQueries({ queryKey: ['pushplus-binding'] });
+    }, 3000);
+    return () => window.clearInterval(timer);
+  }, [pushplusBinding.data?.is_bound, qrCodeMutation.data, queryClient]);
+
   const trendOption = useMemo(
     () => ({
       color: [trendMetricColor, MEDIAN60_COLOR, P20_COLOR, P80_COLOR],
@@ -383,6 +429,13 @@ function PremiumPage() {
       return;
     }
     const values = await watchlistForm.validateFields();
+    if (hasAlertConfig(values) && !pushplusBinding.data?.is_bound) {
+      message.warning('设置提醒前请先完成 PushPlus 扫码绑定');
+      if (!qrCodeMutation.data && !qrCodeMutation.isPending) {
+        qrCodeMutation.mutate();
+      }
+      return;
+    }
     watchlistMutation.mutate({ ...watchlistModal, values });
   };
 
@@ -553,6 +606,32 @@ function PremiumPage() {
               ) : (
                 <Skeleton active paragraph={{ rows: 4 }} />
               )}
+            </div>
+          ) : null}
+          {modalHasAlertConfig && !pushplusBinding.data?.is_bound ? (
+            <div className="pushplus-alert-bind-box">
+              <Alert
+                showIcon
+                type="warning"
+                message="设置提醒前需要绑定 PushPlus 好友"
+                description="二维码包含当前账号标识。扫码关注后会自动绑定，完成后可继续保存提醒。"
+              />
+              <Space align="start" className="pushplus-alert-bind-actions">
+                <Button
+                  icon={<QrCode size={16} />}
+                  loading={qrCodeMutation.isPending}
+                  onClick={() => qrCodeMutation.mutate()}
+                >
+                  生成绑定二维码
+                </Button>
+                {qrCodeMutation.data?.qr_code_img_url ? (
+                  <Image
+                    width={180}
+                    src={qrCodeMutation.data.qr_code_img_url}
+                    alt="PushPlus 绑定二维码"
+                  />
+                ) : null}
+              </Space>
             </div>
           ) : null}
           <div className="watchlist-price-alert-grid">

@@ -392,6 +392,11 @@ export type PriceAlertOperator = 'GTE' | 'LTE';
 
 export interface PushplusBinding {
   is_bound: boolean;
+  status: string;
+  id?: number;
+  user_id?: number;
+  username?: string;
+  is_active?: boolean;
   friend_id: number | null;
   friend_nick_name: string | null;
   friend_remark: string | null;

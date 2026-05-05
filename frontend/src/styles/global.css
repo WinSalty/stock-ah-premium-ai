@@ -593,6 +593,27 @@ body {
   width: 100%;
 }
 
+.pushplus-admin-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.pushplus-binding-row {
+  display: grid;
+  min-width: 0;
+}
+
+.pushplus-alert-bind-box {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.pushplus-alert-bind-actions {
+  align-items: flex-start;
+}
+
 .watchlist-price-alert-grid {
   display: grid;
   grid-template-columns: 96px minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr);
@@ -1273,6 +1294,7 @@ body {
   }
 
   .pushplus-bind-grid,
+  .pushplus-admin-grid,
   .watchlist-price-alert-grid {
     grid-template-columns: 1fr;
   }
