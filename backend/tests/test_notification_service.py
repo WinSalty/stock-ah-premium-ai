@@ -358,6 +358,117 @@ def test_admin_bind_pushplus_friend_for_user_stores_friend_token() -> None:
     assert stored.friend_token == "friend-token-3001"
 
 
+def test_admin_bind_rejects_friend_bound_to_other_user() -> None:
+    """确认一个 PushPlus 好友不能手动绑定到多个用户。
+
+    创建日期：2026-05-05
+    author: sunshengxian
+    """
+
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    fake_client = FakePushplusClient(
+        friends=[
+            PushplusFriend(
+                id=11,
+                friend_id=3001,
+                token="friend-token-3001",
+                nick_name="手动好友",
+                remark="",
+                is_follow=True,
+                create_time=None,
+            )
+        ]
+    )
+    with Session(engine) as db:
+        first_user = AppUser(username="bound-1", password_hash="hash", role="USER", is_active=True)
+        second_user = AppUser(
+            username="bound-2",
+            password_hash="hash",
+            role="USER",
+            is_active=True,
+        )
+        db.add_all([first_user, second_user])
+        db.flush()
+        db.add(
+            PushplusBinding(
+                user_id=first_user.id,
+                friend_id=3001,
+                friend_token="friend-token-3001",
+                is_follow=True,
+                is_active=True,
+                bound_at=datetime.now(UTC).replace(tzinfo=None),
+            )
+        )
+        db.commit()
+
+        try:
+            NotificationService(db, pushplus_client=fake_client).bind_pushplus_friend_for_user(
+                second_user.id,
+                3001,
+            )
+        except NotificationError as exc:
+            error_message = str(exc)
+        else:
+            error_message = ""
+
+    assert "已绑定其他用户" in error_message
+
+
+def test_pushplus_callback_rejects_friend_bound_to_other_user() -> None:
+    """确认回调绑定时一个 PushPlus 好友不能绑定到多个用户。
+
+    创建日期：2026-05-05
+    author: sunshengxian
+    """
+
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    with Session(engine) as db:
+        first_user = AppUser(
+            username="callback-1",
+            password_hash="hash",
+            role="USER",
+            is_active=True,
+        )
+        second_user = AppUser(
+            username="callback-2",
+            password_hash="hash",
+            role="USER",
+            is_active=True,
+        )
+        db.add_all([first_user, second_user])
+        db.flush()
+        db.add(
+            PushplusBinding(
+                user_id=first_user.id,
+                friend_id=4001,
+                friend_token="callback-token-4001",
+                is_follow=True,
+                is_active=True,
+                bound_at=datetime.now(UTC).replace(tzinfo=None),
+            )
+        )
+        db.commit()
+
+        service = NotificationService(db)
+        ticket = service._binding_ticket_for_user(second_user.id)
+        try:
+            service.bind_pushplus_callback(
+                ticket,
+                friend_id=4001,
+                friend_token="callback-token-4001",
+                nick_name="扫码用户",
+                is_follow=True,
+            )
+        except NotificationError as exc:
+            error_message = str(exc)
+        else:
+            error_message = ""
+
+    assert "已绑定其他用户" in error_message
+
+
 def test_watchlist_alert_requires_pushplus_binding() -> None:
     """确认用户设置提醒前必须完成 PushPlus 绑定。
 

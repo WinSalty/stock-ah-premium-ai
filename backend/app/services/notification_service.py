@@ -44,19 +44,30 @@ MARKET_H = "H"
 LOCAL_TZ = ZoneInfo("Asia/Shanghai")
 HTML_CARD_STYLE = (
     "font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"
-    "color:#102033;background:#f6f8fb;padding:16px;"
+    "color:#102033;background:#eef3f8;padding:14px;"
 )
 HTML_PANEL_STYLE = (
-    "max-width:640px;margin:0 auto;background:#ffffff;border:1px solid #d8e1ec;"
-    "border-radius:10px;overflow:hidden;"
+    "max-width:640px;margin:0 auto;background:#ffffff;border:1px solid #d7e0ea;"
+    "border-radius:12px;overflow:hidden;box-shadow:0 4px 16px rgba(15,35,55,.08);"
 )
-HTML_BODY_STYLE = "padding:18px 18px 20px;"
-HTML_MUTED_STYLE = "color:#64748b;font-size:13px;line-height:1.7;margin:8px 0 0;"
-HTML_TABLE_STYLE = "width:100%;border-collapse:collapse;margin-top:14px;font-size:14px;"
+HTML_HEADER_STYLE = "padding:16px 18px;color:#ffffff;"
+HTML_BODY_STYLE = "padding:16px 18px 18px;"
+HTML_BADGE_STYLE = (
+    "display:inline-block;padding:3px 8px;border-radius:999px;background:rgba(255,255,255,.18);"
+    "font-size:12px;line-height:1.4;"
+)
+HTML_SUMMARY_STYLE = (
+    "font-size:15px;font-weight:600;line-height:1.75;background:#f8fafc;"
+    "border:1px solid #e2e8f0;border-radius:8px;padding:10px 12px;"
+)
+HTML_MUTED_STYLE = "color:#64748b;font-size:12px;line-height:1.7;margin:10px 0 0;"
+HTML_TABLE_STYLE = (
+    "width:100%;border-collapse:separate;border-spacing:0;margin-top:12px;font-size:14px;"
+)
 HTML_LABEL_CELL_STYLE = (
-    "width:34%;padding:10px 12px;border-top:1px solid #e8edf3;color:#64748b;background:#f8fafc;"
+    "width:34%;padding:9px 10px;border-top:1px solid #edf2f7;color:#64748b;background:#fbfdff;"
 )
-HTML_VALUE_CELL_STYLE = "padding:10px 12px;border-top:1px solid #e8edf3;color:#102033;"
+HTML_VALUE_CELL_STYLE = "padding:9px 10px;border-top:1px solid #edf2f7;color:#102033;"
 
 
 class NotificationError(ValueError):
@@ -192,6 +203,7 @@ class NotificationService:
         if existing is not None and existing.is_active:
             raise NotificationError("当前用户已绑定 PushPlus，不支持重复绑定")
         friend = self._find_friend(friend_id)
+        self._ensure_friend_not_bound(friend.friend_id, friend.token, user_id)
         now = self._now_naive()
         if existing is None:
             existing = PushplusBinding(
@@ -235,6 +247,7 @@ class NotificationService:
         )
         if binding is not None and binding.is_active:
             raise NotificationError("当前用户已绑定 PushPlus，不支持重复绑定")
+        self._ensure_friend_not_bound(friend_id, friend_token, user_id)
         now = self._now_naive()
         if binding is None:
             binding = PushplusBinding(
@@ -579,14 +592,16 @@ class NotificationService:
         return (
             f'<div style="{HTML_CARD_STYLE}">'
             f'<div style="{HTML_PANEL_STYLE}">'
-            f'<div style="background:{accent};padding:14px 18px;color:#ffffff;">'
-            f'<div style="font-size:13px;opacity:.86;">{escape(badge)}</div>'
-            f'<div style="font-size:20px;font-weight:700;margin-top:4px;">{escape(title)}</div>'
+            f'<div style="background:{accent};{HTML_HEADER_STYLE}">'
+            f'<div style="{HTML_BADGE_STYLE}">{escape(badge)}</div>'
+            f'<div style="font-size:19px;font-weight:700;margin-top:8px;line-height:1.35;">'
+            f"{escape(title)}"
+            "</div>"
             "</div>"
             f'<div style="{HTML_BODY_STYLE}">'
-            f'<div style="font-size:16px;font-weight:600;line-height:1.7;">{escape(summary)}</div>'
+            f'<div style="{HTML_SUMMARY_STYLE}">{escape(summary)}</div>'
             f'<div style="{HTML_MUTED_STYLE}">'
-            "以下为本次触发的具体信息，请按交易日和标的复核。"
+            "本次触发明细如下，请结合交易日、标的和目标条件复核。"
             "</div>"
             f'<table style="{HTML_TABLE_STYLE}"><tbody>{rows}</tbody></table>'
             "</div>"
@@ -597,6 +612,25 @@ class NotificationService:
     def _format_decimal(self, value: Decimal) -> str:
         text = format(value.normalize(), "f")
         return text.rstrip("0").rstrip(".") if "." in text else text
+
+    def _ensure_friend_not_bound(
+        self,
+        friend_id: int,
+        friend_token: str,
+        target_user_id: int,
+    ) -> None:
+        occupied = self.db.scalar(
+            select(PushplusBinding).where(
+                PushplusBinding.is_active.is_(True),
+                PushplusBinding.user_id != target_user_id,
+                (
+                    (PushplusBinding.friend_id == friend_id)
+                    | (PushplusBinding.friend_token == friend_token)
+                ),
+            )
+        )
+        if occupied is not None:
+            raise NotificationError("该 PushPlus 好友已绑定其他用户，不支持重复绑定")
 
     def _latest_close(self, market: str, ts_code: str, trading_day: date) -> Decimal | None:
         model = ADailyQuote if market == MARKET_A else HKDailyQuote
