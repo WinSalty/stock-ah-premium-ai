@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import logging
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, time
 from decimal import Decimal
 from html import escape
 from zoneinfo import ZoneInfo
@@ -15,9 +15,7 @@ from sqlalchemy.orm import Session
 from app.core.config import Settings, get_settings
 from app.db.models.auth import AppUser
 from app.db.models.market import (
-    ADailyQuote,
     ATradeCalendar,
-    HKDailyQuote,
     HKTradeCalendar,
     WatchlistStock,
 )
@@ -27,8 +25,13 @@ from app.schemas.notification import (
     PushplusBindingResponse,
     PushplusFriendResponse,
 )
-from app.services.premium_query_service import PremiumQueryService
 from app.services.pushplus_client import PushplusClient, PushplusError, PushplusFriend
+from app.services.realtime_market_service import RealtimeMarketDataService, RealtimeQuote
+from app.services.realtime_premium_service import (
+    REALTIME_QUALITY,
+    STALE_FX_QUALITY,
+    RealtimePremiumService,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +45,9 @@ PRICE_OPERATOR_LTE = "LTE"
 MARKET_A = "A"
 MARKET_H = "H"
 LOCAL_TZ = ZoneInfo("Asia/Shanghai")
+A_REALTIME_SESSIONS = ((time(9, 30), time(11, 30)), (time(13, 0), time(15, 0)))
+H_REALTIME_SESSIONS = ((time(9, 30), time(12, 0)), (time(13, 0), time(16, 0)))
+REALTIME_THRESHOLD_QUALITIES = {REALTIME_QUALITY, STALE_FX_QUALITY}
 HTML_CARD_STYLE = (
     "font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"
     "color:#14202e;background:#f3f6f2;padding:14px;"
@@ -101,7 +107,11 @@ class NotificationService:
         self.db = db
         self.settings = settings or get_settings()
         self.pushplus_client = pushplus_client or PushplusClient(self.settings)
-        self.premium_query_service = PremiumQueryService(db)
+        self.realtime_market_data_service = RealtimeMarketDataService.from_db(db)
+        self.realtime_premium_service = RealtimePremiumService(
+            db,
+            market_data_service=self.realtime_market_data_service,
+        )
 
     def get_pushplus_binding(self, user_id: int) -> PushplusBindingResponse:
         """读取当前用户 PushPlus 绑定状态。
@@ -311,14 +321,16 @@ class NotificationService:
         self,
         trading_day: date | None = None,
         user_id: int | None = None,
+        scan_time: datetime | None = None,
     ) -> list[AlertEvent]:
-        """扫描阈值和股价提醒；只有交易日数据触发推送。
+        """扫描实时阈值和股价提醒；只有交易日交易时段数据触发推送。
 
         创建日期：2026-05-05
         author: sunshengxian
         """
 
-        target_day = trading_day or self._today()
+        local_scan_time = scan_time.astimezone(LOCAL_TZ) if scan_time else self._now_local()
+        target_day = trading_day or local_scan_time.date()
         statement = select(WatchlistStock).where(WatchlistStock.is_active.is_(True))
         if user_id is not None:
             statement = statement.where(WatchlistStock.user_id == user_id)
@@ -329,10 +341,10 @@ class NotificationService:
                 continue
             if self._active_binding(item.user_id) is None:
                 continue
-            threshold_event = self._scan_threshold_alert(item, target_day)
+            threshold_event = self._scan_threshold_alert(item, target_day, local_scan_time)
             if threshold_event is not None:
                 events.append(threshold_event)
-            price_event = self._scan_price_alert(item, target_day)
+            price_event = self._scan_price_alert(item, target_day, local_scan_time)
             if price_event is not None:
                 events.append(price_event)
         return events
@@ -357,14 +369,24 @@ class NotificationService:
         self,
         item: WatchlistStock,
         trading_day: date,
+        scan_time: datetime,
     ) -> AlertEvent | None:
-        if item.target_premium_pct is None or not self._is_joint_trade_day(trading_day):
+        if (
+            item.target_premium_pct is None
+            or not self._is_joint_trade_day(trading_day)
+            or not self._is_joint_realtime_session(scan_time)
+        ):
             return None
-        premium_row = self.premium_query_service.latest_pair_row(item.a_ts_code, item.hk_ts_code)
-        if premium_row is None or premium_row.trade_date != trading_day:
+        realtime = self.realtime_premium_service.calculate_pair(
+            a_ts_code=item.a_ts_code,
+            hk_ts_code=item.hk_ts_code,
+            a_name=item.display_name,
+            watchlist=item,
+        )
+        if realtime.quote_quality not in REALTIME_THRESHOLD_QUALITIES:
             return None
-        direction = "AH" if item.preferred_direction == "AH" else "HA"
-        metric = premium_row.ah_premium if direction == "AH" else premium_row.ha_premium
+        direction = realtime.metric_direction
+        metric = realtime.metric_premium_pct
         if metric is None or metric < item.target_premium_pct:
             return None
         title = f"{self._stock_label(item)} {direction} 阈值触发"
@@ -389,18 +411,21 @@ class NotificationService:
         self,
         item: WatchlistStock,
         trading_day: date,
+        scan_time: datetime,
     ) -> AlertEvent | None:
         if (
             not item.price_alert_enabled
             or item.price_alert_target_price is None
             or item.price_alert_market not in {MARKET_A, MARKET_H}
             or not self._is_market_trade_day(item.price_alert_market, trading_day)
+            or not self._is_market_realtime_session(item.price_alert_market, scan_time)
         ):
             return None
         ts_code = item.a_ts_code if item.price_alert_market == MARKET_A else item.hk_ts_code
-        last_price = self._latest_close(item.price_alert_market, ts_code, trading_day)
-        if last_price is None:
+        quote = self._latest_realtime_quote(item.price_alert_market, ts_code)
+        if not self._is_realtime_quote_usable(quote):
             return None
+        last_price = quote.last_price
         operator = (
             item.price_alert_operator
             if item.price_alert_operator == PRICE_OPERATOR_LTE
@@ -660,15 +685,20 @@ class NotificationService:
         if occupied is not None:
             raise NotificationError("该 PushPlus 好友已绑定其他用户，不支持重复绑定")
 
-    def _latest_close(self, market: str, ts_code: str, trading_day: date) -> Decimal | None:
-        model = ADailyQuote if market == MARKET_A else HKDailyQuote
-        row = self.db.scalar(
-            select(model)
-            .where(model.ts_code == ts_code, model.trade_date == trading_day)
-            .order_by(desc(model.trade_date))
-            .limit(1)
+    def _latest_realtime_quote(self, market: str, ts_code: str) -> RealtimeQuote | None:
+        if market == MARKET_A:
+            return self.realtime_market_data_service.provider.get_a_quote(ts_code)
+        if market == MARKET_H:
+            return self.realtime_market_data_service.provider.get_hk_quote(ts_code)
+        return None
+
+    def _is_realtime_quote_usable(self, quote: RealtimeQuote | None) -> bool:
+        return bool(
+            quote is not None
+            and quote.last_price is not None
+            and quote.last_price > 0
+            and (quote.quality or "").upper() == REALTIME_QUALITY
         )
-        return row.close if row is not None else None
 
     def _is_joint_trade_day(self, trading_day: date) -> bool:
         return self._is_market_trade_day(MARKET_A, trading_day) and self._is_market_trade_day(
@@ -695,6 +725,17 @@ class NotificationService:
                 == 1
             )
         return False
+
+    def _is_joint_realtime_session(self, scan_time: datetime) -> bool:
+        return self._is_market_realtime_session(
+            MARKET_A,
+            scan_time,
+        ) and self._is_market_realtime_session(MARKET_H, scan_time)
+
+    def _is_market_realtime_session(self, market: str, scan_time: datetime) -> bool:
+        sessions = A_REALTIME_SESSIONS if market == MARKET_A else H_REALTIME_SESSIONS
+        current_time = scan_time.astimezone(LOCAL_TZ).time()
+        return any(start <= current_time <= end for start, end in sessions)
 
     def _find_friend(self, friend_id: int) -> PushplusFriend:
         try:
@@ -786,6 +827,9 @@ class NotificationService:
 
     def _today(self) -> date:
         return datetime.now(LOCAL_TZ).date()
+
+    def _now_local(self) -> datetime:
+        return datetime.now(LOCAL_TZ)
 
     def _now_naive(self) -> datetime:
         return datetime.now(UTC).replace(tzinfo=None)

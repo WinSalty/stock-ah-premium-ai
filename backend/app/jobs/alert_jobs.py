@@ -18,7 +18,7 @@ def register_alert_jobs(scheduler: BackgroundScheduler, settings: Settings) -> N
     author: sunshengxian
     """
 
-    interval = max(1, min(settings.alert_scan_minutes, 59))
+    interval = max(1, min(settings.alert_scan_seconds, 59))
     scheduler.add_job(
         scan_alerts_job,
         trigger="cron",
@@ -26,7 +26,8 @@ def register_alert_jobs(scheduler: BackgroundScheduler, settings: Settings) -> N
         name="扫描交易日提醒并推送",
         day_of_week="mon-fri",
         hour=settings.alert_scan_hours,
-        minute=f"*/{interval}",
+        minute="*",
+        second=f"*/{interval}",
         replace_existing=True,
         coalesce=True,
         max_instances=1,

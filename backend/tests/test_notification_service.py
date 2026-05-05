@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, date, datetime
 from decimal import Decimal
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
@@ -10,10 +11,9 @@ from app.core.config import Settings
 from app.db.base import Base
 from app.db.models.auth import AppUser
 from app.db.models.market import (
-    ADailyQuote,
     ATradeCalendar,
     HKTradeCalendar,
-    OfficialAHComparison,
+    RealtimeQuoteSnapshot,
     WatchlistStock,
 )
 from app.db.models.notification import AlertEvent, PushplusBinding
@@ -25,6 +25,8 @@ from app.services.notification_service import (
 )
 from app.services.pushplus_client import PushplusClient, PushplusFriend
 from app.services.watchlist_service import WatchlistError, WatchlistService
+
+LOCAL_TEST_TZ = ZoneInfo("Asia/Shanghai")
 
 
 class FakePushplusClient:
@@ -91,6 +93,56 @@ def add_joint_trade_day(db: Session, target_day: date) -> None:
         [
             ATradeCalendar(exchange="SSE", cal_date=target_day, is_open=1),
             HKTradeCalendar(cal_date=target_day, is_open=1),
+        ]
+    )
+
+
+def add_realtime_quotes(
+    db: Session,
+    *,
+    a_ts_code: str = "600036.SH",
+    hk_ts_code: str = "03968.HK",
+    a_price: Decimal = Decimal("100"),
+    hk_price: Decimal = Decimal("10"),
+    fx_rate: Decimal = Decimal("7"),
+    quote_time: datetime | None = None,
+) -> None:
+    """写入测试用实时快照行情。
+
+    创建日期：2026-05-05
+    author: sunshengxian
+    """
+
+    target_time = quote_time or datetime(2026, 5, 5, 10, 30, 0)
+    db.add_all(
+        [
+            RealtimeQuoteSnapshot(
+                market="A",
+                symbol=a_ts_code,
+                last_price=a_price,
+                currency="CNY",
+                quote_time=target_time,
+                source="TEST",
+                quality="REALTIME",
+            ),
+            RealtimeQuoteSnapshot(
+                market="HK",
+                symbol=hk_ts_code,
+                last_price=hk_price,
+                currency="HKD",
+                quote_time=target_time,
+                source="TEST",
+                quality="REALTIME",
+            ),
+            RealtimeQuoteSnapshot(
+                market="FX",
+                symbol="HKD/CNY",
+                last_price=fx_rate,
+                currency="CNY",
+                quote_time=target_time,
+                source="TEST",
+                quality="REALTIME",
+            ),
         ]
     )
 
@@ -220,27 +272,21 @@ def test_threshold_alert_pushes_once_per_trading_day() -> None:
                     preferred_direction="AH",
                     target_premium_pct=Decimal("30"),
                     is_active=True,
-                ),
-                OfficialAHComparison(
-                    trade_date=target_day,
-                    a_ts_code="600036.SH",
-                    hk_ts_code="03968.HK",
-                    ah_premium=Decimal("31"),
-                    ha_premium=Decimal("-23.664"),
-                    is_realtime=False,
-                    data_source="TUSHARE_OFFICIAL",
-                ),
+                )
             ]
         )
+        add_realtime_quotes(db)
         db.commit()
 
         first_events = NotificationService(db, pushplus_client=fake_client).scan_alerts_for_day(
             target_day,
             user.id,
+            datetime(2026, 5, 5, 10, 30, 0, tzinfo=LOCAL_TEST_TZ),
         )
         second_events = NotificationService(db, pushplus_client=fake_client).scan_alerts_for_day(
             target_day,
             user.id,
+            datetime(2026, 5, 5, 10, 30, 1, tzinfo=LOCAL_TEST_TZ),
         )
 
         total_events = db.scalar(select(AlertEvent))
@@ -554,16 +600,7 @@ def test_scan_skips_watchlist_when_push_disabled() -> None:
                     target_premium_pct=Decimal("30"),
                     push_enabled=False,
                     is_active=True,
-                ),
-                OfficialAHComparison(
-                    trade_date=target_day,
-                    a_ts_code="600036.SH",
-                    hk_ts_code="03968.HK",
-                    ah_premium=Decimal("31"),
-                    ha_premium=Decimal("-23.664"),
-                    is_realtime=False,
-                    data_source="TUSHARE_OFFICIAL",
-                ),
+                )
             ]
         )
         db.commit()
@@ -604,18 +641,15 @@ def test_price_alert_skips_when_market_is_closed() -> None:
                     price_alert_target_price=Decimal("35"),
                     is_active=True,
                 ),
-                ADailyQuote(
-                    ts_code="600036.SH",
-                    trade_date=target_day,
-                    close=Decimal("36"),
-                ),
             ]
         )
+        add_realtime_quotes(db, a_price=Decimal("36"))
         db.commit()
 
         events = NotificationService(db, pushplus_client=fake_client).scan_alerts_for_day(
             target_day,
             user.id,
+            datetime(2026, 5, 5, 10, 30, 0, tzinfo=LOCAL_TEST_TZ),
         )
 
     assert events == []
@@ -648,23 +682,21 @@ def test_price_alert_pushes_once_per_trading_day() -> None:
                     price_alert_target_price=Decimal("35"),
                     is_active=True,
                 ),
-                ADailyQuote(
-                    ts_code="600036.SH",
-                    trade_date=target_day,
-                    close=Decimal("34.8"),
-                ),
             ]
         )
+        add_realtime_quotes(db, a_price=Decimal("34.8"))
         db.commit()
 
         first_events = NotificationService(db, pushplus_client=fake_client).scan_alerts_for_day(
             target_day,
             user.id,
+            datetime(2026, 5, 5, 10, 30, 0, tzinfo=LOCAL_TEST_TZ),
         )
         first_event_type = first_events[0].event_type
         second_events = NotificationService(db, pushplus_client=fake_client).scan_alerts_for_day(
             target_day,
             user.id,
+            datetime(2026, 5, 5, 10, 30, 1, tzinfo=LOCAL_TEST_TZ),
         )
 
     assert len(first_events) == 1

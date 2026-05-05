@@ -190,6 +190,8 @@ GET /api/ah-premiums/realtime
 - `quality` 可填 `REALTIME`、`DELAYED`、`STALE`、`ERROR`、`UNAVAILABLE`。
 - 同一标的可保留多条快照，系统按 `quote_time desc, id desc` 读取最新的 `is_active=1` 记录。
 - `water-stock` 已新增本地实时喂数模块：通过独立 `stock-ah.datasource` 连接 `stock_ah_ai`，读取 `a_trade_calendar`、`hk_trade_calendar` 和 `watchlist_stock`，仅在 A/H 共同交易日且 `stock-ah.realtime.trade-time-ranges` 内，每秒抓取一次用户自选 AH 标的和 `HKD/CNY`，写入 `realtime_quote_snapshot`。交易时间默认按港股结束时间覆盖 `09:30-12:00`、`13:00-16:00`；调度使用非重入保护，上一轮未完成时跳过本轮。调 Baidu 接口前会把 `600036.SH`、`000333.SZ`、`03968.HK` 转为 water-stock 使用的纯数字编号，其中港股保留 5 位补零。
+- 本项目提醒扫描已改为读取 `realtime_quote_snapshot`：调度器默认 `ALERT_SCAN_SECONDS=1`、`ALERT_SCAN_HOURS=9-16`，每秒进入一次扫描；服务层再按市场交易日和交易时段过滤，A 股 `09:30-11:30`、`13:00-15:00`，港股 `09:30-12:00`、`13:00-16:00`，A/H 溢价阈值只在两地重叠时段判断。
+- 阈值提醒要求 A/H 实时报价可用，汇率允许 `REALTIME` 或 `STALE_FX` 口径；股价提醒要求对应 A/H 快照质量为 `REALTIME`。提醒事件仍按 `用户 + 自选股 + 条件 + 交易日` 去重，同一条件当天最多推送一次。
 
 ### 5.1 新增实时行情快照表
 

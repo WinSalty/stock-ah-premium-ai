@@ -68,6 +68,8 @@
   - 自选股新增股价提醒配置，支持选择 A 股或 H 股、大于等于或小于等于目标价。
   - 自选股提醒新增消息推送开关，默认开启；用户关闭后保留提醒条件但不发送 PushPlus 消息，也不强制绑定。
   - 后端新增交易日提醒扫描任务，阈值提醒要求 A/H 共同交易日，股价提醒要求对应市场交易日；非交易日不推送。
+  - 提醒扫描已改为交易时段实时判断：调度器默认在 `ALERT_SCAN_HOURS=9-16` 内每秒执行一次，服务层再按 A 股 `09:30-11:30`、`13:00-15:00` 与港股 `09:30-12:00`、`13:00-16:00` 过滤；A/H 溢价阈值只在两地重叠时段触发。
+  - 阈值提醒和股价提醒均读取 `realtime_quote_snapshot` 最新有效快照；阈值提醒允许 A/H 报价实时且汇率实时或 `STALE_FX`，股价提醒要求对应市场报价质量为 `REALTIME`。
   - PushPlus 绑定流程已调整为扫码回调自动绑定：二维码归属管理员 PushPlus 账号，`content` 仅作为短格式带签名的系统用户绑定票据；好友列表和全量绑定列表仅管理员可查看。
   - PushPlus 绑定功能保留在个人信息页；已绑定用户不再展示二维码绑定入口，也不能重复生成二维码或覆盖绑定；同一个 PushPlus 好友只能绑定一个系统用户；管理员的好友列表、用户绑定信息管理和“系统用户 + PushPlus 好友”手动绑定已移入用户管理菜单，绑定时会把好友令牌仅保存到后端。
   - PushPlus 测试消息、阈值提醒和股价提醒统一使用 HTML 模板发送，消息采用非紫色轻量卡片和价差信号图样式，并展示触发类型、标的、交易日、当前阈值/价格和目标阈值/价格等明细。
@@ -182,6 +184,7 @@
 - 新增 LLM 项目级日调用限流，默认 `LLM_DAILY_CALL_LIMIT=100`，按 `llm_call_metric` 中外部模型主调用 phase 统计，不计首包、SQL 执行和总耗时等辅助指标。
 - 新增实时行情抽象接口首版落地，创建 `realtime_quote_snapshot` 表、数据库行情 provider、实时 AH/H/A 溢价计算服务和 `GET /api/ah-premiums/realtime` 读取接口；`alembic upgrade head` 已应用 `20260505_0016`，`./scripts/check.sh` 通过。
 - `water-stock` 已在 `master` 最新代码上补充 stock-ah 实时喂数模块：独立连接 `stock_ah_ai`，按 A/H 共同交易日、港股收盘口径交易时段和用户自选股每秒写入 `realtime_quote_snapshot`，并用非重入调度避免上一轮未完成时并发抓取；接口请求前将 stock-ah 的 Tushare 风格代码转换为 water-stock/Baidu 使用的纯数字代码。
+- 自选股提醒已改为实时快照触发，交易时间默认每秒扫描一次；`backend/.venv/bin/python -m pytest backend/tests/test_notification_service.py -q` 和针对变更文件的 `ruff check` 通过。
 - 敏感信息扫描：只发现文档中的 `<local-only>` 占位符，未发现真实 Token、密码或 API Key。
 
 ## 待验证事项
