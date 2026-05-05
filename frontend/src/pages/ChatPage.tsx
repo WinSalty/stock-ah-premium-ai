@@ -134,6 +134,15 @@ const markdownComponents: Components = {
   }
 };
 
+/**
+ * 兼容模型偶发输出的非标准标题，如 ##一、 缺少空格时 ReactMarkdown 不会按标题解析。
+ * 创建日期：2026-05-05
+ * author: sunshengxian
+ */
+function normalizeMarkdownForRender(content: string) {
+  return content.replace(/^(#{1,6})(?=\S)/gm, '$1 ');
+}
+
 const PRESET_QUESTION_COUNT = 4;
 const CHAT_PROGRESS_STEPS = [
   '正在理解你的问题...',
@@ -488,7 +497,7 @@ function ChatPage() {
                           remarkPlugins={[remarkGfm]}
                           components={markdownComponents}
                         >
-                          {turn.response?.answer || ''}
+                          {normalizeMarkdownForRender(turn.response?.answer || '')}
                         </ReactMarkdown>
                         {turn.streaming && !turn.response?.answer ? (
                           <div className="chat-progress-note">
