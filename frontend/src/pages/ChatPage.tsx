@@ -488,7 +488,7 @@ function ChatPage() {
                         {turn.streaming && !turn.response?.answer ? (
                           <div className="chat-progress-note">{turn.progressText || '正在分析...'}</div>
                         ) : null}
-                        {turn.streaming ? <span className="stream-caret" /> : null}
+                        {turn.streaming && turn.response?.answer ? <span className="stream-caret" /> : null}
                       </div>
                       <ChatDataSummary rows={turn.response?.rows || []} />
                     </div>
