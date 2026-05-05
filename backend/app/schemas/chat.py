@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 
 from app.schemas.common import OrmModel
 
-ChatModel = Literal["deepseek-v4-flash", "deepseek-v4-pro", "qwen3.6-flash"]
+ChatModel = Literal["deepseek-v4-flash", "deepseek-v4-pro", "qwen3.6-max-preview"]
 
 
 class ChatSessionCreate(BaseModel):

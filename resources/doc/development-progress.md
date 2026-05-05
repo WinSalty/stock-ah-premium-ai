@@ -76,7 +76,7 @@
   - PushPlus 测试消息、阈值提醒和股价提醒统一使用 HTML 模板发送，消息采用非紫色轻量卡片和价差信号图样式，并展示触发类型、标的、交易日、当前阈值/价格和目标阈值/价格等明细。
   - 自选股保存提醒配置时会校验当前用户必须已有 PushPlus 绑定，未绑定时前端弹出二维码引导，后端同步拒绝未绑定提醒保存。
 - LLM 问答：
-  - OpenAI-compatible Chat API 封装支持 DeepSeek 和阿里 Qwen，问答页面可在 `deepseek-v4-flash`、`deepseek-v4-pro` 与 `qwen3.6-flash` 间选择，默认使用 `deepseek-v4-flash`；兼容历史配置 `deepseek-v4-pro[1m]` 到 DeepSeek API 支持的模型名，当前不额外传 `reasoning_effort`。
+  - OpenAI-compatible Chat API 封装支持 DeepSeek 和阿里 Qwen，问答页面可在 `deepseek-v4-flash`、`deepseek-v4-pro` 与 `qwen3.6-max-preview` 间选择，默认使用 `deepseek-v4-flash`；兼容历史配置 `deepseek-v4-pro[1m]` 到 DeepSeek API 支持的模型名，当前不额外传 `reasoning_effort`。
   - DeepSeek API Key 优先读取 `/Users/salty/codeProject/ai/doc/deepseek-apikey.txt`，`LLM_API_KEY` 仅作兜底；Qwen API Key 优先读取 `/Users/salty/codeProject/ai/doc/qwen-apikey.txt`，`QWEN_API_KEY` 仅作兜底，不把密钥暴露给前端。
   - 投资研究边界、是否需要结构化数据、是否需要知识库和知识分类已合并到 Qwen `qwen3.6-flash` 单次 JSON 前置路由；问候、角色身份和“你能做什么”类问题允许返回助手能力介绍，非范围问题改为更自然的引导文案。
   - 已将 LLM 系统角色升级为专业金融投资分析顾问，仅允许股票、估值、A/H 溢价、港股通、组合配置和风险控制等投资研究相关问题。

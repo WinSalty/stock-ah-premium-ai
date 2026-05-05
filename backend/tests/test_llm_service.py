@@ -428,10 +428,10 @@ def test_qwen_chat_model_uses_qwen_endpoint(monkeypatch) -> None:
         ),
     )
 
-    assert service._chat_completion("分析招商银行", model="qwen3.6-flash") == "qwen ok"
+    assert service._chat_completion("分析招商银行", model="qwen3.6-max-preview") == "qwen ok"
     assert captured["url"] == "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
     assert captured["headers"] == {"Authorization": "Bearer qwen-key"}
-    assert captured["payload"]["model"] == "qwen3.6-flash"
+    assert captured["payload"]["model"] == "qwen3.6-max-preview"
 
 
 def test_uncertain_question_scope_uses_qwen_flash_router(monkeypatch) -> None:
@@ -562,7 +562,7 @@ def test_llm_completion_metric_is_persisted() -> None:
                 provider="Qwen",
                 base_url="https://example.test",
                 api_key="test-key",
-                model="qwen3.6-flash",
+                model="qwen3.6-max-preview",
             ),
             LlmCallTrace(
                 question_id="1234567",
@@ -579,7 +579,7 @@ def test_llm_completion_metric_is_persisted() -> None:
     assert metric is not None
     assert metric.phase == "answer"
     assert metric.provider == "Qwen"
-    assert metric.model == "qwen3.6-flash"
+    assert metric.model == "qwen3.6-max-preview"
     assert metric.user_id == 9
     assert metric.session_id == 18
     assert metric.output_chars == 2

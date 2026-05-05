@@ -145,7 +145,7 @@ const DEFAULT_CHAT_MODEL: ChatModel = 'deepseek-v4-flash';
 const CHAT_MODEL_OPTIONS: { label: string; value: ChatModel }[] = [
   { label: 'DeepSeek Flash', value: 'deepseek-v4-flash' },
   { label: 'DeepSeek Pro', value: 'deepseek-v4-pro' },
-  { label: 'Qwen 3.6 Flash', value: 'qwen3.6-flash' }
+  { label: 'Qwen 3.6 Max Preview', value: 'qwen3.6-max-preview' }
 ];
 
 const REPORT_BASED_PRESET_QUESTIONS = [
