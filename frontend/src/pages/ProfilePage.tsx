@@ -143,7 +143,7 @@ function ProfilePage({ user, onUserUpdated }: ProfilePageProps) {
           <div>
             <div className="panel-title">PushPlus 好友推送</div>
             <Typography.Text type="secondary">
-              绑定后，阈值提醒和股价提醒会通过 PushPlus 好友消息推送。
+              扫描系统推送账号二维码成为管理员 PushPlus 好友后，提醒会通过好友消息推送。
             </Typography.Text>
           </div>
           <Space wrap>
@@ -174,27 +174,18 @@ function ProfilePage({ user, onUserUpdated }: ProfilePageProps) {
             description={binding.data.is_follow ? '好友已关注 PushPlus 微信公众号。' : '好友尚未关注公众号，可能无法收到微信消息。'}
           />
         ) : (
-          <Alert showIcon type="info" message="当前账号尚未绑定 PushPlus 好友，扫码后会自动完成绑定。" />
+          <Alert showIcon type="info" message="当前账号尚未绑定 PushPlus 好友，扫码成为系统推送账号好友后会自动完成绑定。" />
         )}
         <div className="pushplus-bind-grid">
           <div className="pushplus-qr-pane">
-            <Space wrap>
-              <Button
-                type="primary"
-                icon={<QrCode size={16} />}
-                loading={qrCodeMutation.isPending}
-                onClick={() => qrCodeMutation.mutate()}
-              >
-                生成绑定二维码
-              </Button>
-              <Button
-                icon={<RefreshCw size={16} />}
-                loading={friends.isFetching}
-                onClick={() => friends.refetch()}
-              >
-                刷新好友
-              </Button>
-            </Space>
+            <Button
+              type="primary"
+              icon={<QrCode size={16} />}
+              loading={qrCodeMutation.isPending}
+              onClick={() => qrCodeMutation.mutate()}
+            >
+              生成系统推送账号二维码
+            </Button>
             {qrCodeMutation.data?.qr_code_img_url ? (
               <Image
                 className="pushplus-qr-image"
@@ -209,7 +200,7 @@ function ProfilePage({ user, onUserUpdated }: ProfilePageProps) {
           <div className="pushplus-friend-pane">
             <Typography.Text strong>绑定状态</Typography.Text>
             <Typography.Text type="secondary">
-              二维码包含当前账号标识。扫码关注后，PushPlus 回调会自动把好友绑定到当前账号。
+              二维码归属管理员 PushPlus 账号，内含当前系统账号的签名绑定票据；扫码后回调会把你的 PushPlus 好友身份绑定到当前系统账号。
             </Typography.Text>
             <Button
               icon={<RefreshCw size={16} />}

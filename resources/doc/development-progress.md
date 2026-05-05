@@ -62,11 +62,11 @@
   - 自选股和 LLM 会话按 `user_id` 隔离；LLM 自选机会视图新增 `user_id` 字段，生成自选相关 SQL 时按当前用户过滤。
 - 消息推送与提醒：
   - 新增 PushPlus 好友消息模块，支持从 `/Users/salty/codeProject/ai/doc/pushplus.txt` 同时解析用户 token 和 SecretKey，不向前端返回敏感凭据。
-  - 新增个人信息页 PushPlus 绑定区：生成个人二维码、自动刷新绑定状态、解除绑定和测试推送。
+  - 新增个人信息页 PushPlus 绑定区：生成系统推送账号二维码、自动刷新绑定状态、解除绑定和测试推送；普通用户扫码后成为管理员 PushPlus 好友。
   - 新增 `pushplus_binding` 与 `alert_event` 表，以及 `20260505_0013` 迁移；提醒事件按 dedupe key 保证同一提醒同一交易日只推送一次。
   - 自选股新增股价提醒配置，支持选择 A 股或 H 股、大于等于或小于等于目标价。
   - 后端新增交易日提醒扫描任务，阈值提醒要求 A/H 共同交易日，股价提醒要求对应市场交易日；非交易日不推送。
-  - PushPlus 绑定流程已调整为扫码回调自动绑定：普通用户只生成二维码并等待绑定状态刷新；好友列表和全量绑定列表仅管理员可查看。
+  - PushPlus 绑定流程已调整为扫码回调自动绑定：二维码归属管理员 PushPlus 账号，`content` 仅作为带签名的系统用户绑定票据；好友列表和全量绑定列表仅管理员可查看。
   - 自选股保存提醒配置时会校验当前用户必须已有 PushPlus 绑定，未绑定时前端弹出二维码引导，后端同步拒绝未绑定提醒保存。
 - LLM 问答：
   - OpenAI-compatible Chat API 封装支持 DeepSeek 和阿里 Qwen，问答页面可在 `deepseek-v4-flash`、`deepseek-v4-pro` 与 `qwen3.6-max-preview` 间选择，默认使用 `deepseek-v4-flash`；兼容历史配置 `deepseek-v4-pro[1m]` 到 DeepSeek API 支持的模型名，当前不额外传 `reasoning_effort`。

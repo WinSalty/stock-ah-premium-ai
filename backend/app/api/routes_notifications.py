@@ -106,7 +106,7 @@ def pushplus_callback(
     payload: PushplusCallbackRequest,
     db: DbSession,
 ) -> dict[str, bool]:
-    """接收 PushPlus 新增好友回调并自动完成用户绑定。
+    """接收 PushPlus 新增好友回调并按绑定票据自动完成系统用户绑定。
 
     创建日期：2026-05-05
     author: sunshengxian

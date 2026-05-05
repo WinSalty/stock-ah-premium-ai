@@ -155,7 +155,7 @@ def test_threshold_alert_pushes_once_per_trading_day() -> None:
 
 
 def test_pushplus_callback_binds_user_from_qr_content() -> None:
-    """确认 PushPlus 新增好友回调按二维码用户参数自动绑定。
+    """确认 PushPlus 新增好友回调按二维码绑定票据自动绑定。
 
     创建日期：2026-05-05
     author: sunshengxian
@@ -171,7 +171,7 @@ def test_pushplus_callback_binds_user_from_qr_content() -> None:
 
         service = NotificationService(db)
         binding = service.bind_pushplus_callback(
-            service._qr_content_for_user(user.id),
+            service._binding_ticket_for_user(user.id),
             friend_id=2001,
             friend_token="callback-token",
             nick_name="扫码用户",

@@ -116,7 +116,7 @@ class NotificationService:
         author: sunshengxian
         """
 
-        content = self._qr_content_for_user(user.id)
+        content = self._binding_ticket_for_user(user.id)
         try:
             return self.pushplus_client.get_personal_qr_code(content, expire_seconds, scan_count)
         except PushplusError as exc:
@@ -184,16 +184,16 @@ class NotificationService:
         nick_name: str | None,
         is_follow: bool,
     ) -> PushplusBindingResponse:
-        """处理 PushPlus 新增好友回调并自动绑定到二维码中的用户。
+        """处理 PushPlus 新增好友回调并按绑定票据自动绑定系统用户。
 
         创建日期：2026-05-05
         author: sunshengxian
         """
 
-        user_id = self._parse_qr_user_id(content)
+        user_id = self._parse_binding_ticket_user_id(content)
         user = self.db.get(AppUser, user_id)
         if user is None or not user.is_active:
-            raise NotificationError("二维码绑定的用户不存在或已停用")
+            raise NotificationError("绑定票据对应的系统用户不存在或已停用")
         binding = self.db.scalar(
             select(PushplusBinding).where(PushplusBinding.user_id == user_id)
         )
@@ -565,24 +565,24 @@ class NotificationService:
             bound_at=binding.bound_at,
         )
 
-    def _parse_qr_user_id(self, content: str | None) -> int:
-        prefix = "stock-ah-premium-ai:user:"
+    def _parse_binding_ticket_user_id(self, content: str | None) -> int:
+        prefix = "stock-ah-premium-ai:binding:"
         if not content or not content.startswith(prefix):
-            raise NotificationError("PushPlus 回调二维码参数无效")
+            raise NotificationError("PushPlus 回调绑定票据无效")
         if ":sig:" not in content:
-            raise NotificationError("PushPlus 回调二维码签名缺失")
+            raise NotificationError("PushPlus 回调绑定票据签名缺失")
         user_part, signature = content.split(":sig:", maxsplit=1)
         try:
             user_id = int(user_part.removeprefix(prefix))
         except ValueError as exc:
-            raise NotificationError("PushPlus 回调二维码用户参数无效") from exc
+            raise NotificationError("PushPlus 回调绑定票据用户参数无效") from exc
         expected = self._qr_signature(user_id)
         if not hmac.compare_digest(signature, expected):
-            raise NotificationError("PushPlus 回调二维码签名无效")
+            raise NotificationError("PushPlus 回调绑定票据签名无效")
         return user_id
 
-    def _qr_content_for_user(self, user_id: int) -> str:
-        return f"stock-ah-premium-ai:user:{user_id}:sig:{self._qr_signature(user_id)}"
+    def _binding_ticket_for_user(self, user_id: int) -> str:
+        return f"stock-ah-premium-ai:binding:{user_id}:sig:{self._qr_signature(user_id)}"
 
     def _qr_signature(self, user_id: int) -> str:
         digest = hmac.new(
