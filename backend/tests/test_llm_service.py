@@ -346,6 +346,7 @@ def test_service_intro_question_uses_qwen_classifier_and_returns_role_intro(monk
         system_prompt: str | None = None,
         model: str | None = None,
         temperature: float = 0.1,
+        trace: object | None = None,
     ) -> str:
         captured_models.append(model)
         return '{"is_investment_related":true}'
