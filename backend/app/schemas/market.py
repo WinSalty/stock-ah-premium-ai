@@ -70,6 +70,10 @@ class PremiumQueryResponse(OrmModel):
     watchlist_display_name: str | None = None
     preferred_direction: str | None = None
     target_premium_pct: Decimal | None = None
+    price_alert_enabled: bool | None = None
+    price_alert_market: str | None = None
+    price_alert_operator: str | None = None
+    price_alert_target_price: Decimal | None = None
     holding_market: str | None = None
     distance_to_target_pct: Decimal | None = None
     opportunity_status: str | None = None

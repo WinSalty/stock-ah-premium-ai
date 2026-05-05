@@ -10,6 +10,7 @@ import {
   Select,
   Skeleton,
   Space,
+  Switch,
   message
 } from 'antd';
 import ReactECharts from 'echarts-for-react';
@@ -23,7 +24,13 @@ import PremiumTable from '../components/PremiumTable';
 import { createChatSession, sendChatMessage } from '../api/chat';
 import { calculatePremium, fetchPremiumTrend, fetchPremiums } from '../api/market';
 import { createWatchlistItem, deleteWatchlistItem, updateWatchlistItem } from '../api/watchlist';
-import type { HoldingMarket, PremiumDirection, PremiumItem } from '../types/domain';
+import type {
+  HoldingMarket,
+  PremiumDirection,
+  PremiumItem,
+  PriceAlertMarket,
+  PriceAlertOperator
+} from '../types/domain';
 import type { PremiumQueryParams } from '../api/market';
 import {
   getCachedThresholdRecommendation,
@@ -53,6 +60,10 @@ interface WatchlistFormValues {
   display_name?: string;
   preferred_direction: PremiumDirection;
   target_premium_pct?: number | null;
+  price_alert_enabled?: boolean;
+  price_alert_market?: PriceAlertMarket;
+  price_alert_operator?: PriceAlertOperator;
+  price_alert_target_price?: number | null;
   holding_market: HoldingMarket;
   note?: string;
 }
@@ -178,6 +189,10 @@ function PremiumPage() {
           display_name: displayName || null,
           preferred_direction: values.preferred_direction,
           target_premium_pct: values.target_premium_pct ?? null,
+          price_alert_enabled: Boolean(values.price_alert_enabled),
+          price_alert_market: values.price_alert_market || 'UNKNOWN',
+          price_alert_operator: values.price_alert_operator || 'GTE',
+          price_alert_target_price: values.price_alert_target_price ?? null,
           holding_market: values.holding_market
         });
       }
@@ -187,6 +202,10 @@ function PremiumPage() {
         display_name: displayName || undefined,
         preferred_direction: values.preferred_direction,
         target_premium_pct: values.target_premium_pct ?? undefined,
+        price_alert_enabled: Boolean(values.price_alert_enabled),
+        price_alert_market: values.price_alert_market || 'UNKNOWN',
+        price_alert_operator: values.price_alert_operator || 'GTE',
+        price_alert_target_price: values.price_alert_target_price ?? undefined,
         holding_market: values.holding_market,
         note: note || undefined
       });
@@ -330,6 +349,10 @@ function PremiumPage() {
       display_name: item.a_name || item.hk_name || undefined,
       preferred_direction: item.metric_direction || filters.direction || 'HA',
       target_premium_pct: undefined,
+      price_alert_enabled: false,
+      price_alert_market: 'UNKNOWN',
+      price_alert_operator: 'GTE',
+      price_alert_target_price: undefined,
       holding_market: 'UNKNOWN',
       note: undefined
     });
@@ -343,6 +366,10 @@ function PremiumPage() {
       display_name: item.watchlist_display_name || item.a_name || item.hk_name || undefined,
       preferred_direction: item.preferred_direction || item.metric_direction || 'HA',
       target_premium_pct: numberValue(item.target_premium_pct),
+      price_alert_enabled: Boolean(item.price_alert_enabled),
+      price_alert_market: (item.price_alert_market as PriceAlertMarket) || 'UNKNOWN',
+      price_alert_operator: (item.price_alert_operator as PriceAlertOperator) || 'GTE',
+      price_alert_target_price: numberValue(item.price_alert_target_price),
       holding_market: (item.holding_market as HoldingMarket) || 'UNKNOWN',
       note: undefined
     });
@@ -528,6 +555,31 @@ function PremiumPage() {
               )}
             </div>
           ) : null}
+          <div className="watchlist-price-alert-grid">
+            <Form.Item label="股价提醒" name="price_alert_enabled" valuePropName="checked">
+              <Switch checkedChildren="开启" unCheckedChildren="关闭" />
+            </Form.Item>
+            <Form.Item label="提醒市场" name="price_alert_market">
+              <Select
+                options={[
+                  { value: 'UNKNOWN', label: '未设置' },
+                  { value: 'A', label: 'A 股' },
+                  { value: 'H', label: 'H 股' }
+                ]}
+              />
+            </Form.Item>
+            <Form.Item label="触发方向" name="price_alert_operator">
+              <Select
+                options={[
+                  { value: 'GTE', label: '大于等于' },
+                  { value: 'LTE', label: '小于等于' }
+                ]}
+              />
+            </Form.Item>
+            <Form.Item label="目标价格" name="price_alert_target_price">
+              <InputNumber className="full-width" precision={3} placeholder="触发价" />
+            </Form.Item>
+          </div>
           <Form.Item label="持有侧" name="holding_market" rules={[{ required: true }]}>
             <Select
               options={[

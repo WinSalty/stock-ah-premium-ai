@@ -33,4 +33,5 @@ def public_settings() -> dict[str, object]:
         "tushareConfigured": bool(settings.resolve_tushare_token()),
         "llmConfigured": bool(settings.resolve_llm_api_key() and settings.llm_model),
         "qwenConfigured": bool(settings.resolve_qwen_api_key()),
+        "pushplusConfigured": bool(settings.resolve_pushplus_token()),
     }

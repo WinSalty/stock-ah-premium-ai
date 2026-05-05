@@ -61,6 +61,24 @@ class Settings(BaseSettings):
     query_limit_max: int = 1000
     sync_scheduler_enabled: bool = Field(default=True, alias="SYNC_SCHEDULER_ENABLED")
     sync_scheduler_timezone: str = Field(default="Asia/Shanghai", alias="SYNC_SCHEDULER_TIMEZONE")
+    alert_scheduler_enabled: bool = Field(default=True, alias="ALERT_SCHEDULER_ENABLED")
+    alert_scan_minutes: int = Field(default=30, alias="ALERT_SCAN_MINUTES")
+    alert_scan_hours: str = Field(default="9-17", alias="ALERT_SCAN_HOURS")
+    pushplus_enabled: bool = Field(default=True, alias="PUSHPLUS_ENABLED")
+    pushplus_base_url: str = Field(default="https://www.pushplus.plus", alias="PUSHPLUS_BASE_URL")
+    pushplus_token: str | None = Field(default=None, alias="PUSHPLUS_TOKEN")
+    pushplus_token_file: Path | None = Field(
+        default=Path("/Users/salty/codeProject/ai/doc/pushplus.txt"),
+        alias="PUSHPLUS_TOKEN_FILE",
+    )
+    pushplus_secret_key: str | None = Field(default=None, alias="PUSHPLUS_SECRET_KEY")
+    pushplus_secret_key_file: Path | None = Field(
+        default=Path("/Users/salty/codeProject/ai/doc/pushplus.txt"),
+        alias="PUSHPLUS_SECRET_KEY_FILE",
+    )
+    pushplus_template: str = Field(default="markdown", alias="PUSHPLUS_TEMPLATE")
+    pushplus_channel: str = Field(default="wechat", alias="PUSHPLUS_CHANNEL")
+    pushplus_timeout_seconds: float = Field(default=15.0, alias="PUSHPLUS_TIMEOUT_SECONDS")
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -126,6 +144,77 @@ class Settings(BaseSettings):
         if self.qwen_api_key:
             return self.qwen_api_key.strip()
         return None
+
+    def resolve_pushplus_token(self) -> str | None:
+        """按本机文件优先、环境变量兜底的顺序读取 PushPlus 用户 Token。
+
+        创建日期：2026-05-05
+        author: sunshengxian
+        """
+
+        file_values = self._read_pushplus_credential_file(self.pushplus_token_file)
+        if file_values.get("token"):
+            return file_values["token"]
+        if self.pushplus_token:
+            return self.pushplus_token.strip()
+        return None
+
+    def resolve_pushplus_secret_key(self) -> str | None:
+        """按本机文件优先、环境变量兜底的顺序读取 PushPlus 开放接口密钥。
+
+        创建日期：2026-05-05
+        author: sunshengxian
+        """
+
+        file_values = self._read_pushplus_credential_file(self.pushplus_secret_key_file)
+        if file_values.get("secret_key"):
+            return file_values["secret_key"]
+        if self.pushplus_secret_key:
+            return self.pushplus_secret_key.strip()
+        return None
+
+    def _read_pushplus_credential_file(self, path: Path | None) -> dict[str, str]:
+        """解析 PushPlus 本机凭据文件，支持键值或前两行写法。
+
+        创建日期：2026-05-05
+        author: sunshengxian
+        """
+
+        if not path or not path.exists():
+            return {}
+        raw_lines = path.read_text(encoding="utf-8").splitlines()
+        values: dict[str, str] = {}
+        positional: list[str] = []
+        for raw_line in raw_lines:
+            line = raw_line.strip()
+            if not line or line.startswith("#"):
+                continue
+            if "=" in line:
+                key, value = line.split("=", maxsplit=1)
+            elif ":" in line:
+                key, value = line.split(":", maxsplit=1)
+            else:
+                positional.append(line)
+                continue
+            normalized_key = key.strip().lower().replace("-", "_")
+            normalized_value = value.strip()
+            if not normalized_value:
+                continue
+            if normalized_key in {"pushplus_token", "token", "user_token", "用户token"}:
+                values["token"] = normalized_value
+            elif normalized_key in {
+                "pushplus_secret_key",
+                "secret_key",
+                "secretkey",
+                "secret",
+                "密钥",
+            }:
+                values["secret_key"] = normalized_value
+        if "token" not in values and positional:
+            values["token"] = positional[0]
+        if "secret_key" not in values and len(positional) >= 2:
+            values["secret_key"] = positional[1]
+        return values
 
 
 @lru_cache(maxsize=1)

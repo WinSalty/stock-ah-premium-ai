@@ -267,12 +267,22 @@ pushplus 对个人最轻量：
 
 ```text
 PUSHPLUS_ENABLED=true
-PUSHPLUS_TOKEN_FILE=/Users/salty/codeProject/ai/doc/pushplus-token.txt
+PUSHPLUS_TOKEN_FILE=/Users/salty/codeProject/ai/doc/pushplus.txt
+PUSHPLUS_SECRET_KEY_FILE=/Users/salty/codeProject/ai/doc/pushplus.txt
 PUSHPLUS_TOKEN=
+PUSHPLUS_SECRET_KEY=
 PUSHPLUS_TEMPLATE=markdown
 PUSHPLUS_CHANNEL=wechat
 ALERT_COOLDOWN_MINUTES=30
 ```
+
+当前实现采用好友消息方案：
+
+- 个人信息页通过 PushPlus 开放接口 `getQrCode` 生成个人二维码，用户扫码后成为 PushPlus 好友。
+- 后端通过开放接口 `friend/list` 拉取好友列表，用户在个人信息页选择自己的好友完成绑定。
+- 真实推送仍调用 `/send`，使用 `to` 字段填写好友令牌；好友令牌仅存后端，不返回前端明文。
+- `/Users/salty/codeProject/ai/doc/pushplus.txt` 可同时保存用户 token 和 SecretKey，支持 `PUSHPLUS_TOKEN=...` / `PUSHPLUS_SECRET_KEY=...` 或前两行分别写 token、SecretKey。
+- 阈值提醒和股价提醒只在对应市场交易日发送；同一个提醒按 `用户 + 自选股 + 条件 + 交易日` 去重，每天最多推送一次。
 
 推送内容建议：
 

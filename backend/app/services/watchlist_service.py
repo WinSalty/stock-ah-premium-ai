@@ -75,6 +75,10 @@ class WatchlistService:
             display_name=payload.display_name,
             preferred_direction=self._normalize_direction(payload.preferred_direction),
             target_premium_pct=payload.target_premium_pct,
+            price_alert_enabled=payload.price_alert_enabled,
+            price_alert_market=self._normalize_price_alert_market(payload.price_alert_market),
+            price_alert_operator=self._normalize_price_alert_operator(payload.price_alert_operator),
+            price_alert_target_price=payload.price_alert_target_price,
             holding_market=self._normalize_holding_market(payload.holding_market),
             sort_order=payload.sort_order,
             note=payload.note,
@@ -141,6 +145,10 @@ class WatchlistService:
                 item.preferred_direction = self._normalize_direction(str(value))
             elif key == "holding_market" and value is not None:
                 item.holding_market = self._normalize_holding_market(str(value))
+            elif key == "price_alert_market" and value is not None:
+                item.price_alert_market = self._normalize_price_alert_market(str(value))
+            elif key == "price_alert_operator" and value is not None:
+                item.price_alert_operator = self._normalize_price_alert_operator(str(value))
             else:
                 setattr(item, key, value)
 
@@ -150,3 +158,11 @@ class WatchlistService:
     def _normalize_holding_market(self, value: str) -> str:
         normalized = value.upper()
         return normalized if normalized in {"A", "H"} else "UNKNOWN"
+
+    def _normalize_price_alert_market(self, value: str) -> str:
+        normalized = value.upper()
+        return normalized if normalized in {"A", "H"} else "UNKNOWN"
+
+    def _normalize_price_alert_operator(self, value: str) -> str:
+        normalized = value.upper()
+        return normalized if normalized in {"GTE", "LTE"} else "GTE"

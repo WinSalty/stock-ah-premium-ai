@@ -60,6 +60,12 @@
   - 新增 `20260504_0010` 迁移，用户表支持展示名称、邮箱、电话、简介和用户粒度菜单权限；用户权限菜单改名为用户管理，管理员可编辑用户基础信息、角色、启用状态和菜单权限。
   - 新增个人信息菜单，当前用户可维护自己的展示名称、邮箱、电话和简介。
   - 自选股和 LLM 会话按 `user_id` 隔离；LLM 自选机会视图新增 `user_id` 字段，生成自选相关 SQL 时按当前用户过滤。
+- 消息推送与提醒：
+  - 新增 PushPlus 好友消息模块，支持从 `/Users/salty/codeProject/ai/doc/pushplus.txt` 同时解析用户 token 和 SecretKey，不向前端返回敏感凭据。
+  - 新增个人信息页 PushPlus 绑定区：生成个人二维码、刷新好友列表、选择好友绑定、解除绑定和测试推送。
+  - 新增 `pushplus_binding` 与 `alert_event` 表，以及 `20260505_0013` 迁移；提醒事件按 dedupe key 保证同一提醒同一交易日只推送一次。
+  - 自选股新增股价提醒配置，支持选择 A 股或 H 股、大于等于或小于等于目标价。
+  - 后端新增交易日提醒扫描任务，阈值提醒要求 A/H 共同交易日，股价提醒要求对应市场交易日；非交易日不推送。
 - LLM 问答：
   - OpenAI-compatible Chat API 封装支持 DeepSeek 和阿里 Qwen，问答页面可在 `deepseek-v4-flash`、`deepseek-v4-pro` 与 `qwen3.6-max-preview` 间选择，默认使用 `deepseek-v4-flash`；兼容历史配置 `deepseek-v4-pro[1m]` 到 DeepSeek API 支持的模型名，当前不额外传 `reasoning_effort`。
   - DeepSeek API Key 优先读取 `/Users/salty/codeProject/ai/doc/deepseek-apikey.txt`，`LLM_API_KEY` 仅作兜底；Qwen API Key 优先读取 `/Users/salty/codeProject/ai/doc/qwen-apikey.txt`，`QWEN_API_KEY` 仅作兜底，不把密钥暴露给前端。
@@ -153,6 +159,7 @@
 - Tushare 中转 SDK 最小连通性：`stock_basic` 携带 `limit=1` 查询成功返回 1 行，未落库。
 - DeepSeek 流式问答验证：AH 套利宽问题返回 `meta` 与连续 `delta` 事件，能基于本地候选池生成 Markdown 答案。
 - 新增 LLM 耗时查询页面后，`scripts/check.sh` 已重新通过，当前 35 个单元测试通过。
+- 新增 PushPlus 好友推送、股价提醒和交易日去重提醒后，`ruff check app tests` 通过，`pytest` 40 个单元测试通过，`npm run build` 通过。
 - 敏感信息扫描：只发现文档中的 `<local-only>` 占位符，未发现真实 Token、密码或 API Key。
 
 ## 待验证事项

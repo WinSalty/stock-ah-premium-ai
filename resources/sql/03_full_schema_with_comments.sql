@@ -224,6 +224,10 @@ CREATE TABLE IF NOT EXISTS `watchlist_stock` (
   `display_name` VARCHAR(128) DEFAULT NULL COMMENT '用户自定义展示名',
   `preferred_direction` VARCHAR(8) NOT NULL DEFAULT 'HA' COMMENT '关注方向，AH 或 HA',
   `target_premium_pct` DECIMAL(20,8) DEFAULT NULL COMMENT '目标溢价或折价阈值，单位百分比',
+  `price_alert_enabled` TINYINT(1) NOT NULL DEFAULT 0 COMMENT '是否启用股价提醒',
+  `price_alert_market` VARCHAR(8) NOT NULL DEFAULT 'UNKNOWN' COMMENT '股价提醒市场，A、H 或 UNKNOWN',
+  `price_alert_operator` VARCHAR(8) NOT NULL DEFAULT 'GTE' COMMENT '股价提醒触发方向，GTE 大于等于，LTE 小于等于',
+  `price_alert_target_price` DECIMAL(20,6) DEFAULT NULL COMMENT '股价提醒目标价格',
   `holding_market` VARCHAR(16) NOT NULL DEFAULT 'UNKNOWN' COMMENT '当前持有侧，A、H 或 UNKNOWN',
   `sort_order` INT NOT NULL DEFAULT 1000 COMMENT '自选展示排序',
   `note` TEXT DEFAULT NULL COMMENT '用户备注',
@@ -234,6 +238,59 @@ CREATE TABLE IF NOT EXISTS `watchlist_stock` (
   UNIQUE KEY `uk_watchlist_user_pair` (`user_id`, `a_ts_code`, `hk_ts_code`),
   KEY `idx_watchlist_active_order` (`is_active`, `sort_order`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='用户自选 AH 股票表';
+
+CREATE TABLE IF NOT EXISTS `pushplus_binding` (
+  `id` INT NOT NULL AUTO_INCREMENT COMMENT '自增主键',
+  `user_id` INT NOT NULL COMMENT '所属用户 ID',
+  `friend_id` INT NOT NULL COMMENT 'PushPlus 好友 ID',
+  `friend_token` VARCHAR(128) NOT NULL COMMENT 'PushPlus 好友令牌，仅后端发送使用',
+  `friend_nick_name` VARCHAR(128) DEFAULT NULL COMMENT 'PushPlus 好友昵称',
+  `friend_remark` VARCHAR(128) DEFAULT NULL COMMENT 'PushPlus 好友备注',
+  `is_follow` TINYINT(1) NOT NULL DEFAULT 1 COMMENT '是否关注 PushPlus 微信公众号',
+  `is_active` TINYINT(1) NOT NULL DEFAULT 1 COMMENT '绑定是否启用',
+  `bound_at` DATETIME NOT NULL COMMENT '绑定时间',
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '记录创建时间',
+  `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '记录更新时间',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_pushplus_binding_user` (`user_id`),
+  KEY `idx_pushplus_binding_active` (`is_active`),
+  CONSTRAINT `fk_pushplus_binding_user`
+    FOREIGN KEY (`user_id`) REFERENCES `app_user` (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='PushPlus 好友绑定表';
+
+CREATE TABLE IF NOT EXISTS `alert_event` (
+  `id` INT NOT NULL AUTO_INCREMENT COMMENT '自增主键',
+  `user_id` INT NOT NULL COMMENT '所属用户 ID',
+  `watchlist_id` INT DEFAULT NULL COMMENT '触发提醒的自选股 ID',
+  `event_type` VARCHAR(32) NOT NULL COMMENT '提醒类型，如 THRESHOLD_REACHED、PRICE_REACHED',
+  `trading_day` DATE NOT NULL COMMENT '提醒所属交易日',
+  `metric_direction` VARCHAR(8) DEFAULT NULL COMMENT '溢价提醒方向，AH 或 HA',
+  `metric_premium_pct` DECIMAL(20,8) DEFAULT NULL COMMENT '触发时溢价指标',
+  `target_premium_pct` DECIMAL(20,8) DEFAULT NULL COMMENT '用户设置的溢价目标阈值',
+  `price_alert_market` VARCHAR(8) DEFAULT NULL COMMENT '股价提醒市场，A 或 H',
+  `price_alert_operator` VARCHAR(8) DEFAULT NULL COMMENT '股价提醒触发方向，GTE 或 LTE',
+  `price_alert_ts_code` VARCHAR(16) DEFAULT NULL COMMENT '股价提醒证券代码',
+  `last_price` DECIMAL(20,6) DEFAULT NULL COMMENT '触发时价格',
+  `target_price` DECIMAL(20,6) DEFAULT NULL COMMENT '用户设置的目标价格',
+  `message_title` VARCHAR(128) NOT NULL COMMENT '推送标题',
+  `message_content` TEXT NOT NULL COMMENT '推送内容',
+  `push_channel` VARCHAR(32) NOT NULL DEFAULT 'PUSHPLUS' COMMENT '推送渠道',
+  `push_status` VARCHAR(16) NOT NULL DEFAULT 'PENDING' COMMENT '推送状态',
+  `push_message_id` VARCHAR(128) DEFAULT NULL COMMENT 'PushPlus 消息流水号',
+  `error_message` TEXT DEFAULT NULL COMMENT '失败错误信息',
+  `dedupe_key` VARCHAR(255) NOT NULL COMMENT '同一交易日提醒去重键',
+  `sent_at` DATETIME DEFAULT NULL COMMENT '发送时间',
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '记录创建时间',
+  `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '记录更新时间',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_alert_event_dedupe` (`dedupe_key`),
+  KEY `idx_alert_event_user_day` (`user_id`, `trading_day`),
+  KEY `idx_alert_event_watchlist` (`watchlist_id`),
+  CONSTRAINT `fk_alert_event_user`
+    FOREIGN KEY (`user_id`) REFERENCES `app_user` (`id`),
+  CONSTRAINT `fk_alert_event_watchlist`
+    FOREIGN KEY (`watchlist_id`) REFERENCES `watchlist_stock` (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='提醒事件与推送记录表';
 
 CREATE TABLE IF NOT EXISTS `stock_selection_factor_snapshot` (
   `id` INT NOT NULL AUTO_INCREMENT COMMENT '自增主键',

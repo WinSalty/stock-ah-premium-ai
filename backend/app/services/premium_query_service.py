@@ -390,6 +390,10 @@ class PremiumQueryService:
             watchlist_display_name=watchlist.display_name if watchlist else None,
             preferred_direction=watchlist.preferred_direction if watchlist else None,
             target_premium_pct=target,
+            price_alert_enabled=watchlist.price_alert_enabled if watchlist else None,
+            price_alert_market=watchlist.price_alert_market if watchlist else None,
+            price_alert_operator=watchlist.price_alert_operator if watchlist else None,
+            price_alert_target_price=watchlist.price_alert_target_price if watchlist else None,
             holding_market=watchlist.holding_market if watchlist else None,
             distance_to_target_pct=distance,
             opportunity_status=self._opportunity_status(

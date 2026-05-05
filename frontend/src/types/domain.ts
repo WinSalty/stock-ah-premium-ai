@@ -182,6 +182,10 @@ export interface PremiumItem {
   watchlist_display_name: string | null;
   preferred_direction: PremiumDirection | null;
   target_premium_pct: string | null;
+  price_alert_enabled: boolean | null;
+  price_alert_market: PriceAlertMarket | string | null;
+  price_alert_operator: PriceAlertOperator | string | null;
+  price_alert_target_price: string | null;
   holding_market: HoldingMarket | string | null;
   distance_to_target_pct: string | null;
   opportunity_status: OpportunityStatus | string | null;
@@ -330,11 +334,16 @@ export type OpportunityStatus = 'REACHED' | 'NEAR' | 'WATCH' | 'DATA_ISSUE' | 'N
 
 export interface WatchlistStock {
   id: number;
+  user_id: number;
   a_ts_code: string;
   hk_ts_code: string;
   display_name: string | null;
   preferred_direction: PremiumDirection;
   target_premium_pct: string | null;
+  price_alert_enabled: boolean;
+  price_alert_market: PriceAlertMarket | string;
+  price_alert_operator: PriceAlertOperator | string;
+  price_alert_target_price: string | null;
   holding_market: HoldingMarket | string;
   sort_order: number;
   note: string | null;
@@ -354,6 +363,10 @@ export interface WatchlistCreate {
   display_name?: string;
   preferred_direction?: PremiumDirection;
   target_premium_pct?: string | number;
+  price_alert_enabled?: boolean;
+  price_alert_market?: PriceAlertMarket;
+  price_alert_operator?: PriceAlertOperator;
+  price_alert_target_price?: string | number | null;
   holding_market?: HoldingMarket;
   sort_order?: number;
   note?: string;
@@ -364,8 +377,77 @@ export interface WatchlistUpdate {
   display_name?: string | null;
   preferred_direction?: PremiumDirection;
   target_premium_pct?: string | number | null;
+  price_alert_enabled?: boolean | null;
+  price_alert_market?: PriceAlertMarket | null;
+  price_alert_operator?: PriceAlertOperator | null;
+  price_alert_target_price?: string | number | null;
   holding_market?: HoldingMarket;
   sort_order?: number;
   note?: string | null;
   is_active?: boolean;
+}
+
+export type PriceAlertMarket = 'A' | 'H' | 'UNKNOWN';
+export type PriceAlertOperator = 'GTE' | 'LTE';
+
+export interface PushplusBinding {
+  is_bound: boolean;
+  friend_id: number | null;
+  friend_nick_name: string | null;
+  friend_remark: string | null;
+  is_follow: boolean | null;
+  bound_at: string | null;
+}
+
+export interface PushplusQrCodeRequest {
+  expire_seconds: number;
+  scan_count: number;
+}
+
+export interface PushplusQrCodeResponse {
+  qr_code_img_url: string;
+}
+
+export interface PushplusFriend {
+  id: number;
+  friend_id: number;
+  nick_name: string | null;
+  remark: string | null;
+  is_follow: boolean;
+  create_time: string | null;
+}
+
+export interface PushplusBindRequest {
+  friend_id: number;
+}
+
+export interface TestPushRequest {
+  title?: string;
+  content?: string;
+}
+
+export interface TestPushResponse {
+  ok: boolean;
+  message_id: string | null;
+}
+
+export interface AlertEvent {
+  id: number;
+  user_id: number;
+  watchlist_id: number | null;
+  event_type: string;
+  trading_day: string;
+  metric_direction: PremiumDirection | string | null;
+  metric_premium_pct: string | null;
+  target_premium_pct: string | null;
+  price_alert_market: PriceAlertMarket | string | null;
+  price_alert_operator: PriceAlertOperator | string | null;
+  price_alert_ts_code: string | null;
+  last_price: string | null;
+  target_price: string | null;
+  message_title: string;
+  push_status: string;
+  sent_at: string | null;
+  created_at: string;
+  updated_at: string;
 }

@@ -565,6 +565,41 @@ body {
   justify-content: flex-end;
 }
 
+.profile-notification-panel {
+  margin-top: 16px;
+}
+
+.pushplus-bind-grid {
+  display: grid;
+  grid-template-columns: minmax(240px, 320px) minmax(280px, 1fr);
+  gap: 18px;
+  margin-top: 16px;
+}
+
+.pushplus-qr-pane,
+.pushplus-friend-pane {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  min-width: 0;
+}
+
+.pushplus-qr-image {
+  border: 1px solid #e5ebf3;
+  border-radius: 8px;
+}
+
+.pushplus-friend-control {
+  width: 100%;
+}
+
+.watchlist-price-alert-grid {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr);
+  gap: 12px;
+  align-items: end;
+}
+
 .sync-batch-grid {
   display: grid;
   grid-template-columns: minmax(180px, 220px) minmax(260px, 360px) auto;
@@ -1235,6 +1270,11 @@ body {
   .llm-metric-filter-grid,
   .premium-filter-grid {
     grid-template-columns: repeat(2, minmax(160px, 1fr));
+  }
+
+  .pushplus-bind-grid,
+  .watchlist-price-alert-grid {
+    grid-template-columns: 1fr;
   }
 
   .metrics-summary-grid {
