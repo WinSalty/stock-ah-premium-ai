@@ -298,7 +298,7 @@ export interface ChatMessageResponse {
   rows: Record<string, unknown>[];
 }
 
-export type ChatModel = 'deepseek-v4-flash' | 'deepseek-v4-pro' | 'qwen3.6-max-preview';
+export type ChatModel = 'deepseek-v4-flash' | 'deepseek-v4-pro' | 'qwen3.6-flash';
 
 export interface ImportResponse {
   imported_rows: number;

@@ -33,7 +33,6 @@ const phaseOptions = [
 
 const modelOptions = [
   'qwen3.6-flash',
-  'qwen3.6-max-preview',
   'deepseek-v4-flash',
   'deepseek-v4-pro'
 ].map((item) => ({ label: item, value: item }));
