@@ -104,6 +104,43 @@ def test_investment_advisor_prompt_allows_professional_opinions() -> None:
     assert "不要输出“不构成投资建议”" in INVESTMENT_ADVISOR_SYSTEM_PROMPT
 
 
+def test_clear_investment_question_skips_classifier_llm(monkeypatch) -> None:
+    """确认明显投资问题不再调用分类 LLM。
+
+    创建日期：2026-05-05
+    author: sunshengxian
+    """
+
+    service = LlmService(
+        Mock(),
+        settings=Settings(llm_api_key="test-key", llm_api_key_file=None, llm_model="test-model"),
+    )
+
+    def fail_completion(*args: object, **kwargs: object) -> str:
+        raise AssertionError("不应调用分类 LLM")
+
+    monkeypatch.setattr(service, "_chat_completion", fail_completion)
+
+    assert service._is_investment_related_question("招商银行现在估值怎么看") is True
+
+
+def test_report_analysis_question_skips_data_query() -> None:
+    """确认报告分析类问题优先走知识材料，不触发 SQL 生成。
+
+    创建日期：2026-05-05
+    author: sunshengxian
+    """
+
+    service = LlmService(
+        Mock(),
+        settings=Settings(llm_api_key="test-key", llm_api_key_file=None, llm_model="test-model"),
+    )
+
+    question = "寒武纪深度价值投资报告的核心买点和反证条件是什么？"
+
+    assert service._should_query_data(question, {}) is False
+
+
 def test_investment_knowledge_selects_stock_factor_category() -> None:
     """确认选股类问题命中因子文档。
 
@@ -330,8 +367,8 @@ def test_qwen_chat_model_uses_qwen_endpoint(monkeypatch) -> None:
     assert captured["payload"]["model"] == "qwen3.6-max-preview"
 
 
-def test_question_scope_uses_qwen_flash_classifier(monkeypatch) -> None:
-    """确认投资问题边界由 Qwen 3.5 Flash 判定，不再依赖关键词命中。
+def test_uncertain_question_scope_uses_qwen_flash_classifier(monkeypatch) -> None:
+    """确认本地规则不确定时才使用 Qwen 3.5 Flash 分类。
 
     创建日期：2026-05-04
     author: sunshengxian
@@ -373,12 +410,12 @@ def test_question_scope_uses_qwen_flash_classifier(monkeypatch) -> None:
         ),
     )
 
-    assert service._is_investment_related_question("帮我判断这家公司还能不能继续持有")
+    assert service._is_investment_related_question("这件事是否值得继续推进")
     assert captured_payload["model"] == "qwen3.5-flash"
 
 
-def test_service_intro_question_uses_qwen_classifier_and_returns_role_intro(monkeypatch) -> None:
-    """确认问候和能力介绍类问题可回答，且边界判定仍走 Qwen Flash。
+def test_service_intro_question_skips_classifier_and_returns_role_intro(monkeypatch) -> None:
+    """确认问候和能力介绍类问题本地放行，不等待分类 LLM。
 
     创建日期：2026-05-04
     author: sunshengxian
@@ -412,7 +449,7 @@ def test_service_intro_question_uses_qwen_classifier_and_returns_role_intro(monk
 
     assert answer.answer == SERVICE_INTRO_MESSAGE
     assert answer.rows == []
-    assert captured_models == ["qwen3.5-flash"]
+    assert captured_models == []
 
 
 def test_out_of_scope_message_is_soft_and_actionable() -> None:

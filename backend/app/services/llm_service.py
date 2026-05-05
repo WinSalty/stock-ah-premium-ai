@@ -23,6 +23,8 @@ logger = logging.getLogger(__name__)
 LLM_CHAT_TIMEOUT_SECONDS = 90.0
 LLM_STREAM_TIMEOUT_SECONDS = 240.0
 DEFAULT_CHAT_MODEL = "deepseek-v4-flash"
+ANSWER_MARKET_ROW_LIMIT = 60
+ANSWER_KNOWLEDGE_CHUNK_LIMIT = 5
 DEEPSEEK_PRO_CHAT_MODEL = "deepseek-v4-pro"
 QWEN_CHAT_MODEL = "qwen3.6-max-preview"
 SUPPORTED_CHAT_MODELS = (DEFAULT_CHAT_MODEL, DEEPSEEK_PRO_CHAT_MODEL, QWEN_CHAT_MODEL)
@@ -183,6 +185,44 @@ DATA_INTENT_KEYWORDS = (
     "溢价",
     "折价",
     "价差",
+)
+REPORT_ANALYSIS_KEYWORDS = (
+    "报告",
+    "投资逻辑",
+    "买点",
+    "反证",
+    "验证点",
+    "风险",
+    "跟踪指标",
+    "核心假设",
+    "长期投资价值",
+)
+REALTIME_DATA_KEYWORDS = (
+    "最新",
+    "当前",
+    "今日",
+    "今天",
+    "最近一个交易日",
+    "股价",
+    "收盘",
+    "行情",
+    "列表",
+    "排名",
+    "筛选",
+)
+NON_INVESTMENT_KEYWORDS = (
+    "写诗",
+    "诗",
+    "诗歌",
+    "作文",
+    "菜谱",
+    "天气",
+    "旅游",
+    "电影",
+    "游戏",
+    "代码",
+    "编程",
+    "bug",
 )
 
 
@@ -533,7 +573,11 @@ class LlmService:
         context: dict[str, Any],
     ) -> str:
         history = self._conversation_history(context)
-        knowledge = self.knowledge_service.select(question, history=history)
+        knowledge = self.knowledge_service.select(
+            question,
+            history=history,
+            max_total_chunks=ANSWER_KNOWLEDGE_CHUNK_LIMIT,
+        )
         filters = {
             key: value
             for key, value in context.items()
@@ -543,7 +587,7 @@ class LlmService:
             "user_question": question,
             "conversation_history": history[-8:],
             "filters": filters,
-            "market_observations": rows[:200],
+            "market_observations": rows[:ANSWER_MARKET_ROW_LIMIT],
             "supplemental_market_observations": self._supporting_data(question, context),
             "knowledge_categories": knowledge.categories,
             "reference_materials": knowledge.chunks,
@@ -1156,6 +1200,9 @@ class LlmService:
     ) -> bool:
         if not question.strip():
             return False
+        local_scope = self._local_question_scope(question)
+        if local_scope is not None:
+            return local_scope
         try:
             content = self._chat_completion(
                 question.strip()[:1000],
@@ -1174,6 +1221,22 @@ class LlmService:
         except (ValueError, KeyError, TypeError, json.JSONDecodeError, httpx.HTTPError):
             logger.error("Qwen 投资问题边界判定失败", exc_info=True)
             return False
+
+    def _local_question_scope(self, question: str) -> bool | None:
+        """先用本地规则判断明显问题，减少问答前置 LLM 调用。
+
+        创建日期：2026-05-05
+        author: sunshengxian
+        """
+
+        normalized = question.lower().replace(" ", "").replace("／", "/")
+        if self._is_service_intro_question(question):
+            return True
+        if any(keyword in normalized for keyword in INVESTMENT_KEYWORDS):
+            return True
+        if any(keyword in normalized for keyword in NON_INVESTMENT_KEYWORDS):
+            return False
+        return None
 
     def _is_service_intro_question(self, question: str) -> bool:
         """识别问候、角色身份和能力介绍类问题。
@@ -1209,9 +1272,26 @@ class LlmService:
         if any(context.get(key) for key in ("start_date", "end_date", "ts_code", "only_watchlist")):
             return True
         normalized = question.lower().replace(" ", "")
+        if self._is_report_analysis_question(normalized):
+            return False
         if re.search(r"\b\d{6}\.(sh|sz)\b|\b\d{5}\.hk\b", normalized):
             return True
         return any(keyword in normalized for keyword in DATA_INTENT_KEYWORDS)
+
+    def _is_report_analysis_question(self, normalized_question: str) -> bool:
+        """识别偏报告/框架的问题，避免无意义 SQL 生成。
+
+        创建日期：2026-05-05
+        author: sunshengxian
+        """
+
+        has_report_signal = any(
+            keyword in normalized_question for keyword in REPORT_ANALYSIS_KEYWORDS
+        )
+        has_realtime_signal = any(
+            keyword in normalized_question for keyword in REALTIME_DATA_KEYWORDS
+        )
+        return has_report_signal and not has_realtime_signal
 
     def _should_query_supporting_data(self, question: str) -> bool:
         normalized = question.lower()

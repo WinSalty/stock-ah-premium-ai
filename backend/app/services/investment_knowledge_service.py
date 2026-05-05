@@ -4,6 +4,7 @@ import re
 import zipfile
 from collections.abc import Iterable
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
@@ -300,7 +301,7 @@ class InvestmentKnowledgeService:
         path = self.doc_root / document
         if not path.exists():
             return []
-        content = self._read_document_text(path)
+        content = self._cached_document_text(str(path))
         chunks = self._split_document_chunks(path, content)
         document_title = self._document_title(path, content)
         return [
@@ -320,7 +321,31 @@ class InvestmentKnowledgeService:
             return self._read_docx_text(path)
         return ""
 
+    @staticmethod
+    @lru_cache(maxsize=64)
+    def _cached_document_text(path_value: str) -> str:
+        """缓存投研材料文本，避免每轮问答重复解压 DOCX。
+
+        创建日期：2026-05-05
+        author: sunshengxian
+        """
+
+        return InvestmentKnowledgeService._read_document_text_uncached(Path(path_value))
+
+    @staticmethod
+    def _read_document_text_uncached(path: Path) -> str:
+        suffix = path.suffix.lower()
+        if suffix == ".md":
+            return path.read_text(encoding="utf-8")
+        if suffix == ".docx":
+            return InvestmentKnowledgeService._read_docx_text_static(path)
+        return ""
+
     def _read_docx_text(self, path: Path) -> str:
+        return self._read_docx_text_static(path)
+
+    @staticmethod
+    def _read_docx_text_static(path: Path) -> str:
         """从 docx 主文档中抽取段落和表格文本。
 
         创建日期：2026-05-04
@@ -335,23 +360,24 @@ class InvestmentKnowledgeService:
             return ""
         lines: list[str] = []
         for child in body:
-            tag = self._xml_tag_name(child)
+            tag = InvestmentKnowledgeService._xml_tag_name(child)
             if tag == "p":
-                text = self._word_text(child)
+                text = InvestmentKnowledgeService._word_text(child)
                 if text:
                     lines.append(text)
             elif tag == "tbl":
-                lines.extend(self._word_table_rows(child))
+                lines.extend(InvestmentKnowledgeService._word_table_rows(child))
         return "\n".join(lines)
 
-    def _word_table_rows(self, table: ET.Element) -> list[str]:
+    @staticmethod
+    def _word_table_rows(table: ET.Element) -> list[str]:
         rows: list[str] = []
         for row in table.findall("w:tr", WORD_NS):
             cells = [
                 " ".join(
                     paragraph_text
                     for paragraph in cell.findall(".//w:p", WORD_NS)
-                    if (paragraph_text := self._word_text(paragraph))
+                    if (paragraph_text := InvestmentKnowledgeService._word_text(paragraph))
                 )
                 for cell in row.findall("w:tc", WORD_NS)
             ]
@@ -360,10 +386,12 @@ class InvestmentKnowledgeService:
                 rows.append(row_text)
         return rows
 
-    def _word_text(self, element: ET.Element) -> str:
+    @staticmethod
+    def _word_text(element: ET.Element) -> str:
         return "".join(text.text or "" for text in element.findall(".//w:t", WORD_NS)).strip()
 
-    def _xml_tag_name(self, element: ET.Element) -> str:
+    @staticmethod
+    def _xml_tag_name(element: ET.Element) -> str:
         return element.tag.rsplit("}", 1)[-1]
 
     def _split_document_chunks(self, path: Path, content: str) -> list[str]:

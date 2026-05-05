@@ -29,6 +29,7 @@ interface ChatTurn {
   question: string;
   response?: ChatMessageResponse;
   streaming?: boolean;
+  progressText?: string;
 }
 
 const LAST_SESSION_KEY = 'stock-ah-premium-ai:last-chat-session';
@@ -134,6 +135,12 @@ const markdownComponents: Components = {
 };
 
 const PRESET_QUESTION_COUNT = 4;
+const CHAT_PROGRESS_STEPS = [
+  '正在理解你的问题...',
+  '正在整理相关信息...',
+  '正在形成分析框架...',
+  '正在组织回答...'
+];
 const DEFAULT_CHAT_MODEL: ChatModel = 'deepseek-v4-flash';
 const CHAT_MODEL_OPTIONS: { label: string; value: ChatModel }[] = [
   { label: 'DeepSeek Flash', value: 'deepseek-v4-flash' },
@@ -317,6 +324,8 @@ function ChatPage() {
       return;
     }
     const turnId = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    let progressIndex = 0;
+    let progressTimer: ReturnType<typeof window.setInterval> | null = null;
     setIsSending(true);
     form.setFieldValue('question', '');
     setTurns((items) => [
@@ -325,10 +334,15 @@ function ChatPage() {
         id: turnId,
         question,
         response: { answer: '', rows: [] },
-        streaming: true
+        streaming: true,
+        progressText: CHAT_PROGRESS_STEPS[0]
       }
     ]);
     try {
+      progressTimer = window.setInterval(() => {
+        progressIndex = Math.min(progressIndex + 1, CHAT_PROGRESS_STEPS.length - 1);
+        updateTurn(turnId, { progressText: CHAT_PROGRESS_STEPS[progressIndex] });
+      }, 2600);
       const currentSession = session || (await createChatSession());
       if (!session) {
         setSession(currentSession);
@@ -338,17 +352,24 @@ function ChatPage() {
         currentSession.id,
         { question, llm_model: selectedModel },
         {
-          onMeta: (event) => updateTurnResponse(turnId, { rows: event.rows || [] }),
+          onMeta: (event) => {
+            updateTurn(turnId, { progressText: '正在生成分析...' });
+            updateTurnResponse(turnId, { rows: event.rows || [] });
+          },
           onDelta: (content) =>
             setTurns((items) =>
               items.map((item) =>
                 item.id === turnId && item.response
-                  ? { ...item, response: { ...item.response, answer: `${item.response.answer}${content}` } }
+                  ? {
+                      ...item,
+                      progressText: '',
+                      response: { ...item.response, answer: `${item.response.answer}${content}` }
+                    }
                   : item
               )
             ),
           onDone: (event) => {
-            updateTurn(turnId, { streaming: false });
+            updateTurn(turnId, { streaming: false, progressText: '' });
             updateTurnResponse(turnId, {
               answer: event.answer || '',
               rows: event.rows || []
@@ -356,7 +377,7 @@ function ChatPage() {
             void refreshSessions(currentSession.id);
           },
           onError: (event) => {
-            updateTurn(turnId, { streaming: false });
+            updateTurn(turnId, { streaming: false, progressText: '' });
             updateTurnResponse(turnId, {
               answer: event.answer || '问答失败，请稍后再试。',
               rows: event.rows || []
@@ -368,10 +389,13 @@ function ChatPage() {
       );
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : '问答失败';
-      updateTurn(turnId, { streaming: false });
+      updateTurn(turnId, { streaming: false, progressText: '' });
       updateTurnResponse(turnId, { answer: errorMessage });
       message.error(errorMessage);
     } finally {
+      if (progressTimer !== null) {
+        window.clearInterval(progressTimer);
+      }
       setIsSending(false);
     }
   };
@@ -459,8 +483,11 @@ function ChatPage() {
                           remarkPlugins={[remarkGfm]}
                           components={markdownComponents}
                         >
-                          {turn.response?.answer || (turn.streaming ? '正在分析...' : '')}
+                          {turn.response?.answer || ''}
                         </ReactMarkdown>
+                        {turn.streaming && !turn.response?.answer ? (
+                          <div className="chat-progress-note">{turn.progressText || '正在分析...'}</div>
+                        ) : null}
                         {turn.streaming ? <span className="stream-caret" /> : null}
                       </div>
                       <ChatDataSummary rows={turn.response?.rows || []} />

@@ -1249,6 +1249,32 @@ body {
   animation: caret-blink 1s steps(2, start) infinite;
 }
 
+.chat-progress-note {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: #475569;
+  font-size: 14px;
+  line-height: 1.7;
+}
+
+.chat-progress-note::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #0f766e;
+  box-shadow: 14px 0 0 rgba(15, 118, 110, 0.42), 28px 0 0 rgba(15, 118, 110, 0.2);
+  animation: progress-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes progress-pulse {
+  50% {
+    opacity: 0.45;
+    transform: translateY(-1px);
+  }
+}
+
 @keyframes caret-blink {
   50% {
     opacity: 0;
