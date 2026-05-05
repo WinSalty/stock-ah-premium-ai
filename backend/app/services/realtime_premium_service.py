@@ -27,6 +27,7 @@ PARTIAL_QUALITY = "PARTIAL"
 UNAVAILABLE_QUALITY = "UNAVAILABLE"
 STALE_QUALITY = "STALE"
 ERROR_QUALITY = "ERROR"
+OFFICIAL_AH_COMPARISON_SCALE = "0.01"
 
 
 class RealtimePremiumService:
@@ -214,7 +215,10 @@ class RealtimePremiumService:
         if ah_ratio is None or ah_ratio == 0:
             return None, None, None, None
         ah_premium_pct = quantize_decimal((ah_ratio - Decimal("1")) * Decimal("100"))
-        ha_ratio = quantize_decimal(Decimal("1") / ah_ratio)
+        official_ah_comparison = quantize_decimal(ah_ratio, OFFICIAL_AH_COMPARISON_SCALE)
+        if official_ah_comparison is None or official_ah_comparison == 0:
+            return ah_ratio, ah_premium_pct, None, None
+        ha_ratio = quantize_decimal(Decimal("1") / official_ah_comparison)
         ha_premium_pct = (
             quantize_decimal((ha_ratio - Decimal("1")) * Decimal("100"))
             if ha_ratio is not None

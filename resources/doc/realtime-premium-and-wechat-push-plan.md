@@ -31,9 +31,11 @@ author: sunshengxian
 A/H 比价 = A股价格(CNY) / (H股价格(HKD) * HKD/CNY)
 A/H 溢价率 = (A/H 比价 - 1) * 100
 
-H/A 比价 = (H股价格(HKD) * HKD/CNY) / A股价格(CNY)
+H/A 比价 = 1 / 官方口径 A/H 比价
 H/A 溢价率 = (H/A 比价 - 1) * 100
 ```
+
+为与 Tushare 官方 AH 比价表保持一致，实时层 H/A 方向按官方 `ah_comparison` 口径反推：先将实时 A/H 比价归整到两位小数，再计算 `1 / rounded_ah_comparison`。A/H 溢价仍使用实时 A/H 比价自身计算。
 
 实时字段应至少包含：
 

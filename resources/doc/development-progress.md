@@ -185,6 +185,7 @@
 - 新增实时行情抽象接口首版落地，创建 `realtime_quote_snapshot` 表、数据库行情 provider、实时 AH/H/A 溢价计算服务和 `GET /api/ah-premiums/realtime` 读取接口；`alembic upgrade head` 已应用 `20260505_0016`，`./scripts/check.sh` 通过。
 - `water-stock` 已在 `master` 最新代码上补充 stock-ah 实时喂数模块：独立连接 `stock_ah_ai`，按 A/H 共同交易日、港股收盘口径交易时段和用户自选股每秒写入 `realtime_quote_snapshot`，并用非重入调度避免上一轮未完成时并发抓取；接口请求前将 stock-ah 的 Tushare 风格代码转换为 water-stock/Baidu 使用的纯数字代码。
 - 自选股提醒已改为实时快照触发，交易时间默认每秒扫描一次；`backend/.venv/bin/python -m pytest backend/tests/test_notification_service.py -q` 和针对变更文件的 `ruff check` 通过。
+- 实时 H/A 溢价改为按官方 `ah_comparison` 两位小数口径反推，避免 H/A 阈值判断与官方表存在精确公式口径偏差。
 - 敏感信息扫描：只发现文档中的 `<local-only>` 占位符，未发现真实 Token、密码或 API Key。
 
 ## 待验证事项

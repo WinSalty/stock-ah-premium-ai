@@ -78,6 +78,8 @@ def test_realtime_premium_service_calculates_from_quote_snapshot_table() -> None
     assert item.quote_quality == "REALTIME"
     assert item.ah_ratio == Decimal("1.35869565")
     assert item.ah_premium_pct == Decimal("35.86956500")
+    assert item.ha_ratio == Decimal("0.73529412")
+    assert item.ha_premium_pct == Decimal("-26.47058800")
     assert item.metric_direction == "AH"
     assert item.opportunity_status == "TRIGGERED"
     assert item.distance_to_target_pct == Decimal("-0.86956500")
