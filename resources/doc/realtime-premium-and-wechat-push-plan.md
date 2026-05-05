@@ -189,7 +189,7 @@ GET /api/ah-premiums/realtime
 - 港币兑人民币：`market='FX'`，`symbol='HKD/CNY'`，`currency='CNY'`。
 - `quality` 可填 `REALTIME`、`DELAYED`、`STALE`、`ERROR`、`UNAVAILABLE`。
 - 同一标的可保留多条快照，系统按 `quote_time desc, id desc` 读取最新的 `is_active=1` 记录。
-- `water-stock` 已新增本地实时喂数模块：通过独立 `stock-ah.datasource` 连接 `stock_ah_ai`，读取 `a_trade_calendar`、`hk_trade_calendar` 和 `watchlist_stock`，仅在 A/H 共同交易日且 `stock-ah.realtime.trade-time-ranges` 内，每秒抓取一次用户自选 AH 标的和 `HKD/CNY`，写入 `realtime_quote_snapshot`。调度使用非重入保护，上一轮未完成时跳过本轮。
+- `water-stock` 已新增本地实时喂数模块：通过独立 `stock-ah.datasource` 连接 `stock_ah_ai`，读取 `a_trade_calendar`、`hk_trade_calendar` 和 `watchlist_stock`，仅在 A/H 共同交易日且 `stock-ah.realtime.trade-time-ranges` 内，每秒抓取一次用户自选 AH 标的和 `HKD/CNY`，写入 `realtime_quote_snapshot`。交易时间默认按港股结束时间覆盖 `09:30-12:00`、`13:00-16:00`；调度使用非重入保护，上一轮未完成时跳过本轮。调 Baidu 接口前会把 `600036.SH`、`000333.SZ`、`03968.HK` 转为 water-stock 使用的纯数字编号，其中港股保留 5 位补零。
 
 ### 5.1 新增实时行情快照表
 

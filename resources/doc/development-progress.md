@@ -181,7 +181,7 @@
 - 增强启动、停止和重启脚本后，`bash -n scripts/*.sh` 通过；已分别用 `BACKEND_PORT=18000`、`FRONTEND_PORT=15173` 验证启动诊断、整项目重启和停止诊断，并确认后端 `/api/health` 返回正常。
 - 新增 LLM 项目级日调用限流，默认 `LLM_DAILY_CALL_LIMIT=100`，按 `llm_call_metric` 中外部模型主调用 phase 统计，不计首包、SQL 执行和总耗时等辅助指标。
 - 新增实时行情抽象接口首版落地，创建 `realtime_quote_snapshot` 表、数据库行情 provider、实时 AH/H/A 溢价计算服务和 `GET /api/ah-premiums/realtime` 读取接口；`alembic upgrade head` 已应用 `20260505_0016`，`./scripts/check.sh` 通过。
-- `water-stock` 已在 `master` 最新代码上补充 stock-ah 实时喂数模块：独立连接 `stock_ah_ai`，按 A/H 共同交易日、交易时段和用户自选股每秒写入 `realtime_quote_snapshot`，并用非重入调度避免上一轮未完成时并发抓取。
+- `water-stock` 已在 `master` 最新代码上补充 stock-ah 实时喂数模块：独立连接 `stock_ah_ai`，按 A/H 共同交易日、港股收盘口径交易时段和用户自选股每秒写入 `realtime_quote_snapshot`，并用非重入调度避免上一轮未完成时并发抓取；接口请求前将 stock-ah 的 Tushare 风格代码转换为 water-stock/Baidu 使用的纯数字代码。
 - 敏感信息扫描：只发现文档中的 `<local-only>` 占位符，未发现真实 Token、密码或 API Key。
 
 ## 待验证事项
