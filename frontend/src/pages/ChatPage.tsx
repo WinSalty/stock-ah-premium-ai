@@ -2,7 +2,7 @@ import { Button, Form, Input, Popconfirm, Segmented, Skeleton, Spin, Table, mess
 import { Plus, SendHorizontal, Trash2 } from 'lucide-react';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import PageHeader from '../components/PageHeader';
 import OverflowCell from '../components/OverflowCell';
 import {
@@ -125,6 +125,15 @@ const CHAT_SUMMARY_COLUMN_WIDTHS: Record<string, number> = {
 };
 
 const markdownComponents: Components = {
+  p({ children }) {
+    const text = getTextContent(children).trim();
+    const heading = /^(#{1,6})\s+(.+)$/.exec(text);
+    if (heading) {
+      const HeadingTag = `h${Math.min(heading[1].length, 4)}` as 'h1' | 'h2' | 'h3' | 'h4';
+      return <HeadingTag>{heading[2]}</HeadingTag>;
+    }
+    return <p>{children}</p>;
+  },
   table({ children }) {
     return (
       <div className="markdown-table-wrap">
@@ -133,6 +142,16 @@ const markdownComponents: Components = {
     );
   }
 };
+
+function getTextContent(children: ReactNode): string {
+  if (typeof children === 'string' || typeof children === 'number') {
+    return String(children);
+  }
+  if (Array.isArray(children)) {
+    return children.map(getTextContent).join('');
+  }
+  return '';
+}
 
 /**
  * 兼容模型偶发输出的非标准 Markdown，例如标题缺少空格或标题与表格表头粘在一行。
