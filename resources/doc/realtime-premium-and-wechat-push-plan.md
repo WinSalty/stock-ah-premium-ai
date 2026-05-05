@@ -279,7 +279,7 @@ ALERT_COOLDOWN_MINUTES=30
 当前实现采用好友消息方案：
 
 - 个人信息页通过 PushPlus 开放接口 `getQrCode` 生成系统推送账号二维码；这个二维码归属管理员 PushPlus 账号，普通用户扫码后成为管理员 PushPlus 好友。
-- 二维码 `content` 只作为系统绑定票据，携带当前系统用户 ID 和后端签名；PushPlus 新增好友回调到后端后，系统校验签名并按该 ID 自动绑定应用用户与 PushPlus 好友令牌，不要求普通用户手动选择好友。
+- 二维码 `content` 只作为短格式系统绑定票据，携带当前系统用户 ID 和后端签名；PushPlus 新增好友回调到后端后，系统校验签名并按该 ID 自动绑定应用用户与 PushPlus 好友令牌，不要求普通用户手动选择好友。
 - 需要在 PushPlus 功能设置中配置回调地址到后端 `POST /api/notifications/pushplus/callback`，否则扫码后只能成为 PushPlus 好友，系统内不会自动落绑定关系。
 - 后端通过开放接口 `friend/list` 拉取好友列表，该能力仅对管理员开放，用于排查好友与绑定状态。
 - 真实推送仍调用 `/send`，使用 `to` 字段填写好友令牌；好友令牌仅存后端，不返回前端明文。

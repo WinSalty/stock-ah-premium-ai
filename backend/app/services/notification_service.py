@@ -568,23 +568,27 @@ class NotificationService:
         )
 
     def _parse_binding_ticket_user_id(self, content: str | None) -> int:
-        prefix = "stock-ah-premium-ai:binding:"
-        if not content or not content.startswith(prefix):
+        if not content:
             raise NotificationError("PushPlus 回调绑定票据无效")
-        if ":sig:" not in content:
+        parts = content.split(":")
+        if len(parts) != 3 or parts[0] != "sapai":
+            raise NotificationError("PushPlus 回调绑定票据无效")
+        _, user_part, signature = parts
+        if not signature:
             raise NotificationError("PushPlus 回调绑定票据签名缺失")
-        user_part, signature = content.split(":sig:", maxsplit=1)
         try:
-            user_id = int(user_part.removeprefix(prefix))
+            user_id = int(user_part)
         except ValueError as exc:
             raise NotificationError("PushPlus 回调绑定票据用户参数无效") from exc
+        if user_id <= 0:
+            raise NotificationError("PushPlus 回调绑定票据用户参数无效")
         expected = self._qr_signature(user_id)
         if not hmac.compare_digest(signature, expected):
             raise NotificationError("PushPlus 回调绑定票据签名无效")
         return user_id
 
     def _binding_ticket_for_user(self, user_id: int) -> str:
-        return f"stock-ah-premium-ai:binding:{user_id}:sig:{self._qr_signature(user_id)}"
+        return f"sapai:{user_id}:{self._qr_signature(user_id)}"
 
     def _qr_signature(self, user_id: int) -> str:
         digest = hmac.new(
@@ -592,7 +596,7 @@ class NotificationService:
             f"pushplus-binding:{user_id}".encode(),
             hashlib.sha256,
         ).hexdigest()
-        return digest[:24]
+        return digest[:16]
 
     def _normalize_optional_text(self, value: str | None) -> str | None:
         if value is None:

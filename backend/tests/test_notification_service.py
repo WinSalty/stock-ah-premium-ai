@@ -18,7 +18,11 @@ from app.db.models.market import (
 )
 from app.db.models.notification import AlertEvent, PushplusBinding
 from app.schemas.watchlist import WatchlistCreate
-from app.services.notification_service import EVENT_PRICE_REACHED, NotificationService
+from app.services.notification_service import (
+    EVENT_PRICE_REACHED,
+    NotificationError,
+    NotificationService,
+)
 from app.services.watchlist_service import WatchlistError, WatchlistService
 
 
@@ -168,19 +172,54 @@ def test_pushplus_callback_binds_user_from_qr_content() -> None:
         db.add(user)
         db.commit()
         db.refresh(user)
+        user_id = user.id
 
         service = NotificationService(db)
+        ticket = service._binding_ticket_for_user(user_id)
         binding = service.bind_pushplus_callback(
-            service._binding_ticket_for_user(user.id),
+            ticket,
             friend_id=2001,
             friend_token="callback-token",
             nick_name="扫码用户",
             is_follow=True,
         )
 
+    assert ticket.startswith(f"sapai:{user_id}:")
+    assert len(ticket) <= 32
     assert binding.is_bound is True
     assert binding.friend_id == 2001
     assert binding.friend_nick_name == "扫码用户"
+
+
+def test_pushplus_callback_rejects_invalid_qr_signature() -> None:
+    """确认 PushPlus 回调绑定票据签名必须匹配。
+
+    创建日期：2026-05-05
+    author: sunshengxian
+    """
+
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    with Session(engine) as db:
+        user = AppUser(username="bad-signature", password_hash="hash", role="USER", is_active=True)
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+
+        try:
+            NotificationService(db).bind_pushplus_callback(
+                f"sapai:{user.id}:bad-signature",
+                friend_id=2002,
+                friend_token="callback-token",
+                nick_name="扫码用户",
+                is_follow=True,
+            )
+        except NotificationError as exc:
+            error_message = str(exc)
+        else:
+            error_message = ""
+
+    assert "签名无效" in error_message
 
 
 def test_watchlist_alert_requires_pushplus_binding() -> None:
