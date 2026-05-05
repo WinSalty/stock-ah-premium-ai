@@ -139,6 +139,22 @@ def test_investment_knowledge_reads_docx_reports(tmp_path: Path) -> None:
     assert any("信任修复期" in chunk["content"] for chunk in selection.chunks)
 
 
+def test_investment_knowledge_selects_company_value_reports() -> None:
+    """确认新增公司价值投资报告会进入个股深度投资知识分类。
+
+    创建日期：2026-05-05
+    author: sunshengxian
+    """
+
+    selection = InvestmentKnowledgeService().select("寒武纪 688256 深度价值投资怎么看")
+
+    assert "个股深度投资报告" in selection.categories
+    assert any(
+        "寒武纪" in chunk["title"] or "寒武纪" in chunk["content"]
+        for chunk in selection.chunks
+    )
+
+
 def test_default_sql_uses_watchlist_and_correct_ha_discount_direction() -> None:
     """确认关注股票的 H/A 折价问题按 H 股折价方向排序。
 
