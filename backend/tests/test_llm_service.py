@@ -48,8 +48,8 @@ def test_llm_service_rejects_non_investment_question_before_api_call() -> None:
     assert answer.rows == []
 
 
-def test_llm_answer_prompt_loads_classified_investment_knowledge() -> None:
-    """确认问答提示词按投资主题加载分类文档。
+def test_llm_answer_prompt_loads_model_selected_investment_knowledge(monkeypatch) -> None:
+    """确认问答提示词按模型选择加载知识库分类。
 
     创建日期：2026-05-04
     author: sunshengxian
@@ -60,16 +60,69 @@ def test_llm_answer_prompt_loads_classified_investment_knowledge() -> None:
         settings=Settings(llm_api_key="test-key", llm_api_key_file=None, llm_model="test-model"),
     )
 
-    prompt = service._answer_prompt(
+    def fake_chat_completion(
+        prompt: str,
+        system_prompt: str | None = None,
+        model: str | None = None,
+        temperature: float = 0.1,
+        trace: LlmCallTrace | None = None,
+    ) -> str:
+        return '{"use_knowledge":true,"categories":["ah_premium"],"reason":"需要阈值框架"}'
+
+    monkeypatch.setattr(service, "_chat_completion", fake_chat_completion)
+
+    prompt = service._answer_prompt_for_trace(
         "A/H 溢价套利风险框架",
         rows=[],
         context={"conversation_history": [{"role": "user", "content": "先看港股通标的"}]},
+        model="test-model",
+        question_id="1234567",
+        user_id=1,
+        session_id=2,
     )
     payload = json.loads(prompt.split("\n", 1)[1])
 
     assert "A/H 溢价与跨市场价差" in payload["knowledge_categories"]
     assert payload["reference_materials"]
     assert "conversation_history" in payload
+
+
+def test_llm_answer_prompt_can_skip_investment_knowledge(monkeypatch) -> None:
+    """确认模型判断不需要知识库时不会塞参考材料。
+
+    创建日期：2026-05-05
+    author: sunshengxian
+    """
+
+    service = LlmService(
+        Mock(),
+        settings=Settings(llm_api_key="test-key", llm_api_key_file=None, llm_model="test-model"),
+    )
+
+    def fake_chat_completion(
+        prompt: str,
+        system_prompt: str | None = None,
+        model: str | None = None,
+        temperature: float = 0.1,
+        trace: LlmCallTrace | None = None,
+    ) -> str:
+        return '{"use_knowledge":false,"categories":[],"reason":"结构化数据已足够"}'
+
+    monkeypatch.setattr(service, "_chat_completion", fake_chat_completion)
+
+    prompt = service._answer_prompt_for_trace(
+        "我自选里哪些最接近阈值？",
+        rows=[{"display_name": "招商银行", "distance_to_target_pct": "0.5"}],
+        context={},
+        model="test-model",
+        question_id="1234568",
+        user_id=1,
+        session_id=2,
+    )
+    payload = json.loads(prompt.split("\n", 1)[1])
+
+    assert payload["knowledge_categories"] == []
+    assert payload["reference_materials"] == []
 
 
 def test_preamble_cleaner_removes_json_process_language() -> None:

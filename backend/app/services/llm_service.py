@@ -64,6 +64,14 @@ QUESTION_CLASSIFIER_SYSTEM_PROMPT = """你是投资问答边界分类器。
 只返回 JSON，不要输出解释。格式：{"is_investment_related":true或false}
 """
 
+KNOWLEDGE_ROUTER_SYSTEM_PROMPT = """你是投资问答知识库路由器。
+你只判断回答用户问题是否需要读取本地投研知识库，以及需要哪些分类。
+如果问题主要依赖当前结构化数据、简单排序、列表、数值查询或常识解释，不要读取知识库。
+如果问题需要投研框架、报告结论、反证条件、行业逻辑、阈值方法或组合风险表达，可以读取知识库。
+只返回 JSON，不要输出解释。格式：
+{"use_knowledge":true或false,"categories":["分类key"],"reason":"一句话原因"}
+"""
+
 OUT_OF_SCOPE_MESSAGE = (
     "我现在主要负责投资研究和本项目里的 A/H 溢价分析，这个问题暂时不太在我的工作范围里。"
     "你可以问我股票、行业、估值、A/H 溢价、港股通、自选股阈值、红利、组合配置或风险控制相关问题。"
@@ -522,7 +530,15 @@ class LlmService:
                 logger.error("LLM 数据查询准备失败，降级为无精确数据回答", exc_info=True)
                 sql = None
                 rows = []
-        return sql, rows, self._answer_prompt(question, rows, context)
+        return sql, rows, self._answer_prompt_for_trace(
+            question,
+            rows,
+            context,
+            model,
+            question_id,
+            user_id,
+            session_id,
+        )
 
     def _generate_sql(
         self,
@@ -573,10 +589,13 @@ class LlmService:
         context: dict[str, Any],
     ) -> str:
         history = self._conversation_history(context)
-        knowledge = self.knowledge_service.select(
+        knowledge = self._select_knowledge_for_answer(
             question,
-            history=history,
-            max_total_chunks=ANSWER_KNOWLEDGE_CHUNK_LIMIT,
+            history,
+            model=None,
+            question_id=None,
+            user_id=None,
+            session_id=None,
         )
         filters = {
             key: value
@@ -604,6 +623,97 @@ class LlmService:
             "请直接给出结论、表格、投资逻辑、配置建议、执行条件、反证条件和跟踪项。"
             "不要输出模板化免责句或泛泛风险警告。\n"
             f"{json.dumps(payload, ensure_ascii=False, default=str)}"
+        )
+
+    def _answer_prompt_for_trace(
+        self,
+        question: str,
+        rows: list[dict[str, Any]],
+        context: dict[str, Any],
+        model: str,
+        question_id: str,
+        user_id: int | None,
+        session_id: int | None,
+    ) -> str:
+        history = self._conversation_history(context)
+        knowledge = self._select_knowledge_for_answer(
+            question,
+            history,
+            model=model,
+            question_id=question_id,
+            user_id=user_id,
+            session_id=session_id,
+        )
+        filters = {
+            key: value
+            for key, value in context.items()
+            if key != "conversation_history" and value not in (None, "", [])
+        }
+        payload = {
+            "user_question": question,
+            "conversation_history": history[-8:],
+            "filters": filters,
+            "market_observations": rows[:ANSWER_MARKET_ROW_LIMIT],
+            "supplemental_market_observations": self._supporting_data(question, context),
+            "knowledge_categories": knowledge.categories,
+            "reference_materials": knowledge.chunks,
+        }
+        return (
+            "请根据以下分析材料生成给用户的最终投资研究回答。"
+            "材料中的结构化字段和参考内容只供你内部分析，最终回答不得提及材料格式、"
+            "底层系统、SQL、JSON、数据库、视图名或文件来源。"
+            "若有 market_observations，请优先使用其中的精确数值；"
+            "若没有精确数值，可基于 reference_materials 和你的金融知识输出框架性分析，"
+            "但不要编造具体行情数字。"
+            "不要过度自我设限；在证据足够时可以给出清晰的看多/中性/谨慎判断、"
+            "配置优先级、仓位思路和触发条件。"
+            "请直接给出结论、表格、投资逻辑、配置建议、执行条件、反证条件和跟踪项。"
+            "不要输出模板化免责句或泛泛风险警告。\n"
+            f"{json.dumps(payload, ensure_ascii=False, default=str)}"
+        )
+
+    def _select_knowledge_for_answer(
+        self,
+        question: str,
+        history: list[dict[str, str]],
+        model: str | None,
+        question_id: str | None,
+        user_id: int | None,
+        session_id: int | None,
+    ):
+        if model is None or question_id is None:
+            return self.knowledge_service.select_by_keys([], ANSWER_KNOWLEDGE_CHUNK_LIMIT)
+        payload = {
+            "question": question,
+            "conversation_history": history[-4:],
+            "knowledge_catalog": self.knowledge_service.catalog(),
+        }
+        try:
+            content = self._chat_completion(
+                json.dumps(payload, ensure_ascii=False, default=str),
+                system_prompt=KNOWLEDGE_ROUTER_SYSTEM_PROMPT,
+                model=self.settings.qwen_question_classifier_model,
+                temperature=0,
+                trace=LlmCallTrace(
+                    question_id=question_id,
+                    phase="knowledge_router",
+                    user_id=user_id,
+                    session_id=session_id,
+                ),
+            )
+            decision = self._extract_json(content)
+        except (ValueError, KeyError, TypeError, json.JSONDecodeError, httpx.HTTPError):
+            logger.error("LLM 知识库路由失败，跳过知识库材料", exc_info=True)
+            return self.knowledge_service.select_by_keys([], ANSWER_KNOWLEDGE_CHUNK_LIMIT)
+        if decision.get("use_knowledge") is not True:
+            return self.knowledge_service.select_by_keys([], ANSWER_KNOWLEDGE_CHUNK_LIMIT)
+        categories = decision.get("categories")
+        if not isinstance(categories, list):
+            return self.knowledge_service.select_by_keys([], ANSWER_KNOWLEDGE_CHUNK_LIMIT)
+        category_keys = [item for item in categories if isinstance(item, str)]
+        return self.knowledge_service.select_by_keys(
+            category_keys,
+            ANSWER_KNOWLEDGE_CHUNK_LIMIT,
         )
 
     def _execute_sql(self, sql: str) -> list[dict[str, Any]]:

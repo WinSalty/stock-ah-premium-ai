@@ -22,6 +22,7 @@ class InvestmentKnowledgeCategory:
 
     key: str
     title: str
+    summary: str
     keywords: tuple[str, ...]
     documents: tuple[str, ...]
     max_chunks: int = 3
@@ -50,6 +51,7 @@ class InvestmentKnowledgeService:
         InvestmentKnowledgeCategory(
             key="ah_premium",
             title="A/H 溢价与跨市场价差",
+            summary="A/H 与 H/A 溢价、折价、港股通可操作性、跨市场替代、阈值设置和配对交易边界。",
             keywords=(
                 "ah",
                 "a/h",
@@ -77,6 +79,7 @@ class InvestmentKnowledgeService:
         InvestmentKnowledgeCategory(
             key="stock_selection",
             title="A 股选股与估值因子",
+            summary="A 股蓝筹、低估值、高股息、ROE、PE/PB、质量因子和选股字段解释。",
             keywords=(
                 "选股",
                 "蓝筹",
@@ -99,6 +102,7 @@ class InvestmentKnowledgeService:
         InvestmentKnowledgeCategory(
             key="financial_sector",
             title="银行与非银长期投资",
+            summary="银行、券商、保险等金融资产的长期投资框架、比较维度和配置逻辑。",
             keywords=(
                 "银行",
                 "非银",
@@ -121,6 +125,7 @@ class InvestmentKnowledgeService:
         InvestmentKnowledgeCategory(
             key="company_research",
             title="个股深度投资报告",
+            summary="五粮液、中国神华、格力、宁德时代、比亚迪、长江电力、寒武纪等公司研究报告。",
             keywords=(
                 "五粮液",
                 "000858",
@@ -162,6 +167,7 @@ class InvestmentKnowledgeService:
         InvestmentKnowledgeCategory(
             key="macro_industry",
             title="宏观产业与地产金融推演",
+            summary="日本经验、地产金融、人口、地方财政、资产负债表和中国未来产业推演。",
             keywords=(
                 "日本",
                 "地产",
@@ -183,6 +189,7 @@ class InvestmentKnowledgeService:
         InvestmentKnowledgeCategory(
             key="risk_framework",
             title="组合风险与报告框架",
+            summary="投资报告结构、仓位、组合配置、回撤、止损、税费、汇率和反证条件表达框架。",
             keywords=(
                 "风险",
                 "仓位",
@@ -206,6 +213,18 @@ class InvestmentKnowledgeService:
         self.doc_root = doc_root or (
             Path(__file__).resolve().parents[3] / "resources" / "doc" / "llm-knowledge"
         )
+
+    def catalog(self) -> list[dict[str, str]]:
+        """返回轻量知识库目录，供模型判断是否需要读取材料。
+
+        创建日期：2026-05-05
+        author: sunshengxian
+        """
+
+        return [
+            {"key": category.key, "title": category.title, "summary": category.summary}
+            for category in self.categories
+        ]
 
     def select(
         self,
@@ -245,6 +264,30 @@ class InvestmentKnowledgeService:
             if len(chunks) >= max_total_chunks:
                 break
 
+        return InvestmentKnowledgeSelection(
+            categories=[category.title for category in matched],
+            chunks=chunks[:max_total_chunks],
+        )
+
+    def select_by_keys(
+        self,
+        category_keys: Iterable[str],
+        max_total_chunks: int = 5,
+    ) -> InvestmentKnowledgeSelection:
+        """按模型选择的分类读取知识片段。
+
+        创建日期：2026-05-05
+        author: sunshengxian
+        """
+
+        requested_keys = list(dict.fromkeys(category_keys))
+        category_map = {category.key: category for category in self.categories}
+        matched = [category_map[key] for key in requested_keys if key in category_map]
+        chunks: list[dict[str, str]] = []
+        for category in matched:
+            chunks.extend(self._select_category_chunks(category))
+            if len(chunks) >= max_total_chunks:
+                break
         return InvestmentKnowledgeSelection(
             categories=[category.title for category in matched],
             chunks=chunks[:max_total_chunks],
