@@ -189,6 +189,7 @@ GET /api/ah-premiums/realtime
 - 港币兑人民币：`market='FX'`，`symbol='HKD/CNY'`，`currency='CNY'`。
 - `quality` 可填 `REALTIME`、`DELAYED`、`STALE`、`ERROR`、`UNAVAILABLE`。
 - 同一标的可保留多条快照，系统按 `quote_time desc, id desc` 读取最新的 `is_active=1` 记录。
+- `water-stock` 已新增本地实时喂数模块：通过独立 `stock-ah.datasource` 连接 `stock_ah_ai`，读取 `a_trade_calendar`、`hk_trade_calendar` 和 `watchlist_stock`，仅在 A/H 共同交易日且 `stock-ah.realtime.trade-time-ranges` 内，每秒抓取一次用户自选 AH 标的和 `HKD/CNY`，写入 `realtime_quote_snapshot`。调度使用非重入保护，上一轮未完成时跳过本轮。
 
 ### 5.1 新增实时行情快照表
 
