@@ -76,6 +76,7 @@
   - PushPlus 绑定流程已调整为扫码回调自动绑定：二维码归属管理员 PushPlus 账号，`content` 仅作为短格式带签名的系统用户绑定票据；好友列表和全量绑定列表仅管理员可查看。
   - PushPlus 绑定功能保留在个人信息页；已绑定用户不再展示二维码绑定入口，也不能重复生成二维码或覆盖绑定；同一个 PushPlus 好友只能绑定一个系统用户；管理员的好友列表、用户绑定信息管理和“系统用户 + PushPlus 好友”手动绑定已移入用户管理菜单，绑定时会把好友令牌仅保存到后端。
   - PushPlus 测试消息、阈值提醒和股价提醒统一使用 HTML 模板发送，消息采用非紫色轻量卡片和价差信号图样式，并展示触发类型、标的、交易日、当前阈值/价格和目标阈值/价格等明细。
+  - 默认管理员账号无法添加自己为 PushPlus 好友时，测试消息、阈值提醒和股价提醒会特殊走 PushPlus 一对一消息，继续使用原 PushPlus 用户 token；普通用户仍走好友消息和绑定校验。
   - 自选股保存提醒配置时会校验当前用户必须已有 PushPlus 绑定，未绑定时前端弹出二维码引导，后端同步拒绝未绑定提醒保存。
 - LLM 问答：
   - OpenAI-compatible Chat API 封装支持 DeepSeek 和阿里 Qwen，问答页面可在 `deepseek-v4-flash`、`deepseek-v4-pro` 与 `qwen3.6-flash` 间选择，默认使用 `deepseek-v4-flash`；兼容历史配置 `deepseek-v4-pro[1m]` 到 DeepSeek API 支持的模型名，当前不额外传 `reasoning_effort`。

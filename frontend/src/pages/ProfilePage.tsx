@@ -45,7 +45,9 @@ function ProfilePage({ user, onUserUpdated }: ProfilePageProps) {
     mutationFn: () =>
       sendTestPush({
         title: 'AH 提醒测试',
-        content: 'PushPlus 好友消息推送已连通。'
+        content: user.can_use_personal_pushplus
+          ? 'PushPlus 一对一消息推送已连通。'
+          : 'PushPlus 好友消息推送已连通。'
       }),
     onSuccess: () => message.success('测试推送已提交'),
     onError: (error) => message.error(error instanceof Error ? error.message : '测试推送失败')
@@ -58,6 +60,7 @@ function ProfilePage({ user, onUserUpdated }: ProfilePageProps) {
     },
     onError: (error) => message.error(error instanceof Error ? error.message : '解除绑定失败')
   });
+  const hasPushplusChannel = Boolean(binding.data?.is_bound || user.can_use_personal_pushplus);
 
   useEffect(() => {
     form.setFieldsValue({
@@ -126,7 +129,7 @@ function ProfilePage({ user, onUserUpdated }: ProfilePageProps) {
                 <Button
                   htmlType="button"
                   icon={<Send size={16} />}
-                  disabled={!binding.data?.is_bound}
+                  disabled={!hasPushplusChannel}
                   loading={testPushMutation.isPending}
                   onClick={() => testPushMutation.mutate()}
                 >
@@ -156,10 +159,18 @@ function ProfilePage({ user, onUserUpdated }: ProfilePageProps) {
                 <Alert
                   showIcon
                   type="info"
-                  message="当前账号尚未绑定微信推送"
-                  description="扫码完成绑定，绑定后回到本页刷新状态。"
+                  message={
+                    user.can_use_personal_pushplus
+                      ? '当前账号将使用 PushPlus 一对一消息'
+                      : '当前账号尚未绑定微信推送'
+                  }
+                  description={
+                    user.can_use_personal_pushplus
+                      ? '管理员账号会使用当前 PushPlus token 直接接收提醒，无需添加自己为好友。'
+                      : '扫码完成绑定，绑定后回到本页刷新状态。'
+                  }
                 />
-                <div className="pushplus-bind-grid">
+                {!user.can_use_personal_pushplus ? <div className="pushplus-bind-grid">
                   <div className="pushplus-qr-pane">
                     <Button
                       htmlType="button"
@@ -195,7 +206,7 @@ function ProfilePage({ user, onUserUpdated }: ProfilePageProps) {
                       刷新绑定状态
                     </Button>
                   </div>
-                </div>
+                </div> : null}
               </>
             )}
           </div>

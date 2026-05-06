@@ -3,6 +3,8 @@ from __future__ import annotations
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core.config import Settings, get_settings
+from app.db.models.auth import AppUser
 from app.db.models.market import WatchlistStock
 from app.db.models.notification import PushplusBinding
 from app.schemas.watchlist import WatchlistCreate, WatchlistOpportunityResponse, WatchlistUpdate
@@ -24,8 +26,9 @@ class WatchlistService:
     author: sunshengxian
     """
 
-    def __init__(self, db: Session) -> None:
+    def __init__(self, db: Session, settings: Settings | None = None) -> None:
         self.db = db
+        self.settings = settings or get_settings()
         self.premium_query_service = PremiumQueryService(db)
 
     def list_opportunities(
@@ -186,6 +189,13 @@ class WatchlistService:
             )
         )
         if has_binding is None:
+            user = self.db.get(AppUser, item.user_id)
+            if (
+                user is not None
+                and user.is_active
+                and user.username == self.settings.default_admin_username
+            ):
+                return
             raise WatchlistError("设置提醒前请先完成 PushPlus 扫码绑定")
 
     def _has_alert_config(self, item: WatchlistStock) -> bool:

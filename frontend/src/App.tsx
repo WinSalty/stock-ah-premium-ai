@@ -49,10 +49,10 @@ function App() {
   const [user, setUser] = useState<UserInfo | null>(null);
   const [isCheckingAuth, setIsCheckingAuth] = useState(Boolean(getAuthToken()));
   const pages: Partial<Record<PageKey, ReactNode>> = {
-    overview: <OverviewPage />,
+    overview: user ? <OverviewPage currentUser={user} /> : null,
     sync: <SyncPage />,
     query: <DataQueryPage />,
-    premium: <PremiumPage />,
+    premium: user ? <PremiumPage currentUser={user} /> : null,
     chat: <ChatPage />,
     llm_metrics: <LlmMetricsPage />,
     users: user ? <UserAdminPage currentUser={user} onUserUpdated={setUser} /> : null,

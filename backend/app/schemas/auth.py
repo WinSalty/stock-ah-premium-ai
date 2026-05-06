@@ -45,6 +45,7 @@ class UserResponse(OrmModel):
     phone: str | None = None
     bio: str | None = None
     permissions: list[str] = Field(default_factory=list)
+    can_use_personal_pushplus: bool = False
 
 
 class UserUpdateRequest(BaseModel):

@@ -303,20 +303,15 @@ class NotificationService:
         return True
 
     def send_test_push(self, user_id: int, title: str, content: str) -> str:
-        """向当前用户绑定好友发送测试消息。
+        """向当前用户发送测试消息。
 
         创建日期：2026-05-05
         author: sunshengxian
         """
 
-        binding = self._require_active_binding(user_id)
         html_content = self._test_message(title, content)
         try:
-            return self.pushplus_client.send_friend_message(
-                binding.friend_token,
-                title,
-                html_content,
-            )
+            return self._send_pushplus_message(user_id, title, html_content)
         except PushplusError as exc:
             raise NotificationError(str(exc)) from exc
 
@@ -342,7 +337,7 @@ class NotificationService:
         for item in watchlist_items:
             if not item.push_enabled:
                 continue
-            if self._active_binding(item.user_id) is None:
+            if not self.can_send_pushplus_to_user(item.user_id):
                 continue
             threshold_event = self._scan_threshold_alert(item, target_day, local_scan_time)
             if threshold_event is not None:
@@ -544,13 +539,8 @@ class NotificationService:
             self.db.rollback()
             return None
         self.db.refresh(event)
-        binding = self._require_active_binding(item.user_id)
         try:
-            event.push_message_id = self.pushplus_client.send_friend_message(
-                binding.friend_token,
-                title,
-                content,
-            )
+            event.push_message_id = self._send_pushplus_message(item.user_id, title, content)
             event.push_status = PUSH_STATUS_SENT
             event.sent_at = self._now_naive()
         except PushplusError as exc:
@@ -842,6 +832,21 @@ class NotificationService:
                 return friend
         raise NotificationError("未找到对应 PushPlus 好友，请扫码后刷新好友列表")
 
+    def can_send_pushplus_to_user(self, user_id: int) -> bool:
+        """判断指定用户是否具备 PushPlus 推送通道。
+
+        创建日期：2026-05-06
+        author: sunshengxian
+        """
+
+        return self._active_binding(user_id) is not None or self._is_default_admin_user(user_id)
+
+    def _send_pushplus_message(self, user_id: int, title: str, content: str) -> str:
+        if self._is_default_admin_user(user_id):
+            return self.pushplus_client.send_personal_message(title, content)
+        binding = self._require_active_binding(user_id)
+        return self.pushplus_client.send_friend_message(binding.friend_token, title, content)
+
     def _active_binding(self, user_id: int) -> PushplusBinding | None:
         return self.db.scalar(
             select(PushplusBinding).where(
@@ -863,6 +868,12 @@ class NotificationService:
         if binding is None:
             raise NotificationError("当前用户尚未绑定 PushPlus 好友")
         return binding
+
+    def _is_default_admin_user(self, user_id: int) -> bool:
+        user = self.db.get(AppUser, user_id)
+        if user is None or not user.is_active:
+            return False
+        return user.username == self.settings.default_admin_username
 
     def _binding_response(
         self,

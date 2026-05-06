@@ -44,6 +44,7 @@ import type {
   PremiumDirection,
   PremiumPairOption,
   PriceAlertOperator,
+  UserInfo,
   WatchlistOpportunity
 } from '../types/domain';
 import {
@@ -387,6 +388,10 @@ function buildThresholdDisplayQuestion(item: WatchlistOpportunity) {
 type RecommendationSource = 'fresh' | 'cached';
 type OverviewChartMode = 'trend' | 'range' | 'deviation';
 
+interface OverviewPageProps {
+  currentUser: UserInfo;
+}
+
 const OVERVIEW_CHART_MODE_OPTIONS: Array<{ label: string; value: OverviewChartMode }> = [
   { label: '走势折线', value: 'trend' },
   { label: '分位区间', value: 'range' },
@@ -398,7 +403,7 @@ const OVERVIEW_CHART_MODE_OPTIONS: Array<{ label: string; value: OverviewChartMo
  * 创建日期：2026-05-04
  * author: sunshengxian
  */
-function OverviewPage() {
+function OverviewPage({ currentUser }: OverviewPageProps) {
   const [watchlistForm] = Form.useForm<WatchlistFormValues>();
   const watchlistDirection = Form.useWatch('preferred_direction', watchlistForm);
   const watchlistPushEnabled = Form.useWatch('push_enabled', watchlistForm);
@@ -433,6 +438,9 @@ function OverviewPage() {
     queryKey: ['pushplus-binding'],
     queryFn: fetchPushplusBinding
   });
+  const hasPushplusChannel = Boolean(
+    pushplusBinding.data?.is_bound || currentUser.can_use_personal_pushplus
+  );
   const qrCodeMutation = useMutation({
     mutationFn: () => createPushplusQrCode({ expire_seconds: 604800, scan_count: 1 }),
     onError: (error) => message.error(error instanceof Error ? error.message : '生成二维码失败')
@@ -788,7 +796,7 @@ function OverviewPage() {
       return;
     }
     const values = await watchlistForm.validateFields();
-    if (hasAlertConfig(values) && values.push_enabled !== false && !pushplusBinding.data?.is_bound) {
+    if (hasAlertConfig(values) && values.push_enabled !== false && !hasPushplusChannel) {
       message.warning('设置提醒前请先完成 PushPlus 扫码绑定');
       if (!qrCodeMutation.data && !qrCodeMutation.isPending) {
         qrCodeMutation.mutate();
@@ -1437,7 +1445,7 @@ function OverviewPage() {
           >
             <Switch checkedChildren="开启" unCheckedChildren="关闭" />
           </Form.Item>
-          {modalRequiresBinding && !pushplusBinding.data?.is_bound ? (
+          {modalRequiresBinding && !hasPushplusChannel ? (
             <div className="pushplus-alert-bind-box">
               <Alert
                 showIcon

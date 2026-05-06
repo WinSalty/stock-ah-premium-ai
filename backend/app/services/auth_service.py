@@ -316,6 +316,7 @@ class AuthService:
             phone=user.phone,
             bio=user.bio,
             permissions=self.get_user_permissions(user),
+            can_use_personal_pushplus=user.username == self.settings.default_admin_username,
         )
 
     def get_user_permissions(self, user: AppUser) -> list[str]:

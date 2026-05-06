@@ -124,22 +124,36 @@ class PushplusClient:
         author: sunshengxian
         """
 
+        return self._send_message(title=title, content=content, to_token=to_token)
+
+    def send_personal_message(self, title: str, content: str) -> str:
+        """通过 PushPlus 一对一消息发送给当前 token 所属账号。
+
+        创建日期：2026-05-06
+        author: sunshengxian
+        """
+
+        return self._send_message(title=title, content=content)
+
+    def _send_message(self, title: str, content: str, to_token: str | None = None) -> str:
         if not self.settings.pushplus_enabled:
             raise PushplusError("PushPlus 推送未启用")
         token = self.settings.resolve_pushplus_token()
         if not token:
             raise PushplusError("PushPlus token 未配置")
+        payload = {
+            "token": token,
+            "title": title,
+            "content": content,
+            "template": PUSHPLUS_HTML_TEMPLATE,
+            "channel": self.settings.pushplus_channel,
+        }
+        if to_token:
+            payload["to"] = to_token
         data = self._request(
             "POST",
             "/send",
-            json={
-                "token": token,
-                "title": title,
-                "content": content,
-                "to": to_token,
-                "template": PUSHPLUS_HTML_TEMPLATE,
-                "channel": self.settings.pushplus_channel,
-            },
+            json=payload,
         )
         return str(data or "")
 

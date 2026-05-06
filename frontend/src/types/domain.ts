@@ -19,6 +19,7 @@ export interface UserInfo {
   phone: string | null;
   bio: string | null;
   permissions: string[];
+  can_use_personal_pushplus: boolean;
 }
 
 export interface OverviewChartSettings {

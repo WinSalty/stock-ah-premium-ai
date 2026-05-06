@@ -53,6 +53,10 @@ class FakePushplusClient:
         self.sent.append((to_token, title, content))
         return f"msg-{len(self.sent)}"
 
+    def send_personal_message(self, title: str, content: str) -> str:
+        self.sent.append(("PERSONAL", title, content))
+        return f"msg-{len(self.sent)}"
+
     def list_friends(self) -> list[PushplusFriend]:
         return self.friends
 
@@ -177,7 +181,7 @@ def test_pushplus_client_send_uses_html_template(monkeypatch) -> None:
     """
 
     captured: dict[str, object] = {}
-    client = PushplusClient(Settings(pushplus_token="test-token"))
+    client = PushplusClient(Settings(pushplus_token="test-token", pushplus_token_file=None))
 
     def fake_request(method: str, path: str, **kwargs: object) -> str:
         captured["method"] = method
@@ -193,6 +197,35 @@ def test_pushplus_client_send_uses_html_template(monkeypatch) -> None:
     assert captured["path"] == "/send"
     assert isinstance(captured["json"], dict)
     assert captured["json"]["template"] == "html"
+    assert captured["json"]["to"] == "friend-token"
+
+
+def test_pushplus_client_personal_message_omits_friend_token(monkeypatch) -> None:
+    """确认 PushPlus 一对一消息不携带好友 token。
+
+    创建日期：2026-05-06
+    author: sunshengxian
+    """
+
+    captured: dict[str, object] = {}
+    client = PushplusClient(Settings(pushplus_token="test-token", pushplus_token_file=None))
+
+    def fake_request(method: str, path: str, **kwargs: object) -> str:
+        captured["method"] = method
+        captured["path"] = path
+        captured["json"] = kwargs["json"]
+        return "message-id"
+
+    monkeypatch.setattr(client, "_request", fake_request)
+
+    message_id = client.send_personal_message("测试", "<b>连通</b>")
+
+    assert message_id == "message-id"
+    assert captured["path"] == "/send"
+    assert isinstance(captured["json"], dict)
+    assert captured["json"]["token"] == "test-token"
+    assert captured["json"]["template"] == "html"
+    assert "to" not in captured["json"]
 
 
 def test_test_push_wraps_content_as_html() -> None:
@@ -222,6 +255,39 @@ def test_test_push_wraps_content_as_html() -> None:
     assert "消息链路已连通" in sent_content
     assert "价差信号" in sent_content
     assert "#7c3aed" not in sent_content
+
+
+def test_admin_test_push_uses_personal_message_without_binding() -> None:
+    """确认 admin 测试推送无需好友绑定，使用一对一消息。
+
+    创建日期：2026-05-06
+    author: sunshengxian
+    """
+
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    fake_client = FakePushplusClient()
+    settings = Settings(default_admin_username="admin")
+    with Session(engine) as db:
+        admin = AppUser(username="admin", password_hash="hash", role="ADMIN", is_active=True)
+        db.add(admin)
+        db.commit()
+        db.refresh(admin)
+
+        message_id = NotificationService(
+            db,
+            settings=settings,
+            pushplus_client=fake_client,
+        ).send_test_push(
+            admin.id,
+            "AH 提醒测试",
+            "PushPlus 一对一消息推送已连通。",
+        )
+
+    assert message_id == "msg-1"
+    assert len(fake_client.sent) == 1
+    assert fake_client.sent[0][0] == "PERSONAL"
+    assert "PushPlus 一对一消息推送已连通" in fake_client.sent[0][2]
 
 
 def test_bound_user_cannot_create_pushplus_qr_code() -> None:
@@ -604,6 +670,35 @@ def test_watchlist_alert_requires_pushplus_binding() -> None:
     assert "PushPlus" in error_message
 
 
+def test_admin_watchlist_alert_does_not_require_pushplus_binding() -> None:
+    """确认 admin 设置提醒无需先绑定 PushPlus 好友。
+
+    创建日期：2026-05-06
+    author: sunshengxian
+    """
+
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    settings = Settings(default_admin_username="admin")
+    with Session(engine) as db:
+        admin = AppUser(username="admin", password_hash="hash", role="ADMIN", is_active=True)
+        db.add(admin)
+        db.commit()
+        db.refresh(admin)
+
+        item = WatchlistService(db, settings=settings).create(
+            payload=WatchlistCreate(
+                a_ts_code="600036.SH",
+                hk_ts_code="03968.HK",
+                target_premium_pct=Decimal("30"),
+            ),
+            user_id=admin.id,
+        )
+
+    assert item.push_enabled is True
+    assert item.target_premium_pct == Decimal("30")
+
+
 def test_watchlist_alert_can_disable_push_without_binding() -> None:
     """确认关闭消息推送后可保存提醒配置且不要求 PushPlus 绑定。
 
@@ -667,6 +762,53 @@ def test_scan_skips_watchlist_when_push_disabled() -> None:
 
     assert events == []
     assert fake_client.sent == []
+
+
+def test_admin_threshold_alert_uses_personal_message_without_binding() -> None:
+    """确认 admin 提醒推送无需好友绑定，使用一对一消息。
+
+    创建日期：2026-05-06
+    author: sunshengxian
+    """
+
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    target_day = date(2026, 5, 5)
+    fake_client = FakePushplusClient()
+    settings = Settings(default_admin_username="admin")
+    with Session(engine) as db:
+        admin = AppUser(username="admin", password_hash="hash", role="ADMIN", is_active=True)
+        db.add(admin)
+        db.flush()
+        add_joint_trade_day(db, target_day)
+        db.add(
+            WatchlistStock(
+                user_id=admin.id,
+                a_ts_code="600036.SH",
+                hk_ts_code="03968.HK",
+                display_name="招商银行",
+                preferred_direction="AH",
+                target_premium_pct=Decimal("30"),
+                is_active=True,
+            )
+        )
+        add_realtime_quotes(db, a_price=Decimal("98"))
+        db.commit()
+
+        events = NotificationService(
+            db,
+            settings=settings,
+            pushplus_client=fake_client,
+        ).scan_alerts_for_day(
+            target_day,
+            admin.id,
+            datetime(2026, 5, 5, 10, 30, 0, tzinfo=LOCAL_TEST_TZ),
+        )
+
+    assert len(events) == 1
+    assert events[0].push_status == "SENT"
+    assert len(fake_client.sent) == 1
+    assert fake_client.sent[0][0] == "PERSONAL"
 
 
 def test_price_alert_skips_when_market_is_closed() -> None:

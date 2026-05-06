@@ -32,7 +32,8 @@ import type {
   HoldingMarket,
   PremiumDirection,
   PremiumItem,
-  PriceAlertOperator
+  PriceAlertOperator,
+  UserInfo
 } from '../types/domain';
 import type { PremiumQueryParams } from '../api/market';
 import {
@@ -160,12 +161,16 @@ function buildModalThresholdDisplayQuestion(item: PremiumItem, values: Watchlist
 
 type RecommendationSource = 'fresh' | 'cached';
 
+interface PremiumPageProps {
+  currentUser: UserInfo;
+}
+
 /**
  * AH 官方比价查询和自选机会筛选页面。
  * 创建日期：2026-05-04
  * author: sunshengxian
  */
-function PremiumPage() {
+function PremiumPage({ currentUser }: PremiumPageProps) {
   const [form] = Form.useForm<FilterValues>();
   const [watchlistForm] = Form.useForm<WatchlistFormValues>();
   const watchlistDirection = Form.useWatch('preferred_direction', watchlistForm);
@@ -195,6 +200,9 @@ function PremiumPage() {
     queryKey: ['pushplus-binding'],
     queryFn: fetchPushplusBinding
   });
+  const hasPushplusChannel = Boolean(
+    pushplusBinding.data?.is_bound || currentUser.can_use_personal_pushplus
+  );
   const trend = useQuery({
     queryKey: ['premium-trend', selected?.a_ts_code, selected?.hk_ts_code, selected?.metric_direction],
     queryFn: () => fetchPremiumTrend(selected!.a_ts_code, selected!.hk_ts_code, selected!.metric_direction),
@@ -452,7 +460,7 @@ function PremiumPage() {
       return;
     }
     const values = await watchlistForm.validateFields();
-    if (hasAlertConfig(values) && values.push_enabled !== false && !pushplusBinding.data?.is_bound) {
+    if (hasAlertConfig(values) && values.push_enabled !== false && !hasPushplusChannel) {
       message.warning('设置提醒前请先完成 PushPlus 扫码绑定');
       if (!qrCodeMutation.data && !qrCodeMutation.isPending) {
         qrCodeMutation.mutate();
@@ -642,7 +650,7 @@ function PremiumPage() {
           >
             <Switch checkedChildren="开启" unCheckedChildren="关闭" />
           </Form.Item>
-          {modalRequiresBinding && !pushplusBinding.data?.is_bound ? (
+          {modalRequiresBinding && !hasPushplusChannel ? (
             <div className="pushplus-alert-bind-box">
               <Alert
                 showIcon
