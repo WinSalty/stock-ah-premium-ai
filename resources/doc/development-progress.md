@@ -39,6 +39,7 @@
   - 对全市场行情、官方 AH 比价和港股通名单的日期范围同步按交易日拆分请求，降低单次返回上限截断风险。
   - 港股通名单同步改为只保留最新生效日期的一份数据；页面和 API 判断港股通可操作性时统一使用当前最新名单。
   - 官方 AH 比价同步后维护 AH 配对。
+  - Tushare 官方 AH 比价历史覆盖不足时，已在 `water-stock` 增加 Baidu 历史补齐跑批：读取用户自选股，拉取 A/H 全量日 K 与 `HKDCNY` 汇率，只在 A/H 共同交易日且三类数据同日齐全时向 `official_ah_comparison` 插入缺失行，已有唯一键记录一律跳过不覆盖。招商银行单票本地测试已补入 `BAIDU_HISTORY_BACKFILL` 历史行，并验证重跑插入 0 条。
 - 低权限兜底导入：
   - 支持通过 `POST /api/manual-import/ah-pairs` 导入人工 AH 配对。
   - 支持通过 `POST /api/manual-import/fx-rates` 导入人工汇率。
