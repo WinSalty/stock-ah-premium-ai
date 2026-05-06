@@ -212,25 +212,15 @@ GET /api/ah-premiums/realtime
 | `raw_payload_json` | 原始响应摘要，不存敏感字段 |
 | `created_at` | 入库时间 |
 
-### 5.2 新增实时溢价快照表
+### 5.2 实时溢价落表口径
 
-建议新增 `realtime_ah_premium_snapshot`：
+当前不再新增独立实时溢价快照表。实时行情先进入 `realtime_quote_snapshot`，后端用 A 股、H 股和 HKD/CNY 最新有效快照计算 AH/H/A 口径，再写回主展示表 `official_ah_comparison`：
 
-| 字段 | 说明 |
-| --- | --- |
-| `id` | 主键 |
-| `a_ts_code` | A 股代码 |
-| `hk_ts_code` | H 股代码 |
-| `a_last_price` | A 股最新价 |
-| `hk_last_price` | H 股最新价 |
-| `hkd_cny_rate` | HKD/CNY |
-| `ah_ratio` | A/H 比价 |
-| `ah_premium_pct` | A/H 溢价率 |
-| `ha_ratio` | H/A 比价 |
-| `ha_premium_pct` | H/A 溢价率 |
-| `quote_quality` | 综合质量 |
-| `source` | 主来源 |
-| `calculated_at` | 计算时间 |
+- `trade_date` 使用东八区当前日期，便于总览页和 AH 机会页继续按官方主表读取。
+- `a_close`、`hk_close` 写入实时最新价。
+- `ah_comparison`、`ah_premium`、`ha_comparison`、`ha_premium` 按官方 AH 比价表口径写入，其中 H/A 继续由两位小数的 `ah_comparison` 反推。
+- `is_realtime` 标记为 `1`，`data_source` 写为 `REALTIME_CALC`，`source_updated_at` 记录实时计算完成时间。
+- 日终官方跑批同步 `stk_ah_comparison` 时仍以 Tushare 官方数据覆盖同一交易日记录，并把 `is_realtime` 恢复为 `0`、`data_source` 恢复为 `TUSHARE_OFFICIAL`。
 
 ### 5.3 新增提醒记录表
 
@@ -314,7 +304,8 @@ ALERT_COOLDOWN_MINUTES=30
 - 真实推送仍调用 `/send`，使用 `to` 字段填写好友令牌；好友令牌仅存后端，不返回前端明文。
 - 真实推送统一使用 `html` 模板；测试消息、阈值提醒和股价提醒都会带轻量卡片样式，并列出触发类型、标的、交易日、当前阈值/价格和目标阈值/价格等具体信息。
 - `/Users/salty/codeProject/ai/doc/pushplus.txt` 可同时保存用户 token 和 SecretKey，支持 `PUSHPLUS_TOKEN=...` / `PUSHPLUS_SECRET_KEY=...` 或前两行分别写 token、SecretKey。
-- 阈值提醒和股价提醒只在对应市场交易日发送；同一个提醒按 `用户 + 自选股 + 条件 + 交易日` 去重，每天最多推送一次。
+- 阈值提醒和股价提醒只在对应市场交易日和实时交易时段发送；阈值提醒按偏离目标阈值的百分点分档，股价提醒按偏离目标价的百分比分档，首次达到条件推送一次，偏离进入新档位后可再次推送，同一用户同一交易日同类提醒累计最多 5 次。
+- 股价提醒配置已拆为 A 股和 H 股两套独立条件，支持同一自选股同时观察 A 股人民币目标价和 H 股港币目标价；提醒事件仍记录具体触发市场、证券代码、当前价格和目标价格。
 - 自选股提醒配置包含消息推送开关，默认开启；关闭后保留提醒条件但不发送 PushPlus 消息，也不要求用户完成绑定。
 
 推送内容建议：
@@ -401,12 +392,12 @@ WECHAT_WORK_TO_USER=@all
 
 - `RealtimePremiumService`
 - `GET /api/ah-premiums/realtime`
-- `realtime_ah_premium_snapshot` 表
+- 实时计算结果写回 `official_ah_comparison`，用 `is_realtime` 和 `data_source=REALTIME_CALC` 区分官方日终数据
 
 前端：
 
-- AH 机会筛选页增加“实时/官方日线”切换。
-- 实时数据展示报价时间和质量标签。
+- AH 机会筛选页和总览页继续读取官方 AH 比价主表，实时状态通过 `is_realtime` 标签识别。
+- 实时数据在主表中保留来源更新时间和来源标记，卡片层不额外展示右下角时间。
 - `STALE_FX`、`DELAYED` 状态不伪装成完全实时。
 
 ### 迭代 4：阈值触发与推送

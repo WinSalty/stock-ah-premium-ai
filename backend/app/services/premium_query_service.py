@@ -79,7 +79,8 @@ class PremiumQueryService:
 
     def __init__(self, db: Session) -> None:
         self.db = db
-        self._connect_cache: dict[tuple[date, str], str | None] = {}
+        self._connect_cache: dict[str, str | None] = {}
+        self._latest_connect_date: date | None = None
         self._metric_cache: dict[tuple[str, str, date, str], PremiumMetricBundle] = {}
 
     def list_premiums(
@@ -304,17 +305,18 @@ class PremiumQueryService:
             for item in rows
         ]
 
-    def latest_trade_date(self) -> date | None:
+    def latest_trade_date(self, include_realtime: bool = False) -> date | None:
         """查询官方 AH 比价最新交易日。
 
         创建日期：2026-05-04
         author: sunshengxian
         """
 
+        filters = [self._joint_trade_date_filter()]
+        if not include_realtime:
+            filters.append(OfficialAHComparison.is_realtime.is_(False))
         return self.db.scalar(
-            select(func.max(OfficialAHComparison.trade_date)).where(
-                self._joint_trade_date_filter()
-            )
+            select(func.max(OfficialAHComparison.trade_date)).where(*filters)
         )
 
     def latest_pair_row(self, a_ts_code: str, hk_ts_code: str) -> OfficialAHComparison | None:
@@ -391,10 +393,12 @@ class PremiumQueryService:
             preferred_direction=watchlist.preferred_direction if watchlist else None,
             target_premium_pct=target,
             push_enabled=watchlist.push_enabled if watchlist else None,
-            price_alert_enabled=watchlist.price_alert_enabled if watchlist else None,
-            price_alert_market=watchlist.price_alert_market if watchlist else None,
-            price_alert_operator=watchlist.price_alert_operator if watchlist else None,
-            price_alert_target_price=watchlist.price_alert_target_price if watchlist else None,
+            a_price_alert_enabled=watchlist.a_price_alert_enabled if watchlist else None,
+            a_price_alert_operator=watchlist.a_price_alert_operator if watchlist else None,
+            a_price_alert_target_price=watchlist.a_price_alert_target_price if watchlist else None,
+            h_price_alert_enabled=watchlist.h_price_alert_enabled if watchlist else None,
+            h_price_alert_operator=watchlist.h_price_alert_operator if watchlist else None,
+            h_price_alert_target_price=watchlist.h_price_alert_target_price if watchlist else None,
             holding_market=watchlist.holding_market if watchlist else None,
             distance_to_target_pct=distance,
             opportunity_status=self._opportunity_status(
@@ -448,14 +452,18 @@ class PremiumQueryService:
         return True
 
     def _connect_channels(self, trade_date: date, hk_ts_code: str) -> str | None:
-        cache_key = (trade_date, hk_ts_code)
-        if cache_key in self._connect_cache:
-            return self._connect_cache[cache_key]
+        _ = trade_date
+        if hk_ts_code in self._connect_cache:
+            return self._connect_cache[hk_ts_code]
+        latest_connect_date = self._latest_hsgt_date()
+        if latest_connect_date is None:
+            self._connect_cache[hk_ts_code] = None
+            return None
         channels = list(
             self.db.scalars(
                 select(HsgtConstituent.connect_type)
                 .where(
-                    HsgtConstituent.trade_date == trade_date,
+                    HsgtConstituent.trade_date == latest_connect_date,
                     HsgtConstituent.ts_code == hk_ts_code,
                     HsgtConstituent.connect_type.in_(CONNECT_TYPES),
                 )
@@ -463,8 +471,13 @@ class PremiumQueryService:
             ).all()
         )
         value = ",".join(channels) if channels else None
-        self._connect_cache[cache_key] = value
+        self._connect_cache[hk_ts_code] = value
         return value
+
+    def _latest_hsgt_date(self) -> date | None:
+        if self._latest_connect_date is None:
+            self._latest_connect_date = self.db.scalar(select(func.max(HsgtConstituent.trade_date)))
+        return self._latest_connect_date
 
     def _watchlist_map(self, user_id: int | None = None) -> dict[tuple[str, str], WatchlistStock]:
         statement = select(WatchlistStock).where(WatchlistStock.is_active.is_(True))

@@ -352,6 +352,80 @@ body {
   grid-template-columns: minmax(0, 1fr);
 }
 
+.overview-stat-row {
+  margin-bottom: 4px;
+}
+
+.overview-stat-card {
+  position: relative;
+  min-height: 120px;
+  overflow: hidden;
+  border: 1px solid #dfe7f1;
+  border-radius: 8px;
+  background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.06);
+}
+
+.overview-stat-card::before {
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  height: 4px;
+  content: '';
+  background: var(--overview-stat-color, #2563eb);
+}
+
+.overview-stat-card::after {
+  position: absolute;
+  right: -32px;
+  bottom: -42px;
+  width: 112px;
+  height: 112px;
+  border-radius: 50%;
+  content: '';
+  background: color-mix(in srgb, var(--overview-stat-color, #2563eb) 12%, transparent);
+}
+
+.overview-stat-card .ant-card-body {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  min-height: 118px;
+  align-items: center;
+  padding: 22px 20px;
+}
+
+.overview-stat-card .ant-statistic-title {
+  margin-bottom: 10px;
+  color: #64748b;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.overview-stat-card .ant-statistic-content {
+  color: var(--overview-stat-color, #1d4ed8);
+  font-size: 28px;
+  font-weight: 800;
+  line-height: 1.15;
+}
+
+.overview-stat-card-date {
+  --overview-stat-color: #1d4ed8;
+}
+
+.overview-stat-card-connect {
+  --overview-stat-color: #0f766e;
+}
+
+.overview-stat-card-watchlist {
+  --overview-stat-color: #7c3aed;
+}
+
+.overview-stat-card-alert {
+  --overview-stat-color: #c2410c;
+}
+
 .overview-chart-panel {
   min-height: 560px;
 }
@@ -425,6 +499,18 @@ body {
   white-space: nowrap;
 }
 
+.opportunity-card-head-actions {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: 2px;
+}
+
+.opportunity-card-head-actions .ant-btn {
+  width: 26px;
+  height: 26px;
+}
+
 .opportunity-card-title {
   display: flex;
   align-items: center;
@@ -488,6 +574,36 @@ body {
   font-size: 16px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.opportunity-card-metrics b.metric-ah {
+  color: #e11d48;
+}
+
+.opportunity-card-metrics b.metric-ha {
+  color: #0891b2;
+}
+
+.opportunity-card-metrics b.metric-target {
+  color: #7f1d1d;
+}
+
+.opportunity-card-metrics b.metric-positive,
+.opportunity-card-metrics b.metric-hot {
+  color: #dc2626;
+}
+
+.opportunity-card-metrics b.metric-negative,
+.opportunity-card-metrics b.metric-cold {
+  color: #059669;
+}
+
+.opportunity-card-metrics b.metric-neutral {
+  color: #475569;
+}
+
+.opportunity-card-metrics b.metric-muted {
+  color: #94a3b8;
 }
 
 .opportunity-card-thresholds {
@@ -701,7 +817,7 @@ body {
 
 .watchlist-price-alert-grid {
   display: grid;
-  grid-template-columns: 96px minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-columns: 96px minmax(0, 1fr) minmax(0, 1fr);
   gap: 12px;
   align-items: end;
 }
@@ -786,6 +902,160 @@ body {
   white-space: nowrap;
 }
 
+.help-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.help-title-icon {
+  flex: 0 0 auto;
+  color: #94a3b8;
+  cursor: help;
+}
+
+.help-title-icon:hover {
+  color: #2563eb;
+}
+
+.llm-metric-table .ant-table-thead > tr > th,
+.llm-metric-table .ant-table-tbody > tr > td {
+  padding-inline: 10px;
+}
+
+.llm-metric-table .ant-table-thead > tr > th {
+  white-space: nowrap;
+}
+
+.llm-metric-time {
+  display: inline-block;
+  min-width: 160px;
+  white-space: nowrap;
+}
+
+.phase-cell {
+  display: inline-grid;
+  gap: 2px;
+  min-width: 0;
+  line-height: 1.35;
+}
+
+.phase-cell .ant-typography {
+  overflow: hidden;
+  max-width: 188px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.llm-payload-viewer {
+  overflow: auto;
+  max-height: 62vh;
+  display: grid;
+  gap: 12px;
+  margin: 0;
+  color: #172033;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.llm-payload-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.llm-payload-meta {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 9px 10px;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  background: #f8fafc;
+}
+
+.llm-payload-meta strong {
+  overflow: hidden;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.llm-payload-jumpbar {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  background: rgba(248, 250, 252, 0.96);
+  backdrop-filter: blur(6px);
+}
+
+.llm-payload-message {
+  scroll-margin-top: 58px;
+  overflow: hidden;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  background: #ffffff;
+}
+
+.llm-payload-message-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  border-bottom: 1px solid #e2e8f0;
+  background: #f8fafc;
+}
+
+.llm-payload-message pre,
+pre.llm-payload-viewer,
+.llm-content-viewer {
+  overflow: auto;
+  max-height: 360px;
+  margin: 0;
+  padding: 12px;
+  color: #172033;
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: #ffffff;
+}
+
+.llm-content-viewer {
+  max-height: 62vh;
+}
+
+.llm-payload-extra {
+  display: grid;
+  gap: 6px;
+  padding: 0 12px 12px;
+  border-top: 1px dashed #e2e8f0;
+  background: #ffffff;
+}
+
+.llm-payload-extra > .ant-typography {
+  padding-top: 10px;
+  font-size: 12px;
+}
+
+.llm-payload-extra pre {
+  max-height: 220px;
+  padding: 10px;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  background: #f8fafc;
+}
+
 .field-label {
   display: block;
   margin-bottom: 8px;
@@ -820,6 +1090,10 @@ body {
 
 .overview-direction-select {
   width: 96px;
+}
+
+.overview-chart-mode-select {
+  width: 120px;
 }
 
 .overview-indicator-group {
@@ -1020,12 +1294,12 @@ body {
 
 .chat-session-item {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 6px;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 8px;
   align-items: center;
   width: 100%;
   min-width: 0;
-  padding: 6px 8px 6px 12px;
+  padding: 6px 8px;
   border: 1px solid #e5ebf3;
   border-radius: 6px;
   color: #172033;
@@ -1074,13 +1348,53 @@ body {
   font-size: 12px;
 }
 
+.chat-session-bulkbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 38px;
+  padding: 6px 10px;
+  border-bottom: 1px solid #e5ebf3;
+  color: #64748b;
+  font-size: 12px;
+}
+
+.chat-session-bulkbar > div {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
 .chat-main {
   display: grid;
-  grid-template-rows: minmax(0, 1fr) auto;
+  grid-template-rows: auto minmax(0, 1fr) auto;
   min-width: 0;
   min-height: 0;
   overflow: hidden;
   background: #f8fafc;
+}
+
+.chat-main-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+  min-height: 44px;
+  padding: 8px 18px;
+  border-bottom: 1px solid #e5ebf3;
+  background: #ffffff;
+}
+
+.chat-main-toolbar span {
+  overflow: hidden;
+  min-width: 0;
+  color: #334155;
+  font-size: 13px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .chat-history {
@@ -1135,6 +1449,7 @@ body {
 }
 
 .chat-answer {
+  position: relative;
   justify-self: start;
   overflow: hidden;
   width: min(980px, 100%);
@@ -1144,6 +1459,13 @@ body {
   border: 1px solid #dbe4ef;
   border-radius: 6px;
   background: #ffffff;
+}
+
+.chat-answer-actions {
+  display: flex;
+  justify-content: flex-end;
+  min-height: 26px;
+  margin: -8px -8px 4px 0;
 }
 
 .chat-history-end {
@@ -1319,7 +1641,7 @@ body {
   animation: caret-blink 1s steps(2, start) infinite;
 }
 
-.chat-progress-note {
+.llm-progress-note {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -1331,12 +1653,16 @@ body {
   line-height: 1.5;
 }
 
-.chat-progress-note .ant-spin {
+.llm-progress-note .ant-spin {
   flex: 0 0 auto;
 }
 
-.chat-progress-note span:not(.ant-spin-dot-item) {
+.llm-progress-note span:not(.ant-spin-dot-item) {
   min-width: 0;
+}
+
+.threshold-progress-note {
+  margin-top: 4px;
 }
 
 @keyframes caret-blink {

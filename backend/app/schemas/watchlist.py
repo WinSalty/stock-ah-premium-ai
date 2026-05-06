@@ -22,10 +22,12 @@ class WatchlistCreate(BaseModel):
     preferred_direction: str = "HA"
     target_premium_pct: Decimal | None = None
     push_enabled: bool = True
-    price_alert_enabled: bool = False
-    price_alert_market: str = "UNKNOWN"
-    price_alert_operator: str = "GTE"
-    price_alert_target_price: Decimal | None = None
+    a_price_alert_enabled: bool = False
+    a_price_alert_operator: str = "GTE"
+    a_price_alert_target_price: Decimal | None = None
+    h_price_alert_enabled: bool = False
+    h_price_alert_operator: str = "GTE"
+    h_price_alert_target_price: Decimal | None = None
     holding_market: str = "UNKNOWN"
     sort_order: int = 1000
     note: str | None = None
@@ -43,10 +45,12 @@ class WatchlistUpdate(BaseModel):
     preferred_direction: str | None = None
     target_premium_pct: Decimal | None = None
     push_enabled: bool | None = None
-    price_alert_enabled: bool | None = None
-    price_alert_market: str | None = None
-    price_alert_operator: str | None = None
-    price_alert_target_price: Decimal | None = None
+    a_price_alert_enabled: bool | None = None
+    a_price_alert_operator: str | None = None
+    a_price_alert_target_price: Decimal | None = None
+    h_price_alert_enabled: bool | None = None
+    h_price_alert_operator: str | None = None
+    h_price_alert_target_price: Decimal | None = None
     holding_market: str | None = None
     sort_order: int | None = None
     note: str | None = None
@@ -68,10 +72,12 @@ class WatchlistResponse(OrmModel):
     preferred_direction: str
     target_premium_pct: Decimal | None
     push_enabled: bool
-    price_alert_enabled: bool
-    price_alert_market: str
-    price_alert_operator: str
-    price_alert_target_price: Decimal | None
+    a_price_alert_enabled: bool
+    a_price_alert_operator: str
+    a_price_alert_target_price: Decimal | None
+    h_price_alert_enabled: bool
+    h_price_alert_operator: str
+    h_price_alert_target_price: Decimal | None
     holding_market: str
     sort_order: int
     note: str | None

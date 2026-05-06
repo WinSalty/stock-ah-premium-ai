@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
@@ -42,6 +42,7 @@ def test_list_llm_metrics_filters_and_summarizes_rows() -> None:
     Base.metadata.create_all(engine)
     with Session(engine) as db:
         user = add_user(db)
+        metric_time = datetime.combine(date.today(), datetime.min.time())
         db.add_all(
             [
                 LlmCallMetric(
@@ -49,6 +50,8 @@ def test_list_llm_metrics_filters_and_summarizes_rows() -> None:
                     user_id=user.id,
                     session_id=7,
                     phase="answer_stream",
+                    phase_label="流式回答",
+                    phase_description="流式回答主体完成记录。",
                     provider="DeepSeek",
                     model="deepseek-v4-flash",
                     success=1,
@@ -57,6 +60,10 @@ def test_list_llm_metrics_filters_and_summarizes_rows() -> None:
                     output_chars=120,
                     chunk_count=8,
                     row_count=3,
+                    request_payload_json='{"model":"deepseek-v4-flash"}',
+                    response_content="阶段回答内容",
+                    created_at=metric_time,
+                    updated_at=metric_time,
                 ),
                 LlmCallMetric(
                     question_id="trace-002",
@@ -67,6 +74,8 @@ def test_list_llm_metrics_filters_and_summarizes_rows() -> None:
                     model="qwen3.6-flash",
                     success=1,
                     elapsed_ms=320.0,
+                    created_at=metric_time,
+                    updated_at=metric_time,
                 ),
             ]
         )
@@ -87,3 +96,6 @@ def test_list_llm_metrics_filters_and_summarizes_rows() -> None:
     assert result.summary.avg_first_chunk_ms == 260.4
     assert result.rows[0].question_id == "trace-001"
     assert result.rows[0].model == "deepseek-v4-flash"
+    assert result.rows[0].phase_label == "流式回答"
+    assert result.rows[0].request_payload_json == '{"model":"deepseek-v4-flash"}'
+    assert result.rows[0].response_content == "阶段回答内容"

@@ -20,6 +20,7 @@ from app.db.models.notification import AlertEvent, PushplusBinding
 from app.schemas.watchlist import WatchlistCreate
 from app.services.notification_service import (
     EVENT_PRICE_REACHED,
+    EVENT_THRESHOLD_REACHED,
     NotificationError,
     NotificationService,
 )
@@ -248,8 +249,8 @@ def test_bound_user_cannot_create_pushplus_qr_code() -> None:
     assert "不支持重复绑定" in error_message
 
 
-def test_threshold_alert_pushes_once_per_trading_day() -> None:
-    """确认阈值触发仅在共同交易日推送且同一天去重。
+def test_threshold_alert_pushes_once_per_deviation_level() -> None:
+    """确认阈值提醒同一偏离档位去重，偏离增加到新档位后再次推送。
 
     创建日期：2026-05-05
     author: sunshengxian
@@ -275,7 +276,7 @@ def test_threshold_alert_pushes_once_per_trading_day() -> None:
                 )
             ]
         )
-        add_realtime_quotes(db)
+        add_realtime_quotes(db, a_price=Decimal("98"))
         db.commit()
 
         first_events = NotificationService(db, pushplus_client=fake_client).scan_alerts_for_day(
@@ -288,16 +289,70 @@ def test_threshold_alert_pushes_once_per_trading_day() -> None:
             user.id,
             datetime(2026, 5, 5, 10, 30, 1, tzinfo=LOCAL_TEST_TZ),
         )
+        add_realtime_quotes(
+            db,
+            a_price=Decimal("99"),
+            quote_time=datetime(2026, 5, 5, 10, 30, 2),
+        )
+        db.commit()
+        third_events = NotificationService(db, pushplus_client=fake_client).scan_alerts_for_day(
+            target_day,
+            user.id,
+            datetime(2026, 5, 5, 10, 30, 3, tzinfo=LOCAL_TEST_TZ),
+        )
 
-        total_events = db.scalar(select(AlertEvent))
+        total_events = list(db.scalars(select(AlertEvent)).all())
 
     assert len(first_events) == 1
     assert second_events == []
-    assert total_events is not None
-    assert len(fake_client.sent) == 1
+    assert len(third_events) == 1
+    assert third_events[0].event_type == EVENT_THRESHOLD_REACHED
+    assert len(total_events) == 2
+    assert len(fake_client.sent) == 2
     assert "<table" in fake_client.sent[0][2]
     assert "当前溢价" in fake_client.sent[0][2]
     assert "目标阈值" in fake_client.sent[0][2]
+
+
+def test_threshold_alert_limits_daily_event_type_to_five_per_user() -> None:
+    """确认阈值提醒每个用户每天最多推送五条。
+
+    创建日期：2026-05-05
+    author: sunshengxian
+    """
+
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    target_day = date(2026, 5, 5)
+    fake_client = FakePushplusClient()
+    with Session(engine) as db:
+        user = add_user_with_binding(db)
+        add_joint_trade_day(db, target_day)
+        for index in range(6):
+            a_ts_code = f"60003{index}.SH"
+            hk_ts_code = f"0396{index}.HK"
+            db.add(
+                WatchlistStock(
+                    user_id=user.id,
+                    a_ts_code=a_ts_code,
+                    hk_ts_code=hk_ts_code,
+                    display_name=f"测试股票{index}",
+                    preferred_direction="AH",
+                    target_premium_pct=Decimal("30"),
+                    is_active=True,
+                )
+            )
+            add_realtime_quotes(db, a_ts_code=a_ts_code, hk_ts_code=hk_ts_code)
+        db.commit()
+
+        events = NotificationService(db, pushplus_client=fake_client).scan_alerts_for_day(
+            target_day,
+            user.id,
+            datetime(2026, 5, 5, 10, 30, 0, tzinfo=LOCAL_TEST_TZ),
+        )
+
+    assert len(events) == 5
+    assert len(fake_client.sent) == 5
 
 
 def test_pushplus_callback_binds_user_from_qr_content() -> None:
@@ -635,10 +690,9 @@ def test_price_alert_skips_when_market_is_closed() -> None:
                     user_id=user.id,
                     a_ts_code="600036.SH",
                     hk_ts_code="03968.HK",
-                    price_alert_enabled=True,
-                    price_alert_market="A",
-                    price_alert_operator="GTE",
-                    price_alert_target_price=Decimal("35"),
+                    a_price_alert_enabled=True,
+                    a_price_alert_operator="GTE",
+                    a_price_alert_target_price=Decimal("35"),
                     is_active=True,
                 ),
             ]
@@ -656,8 +710,8 @@ def test_price_alert_skips_when_market_is_closed() -> None:
     assert fake_client.sent == []
 
 
-def test_price_alert_pushes_once_per_trading_day() -> None:
-    """确认股价提醒达到用户价格后同一天仅推送一次。
+def test_price_alert_pushes_once_per_deviation_level() -> None:
+    """确认股价提醒同一偏离档位去重，价格偏离增加到新档位后再次推送。
 
     创建日期：2026-05-05
     author: sunshengxian
@@ -676,15 +730,14 @@ def test_price_alert_pushes_once_per_trading_day() -> None:
                     user_id=user.id,
                     a_ts_code="600036.SH",
                     hk_ts_code="03968.HK",
-                    price_alert_enabled=True,
-                    price_alert_market="A",
-                    price_alert_operator="LTE",
-                    price_alert_target_price=Decimal("35"),
+                    a_price_alert_enabled=True,
+                    a_price_alert_operator="LTE",
+                    a_price_alert_target_price=Decimal("35"),
                     is_active=True,
                 ),
             ]
         )
-        add_realtime_quotes(db, a_price=Decimal("34.8"))
+        add_realtime_quotes(db, a_price=Decimal("35"))
         db.commit()
 
         first_events = NotificationService(db, pushplus_client=fake_client).scan_alerts_for_day(
@@ -698,10 +751,65 @@ def test_price_alert_pushes_once_per_trading_day() -> None:
             user.id,
             datetime(2026, 5, 5, 10, 30, 1, tzinfo=LOCAL_TEST_TZ),
         )
+        add_realtime_quotes(
+            db,
+            a_price=Decimal("34.2"),
+            quote_time=datetime(2026, 5, 5, 10, 30, 2),
+        )
+        db.commit()
+        third_events = NotificationService(db, pushplus_client=fake_client).scan_alerts_for_day(
+            target_day,
+            user.id,
+            datetime(2026, 5, 5, 10, 30, 3, tzinfo=LOCAL_TEST_TZ),
+        )
 
     assert len(first_events) == 1
     assert first_event_type == EVENT_PRICE_REACHED
     assert second_events == []
-    assert len(fake_client.sent) == 1
+    assert len(third_events) == 1
+    assert len(fake_client.sent) == 2
     assert "当前价格" in fake_client.sent[0][2]
     assert "目标价格" in fake_client.sent[0][2]
+
+
+def test_price_alert_supports_a_and_h_markets() -> None:
+    """确认同一自选股可同时触发 A 股和 H 股股价提醒。
+
+    创建日期：2026-05-06
+    author: sunshengxian
+    """
+
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    target_day = date(2026, 5, 5)
+    fake_client = FakePushplusClient()
+    with Session(engine) as db:
+        user = add_user_with_binding(db)
+        add_joint_trade_day(db, target_day)
+        db.add(
+            WatchlistStock(
+                user_id=user.id,
+                a_ts_code="600036.SH",
+                hk_ts_code="03968.HK",
+                a_price_alert_enabled=True,
+                a_price_alert_operator="GTE",
+                a_price_alert_target_price=Decimal("35"),
+                h_price_alert_enabled=True,
+                h_price_alert_operator="LTE",
+                h_price_alert_target_price=Decimal("9"),
+                is_active=True,
+            )
+        )
+        add_realtime_quotes(db, a_price=Decimal("36"), hk_price=Decimal("8.8"))
+        db.commit()
+
+        events = NotificationService(db, pushplus_client=fake_client).scan_alerts_for_day(
+            target_day,
+            user.id,
+            datetime(2026, 5, 5, 10, 30, 0, tzinfo=LOCAL_TEST_TZ),
+        )
+        event_markets = {event.price_alert_market for event in events}
+
+    assert len(events) == 2
+    assert event_markets == {"A", "H"}
+    assert len(fake_client.sent) == 2

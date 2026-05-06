@@ -143,8 +143,8 @@ def test_investment_advisor_prompt_allows_professional_opinions() -> None:
     assert "不要输出“不构成投资建议”" in INVESTMENT_ADVISOR_SYSTEM_PROMPT
 
 
-def test_clear_investment_question_uses_unified_qwen_router(monkeypatch) -> None:
-    """确认投资问题通过统一 Qwen 路由返回前置信息。
+def test_clear_investment_question_uses_unified_deepseek_router(monkeypatch) -> None:
+    """确认投资问题通过统一 DeepSeek 路由返回前置信息。
 
     创建日期：2026-05-05
     author: sunshengxian
@@ -186,7 +186,7 @@ def test_clear_investment_question_uses_unified_qwen_router(monkeypatch) -> None
     assert route.should_query_data is False
     assert route.use_knowledge is True
     assert route.knowledge_category_keys == ("company_research",)
-    assert captured["model"] == "qwen3.6-flash"
+    assert captured["model"] == "deepseek-v4-flash"
     assert captured["phase"] == "question_router"
     assert "knowledge_catalog" in str(captured["prompt"])
 
@@ -206,6 +206,26 @@ def test_report_analysis_question_skips_data_query() -> None:
     question = "寒武纪深度价值投资报告的核心买点和反证条件是什么？"
 
     assert service._should_query_data(question, {}) is False
+
+
+def test_llm_trace_id_is_unique_for_each_question_turn() -> None:
+    """确认相同问题在不同轮问答中也会生成不同追踪 ID。
+
+    创建日期：2026-05-06
+    author: sunshengxian
+    """
+
+    service = LlmService(
+        Mock(),
+        settings=Settings(llm_api_key="test-key", llm_api_key_file=None, llm_model="test-model"),
+    )
+
+    first_trace_id = service._new_trace_id()
+    second_trace_id = service._new_trace_id()
+
+    assert first_trace_id != second_trace_id
+    assert len(first_trace_id) == 32
+    assert len(second_trace_id) == 32
 
 
 def test_investment_knowledge_selects_stock_factor_category() -> None:
@@ -434,8 +454,8 @@ def test_qwen_chat_model_uses_qwen_endpoint(monkeypatch) -> None:
     assert captured["payload"]["model"] == "qwen3.6-flash"
 
 
-def test_uncertain_question_scope_uses_qwen_flash_router(monkeypatch) -> None:
-    """确认本地规则不确定时使用 Qwen 3.6 Flash 路由。
+def test_uncertain_question_scope_uses_deepseek_flash_router(monkeypatch) -> None:
+    """确认本地规则不确定时使用 DeepSeek Flash 路由。
 
     创建日期：2026-05-04
     author: sunshengxian
@@ -490,7 +510,7 @@ def test_uncertain_question_scope_uses_qwen_flash_router(monkeypatch) -> None:
     )
 
     assert service._is_investment_related_question("这件事是否值得继续推进")
-    assert captured_payload["model"] == "qwen3.6-flash"
+    assert captured_payload["model"] == "deepseek-v4-flash"
 
 
 def test_service_intro_question_skips_classifier_and_returns_role_intro(monkeypatch) -> None:
@@ -572,6 +592,7 @@ def test_llm_completion_metric_is_persisted() -> None:
             ),
             perf_counter() - 0.01,
             "ok",
+            '{"model":"qwen3.6-flash"}',
         )
 
         metric = db.scalar(select(LlmCallMetric).where(LlmCallMetric.question_id == "1234567"))
@@ -584,6 +605,9 @@ def test_llm_completion_metric_is_persisted() -> None:
     assert metric.session_id == 18
     assert metric.output_chars == 2
     assert metric.elapsed_ms is not None
+    assert metric.phase_label == "非流式回答"
+    assert metric.request_payload_json == '{"model":"qwen3.6-flash"}'
+    assert metric.response_content == "ok"
 
 
 def test_daily_llm_call_limit_counts_external_main_phases_only() -> None:

@@ -91,6 +91,8 @@ export interface LlmMetricItem {
   user_id: number | null;
   session_id: number | null;
   phase: string;
+  phase_label: string | null;
+  phase_description: string | null;
   provider: string | null;
   model: string | null;
   success: boolean;
@@ -99,6 +101,8 @@ export interface LlmMetricItem {
   output_chars: number;
   chunk_count: number;
   row_count: number;
+  request_payload_json: string | null;
+  response_content: string | null;
   error_message: string | null;
   created_at: string;
   updated_at: string;
@@ -192,10 +196,12 @@ export interface PremiumItem {
   preferred_direction: PremiumDirection | null;
   target_premium_pct: string | null;
   push_enabled: boolean | null;
-  price_alert_enabled: boolean | null;
-  price_alert_market: PriceAlertMarket | string | null;
-  price_alert_operator: PriceAlertOperator | string | null;
-  price_alert_target_price: string | null;
+  a_price_alert_enabled: boolean | null;
+  a_price_alert_operator: PriceAlertOperator | string | null;
+  a_price_alert_target_price: string | null;
+  h_price_alert_enabled: boolean | null;
+  h_price_alert_operator: PriceAlertOperator | string | null;
+  h_price_alert_target_price: string | null;
   holding_market: HoldingMarket | string | null;
   distance_to_target_pct: string | null;
   opportunity_status: OpportunityStatus | string | null;
@@ -207,6 +213,50 @@ export interface PremiumItem {
 export interface PremiumListResponse {
   total: number;
   items: PremiumItem[];
+}
+
+export interface RealtimeQuoteItem {
+  market: string;
+  symbol: string;
+  last_price: string | null;
+  currency: string;
+  quote_time: string | null;
+  source: string | null;
+  quality: string;
+}
+
+export interface RealtimePremiumItem {
+  a_ts_code: string;
+  hk_ts_code: string;
+  a_name: string | null;
+  hk_name: string | null;
+  display_name: string | null;
+  a_last_price: string | null;
+  hk_last_price: string | null;
+  hkd_cny_rate: string | null;
+  ah_ratio: string | null;
+  ah_premium_pct: string | null;
+  ha_ratio: string | null;
+  ha_premium_pct: string | null;
+  metric_direction: PremiumDirection;
+  metric_premium_pct: string | null;
+  target_premium_pct: string | null;
+  distance_to_target_pct: string | null;
+  opportunity_status: OpportunityStatus | string | null;
+  quote_quality: string;
+  is_realtime: boolean;
+  source: string | null;
+  calculated_at: string;
+  a_quote: RealtimeQuoteItem | null;
+  hk_quote: RealtimeQuoteItem | null;
+  fx_quote: RealtimeQuoteItem | null;
+  watchlist_id: number | null;
+  is_watchlist: boolean;
+}
+
+export interface RealtimePremiumListResponse {
+  total: number;
+  items: RealtimePremiumItem[];
 }
 
 export interface PremiumSummaryResponse {
@@ -283,6 +333,14 @@ export interface ChatSessionDetail extends ChatSession {
   messages: ChatStoredMessage[];
 }
 
+export interface ChatSessionBatchDeleteRequest {
+  session_ids: number[];
+}
+
+export interface ChatSessionBatchDeleteResponse {
+  deleted_count: number;
+}
+
 export interface ChatMessageRequest {
   question: string;
   display_question?: string;
@@ -296,6 +354,11 @@ export interface ChatMessageRequest {
 export interface ChatMessageResponse {
   answer: string;
   rows: Record<string, unknown>[];
+}
+
+export interface ChatTurnExportItem {
+  question: string;
+  answer: string;
 }
 
 export type ChatModel = 'deepseek-v4-flash' | 'deepseek-v4-pro' | 'qwen3.6-flash';
@@ -351,10 +414,12 @@ export interface WatchlistStock {
   preferred_direction: PremiumDirection;
   target_premium_pct: string | null;
   push_enabled: boolean;
-  price_alert_enabled: boolean;
-  price_alert_market: PriceAlertMarket | string;
-  price_alert_operator: PriceAlertOperator | string;
-  price_alert_target_price: string | null;
+  a_price_alert_enabled: boolean;
+  a_price_alert_operator: PriceAlertOperator | string;
+  a_price_alert_target_price: string | null;
+  h_price_alert_enabled: boolean;
+  h_price_alert_operator: PriceAlertOperator | string;
+  h_price_alert_target_price: string | null;
   holding_market: HoldingMarket | string;
   sort_order: number;
   note: string | null;
@@ -375,10 +440,12 @@ export interface WatchlistCreate {
   preferred_direction?: PremiumDirection;
   target_premium_pct?: string | number;
   push_enabled?: boolean;
-  price_alert_enabled?: boolean;
-  price_alert_market?: PriceAlertMarket;
-  price_alert_operator?: PriceAlertOperator;
-  price_alert_target_price?: string | number | null;
+  a_price_alert_enabled?: boolean;
+  a_price_alert_operator?: PriceAlertOperator;
+  a_price_alert_target_price?: string | number | null;
+  h_price_alert_enabled?: boolean;
+  h_price_alert_operator?: PriceAlertOperator;
+  h_price_alert_target_price?: string | number | null;
   holding_market?: HoldingMarket;
   sort_order?: number;
   note?: string;
@@ -390,10 +457,12 @@ export interface WatchlistUpdate {
   preferred_direction?: PremiumDirection;
   target_premium_pct?: string | number | null;
   push_enabled?: boolean | null;
-  price_alert_enabled?: boolean | null;
-  price_alert_market?: PriceAlertMarket | null;
-  price_alert_operator?: PriceAlertOperator | null;
-  price_alert_target_price?: string | number | null;
+  a_price_alert_enabled?: boolean | null;
+  a_price_alert_operator?: PriceAlertOperator | null;
+  a_price_alert_target_price?: string | number | null;
+  h_price_alert_enabled?: boolean | null;
+  h_price_alert_operator?: PriceAlertOperator | null;
+  h_price_alert_target_price?: string | number | null;
   holding_market?: HoldingMarket;
   sort_order?: number;
   note?: string | null;

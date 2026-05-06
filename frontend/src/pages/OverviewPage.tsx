@@ -5,6 +5,10 @@ import {
   Checkbox,
   Col,
   Empty,
+  Form,
+  Image,
+  Input,
+  InputNumber,
   Modal,
   Popover,
   Row,
@@ -12,6 +16,7 @@ import {
   Skeleton,
   Space,
   Statistic,
+  Switch,
   Tag,
   Typography,
   message
@@ -19,38 +24,47 @@ import {
 import ReactECharts from 'echarts-for-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import ReactMarkdown from 'react-markdown';
-import { Bot, GripVertical, SlidersHorizontal } from 'lucide-react';
+import { Bot, GripVertical, QrCode, Settings, SlidersHorizontal, Trash2 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type WheelEvent } from 'react';
+import LlmProgressNote from '../components/LlmProgressNote';
 import PageHeader from '../components/PageHeader';
-import PremiumTable from '../components/PremiumTable';
 import { createChatSession, sendChatMessage } from '../api/chat';
-import { fetchOfficialPremiumTrend, fetchPremiumPairs, fetchPremiumSummary } from '../api/market';
+import {
+  fetchOfficialPremiumTrend,
+  fetchPremiumPairs,
+  fetchPremiumSummary,
+  fetchRealtimePremiums
+} from '../api/market';
 import { fetchOverviewChartSettings, updateOverviewChartSettings } from '../api/settings';
+import { createPushplusQrCode, fetchPushplusBinding } from '../api/notifications';
 import { deleteWatchlistItem, fetchWatchlist, updateWatchlistItem } from '../api/watchlist';
 import type {
+  HoldingMarket,
   OverviewChartSettings,
   PremiumDirection,
-  PremiumItem,
   PremiumPairOption,
+  PriceAlertOperator,
   WatchlistOpportunity
 } from '../types/domain';
-import { formatEast8DateTime } from '../utils/datetime';
 import {
   getCachedThresholdRecommendation,
   setCachedThresholdRecommendation
 } from '../utils/thresholdRecommendationCache';
 import { OVERVIEW_SNIPPETS } from '../constants/overviewSnippets';
+import { THRESHOLD_RECOMMENDATION_PROGRESS_STEPS } from '../constants/llmProgress';
 
 const DEFAULT_PAIR_KEY = '600036.SH|03968.HK';
 const DEFAULT_VISIBLE_MONTHS = 3;
 const MIN_VISIBLE_POINTS = 20;
 const TRACKPAD_WHEEL_UNIT = 80;
+const WATCHLIST_REALTIME_REFRESH_MS = 1000;
 const AH_COLOR = '#e11d48';
 const HA_COLOR = '#0891b2';
 const MEDIAN60_COLOR = '#475569';
 const P20_COLOR = '#16a34a';
 const P80_COLOR = '#f59e0b';
 const TARGET_COLOR = '#7f1d1d';
+const MEDIAN60_LINE_STYLE = { width: 1.8, color: MEDIAN60_COLOR, type: 'dashed' };
 const RANDOM_SNIPPET_COUNT = 4;
 const DEFAULT_OVERVIEW_CHART_SETTINGS: OverviewChartSettings = {
   metric_premium: true,
@@ -70,6 +84,20 @@ const CHART_INDICATOR_OPTIONS: Array<{
   { label: '80%分位', value: 'p80_60' },
   { label: '目标阈值', value: 'target_threshold' }
 ];
+
+interface WatchlistFormValues {
+  display_name?: string;
+  preferred_direction: PremiumDirection;
+  target_premium_pct?: number | null;
+  push_enabled?: boolean;
+  a_price_alert_enabled?: boolean;
+  a_price_alert_operator?: PriceAlertOperator;
+  a_price_alert_target_price?: number | null;
+  h_price_alert_enabled?: boolean;
+  h_price_alert_operator?: PriceAlertOperator;
+  h_price_alert_target_price?: number | null;
+  holding_market: HoldingMarket;
+}
 
 function splitPairKey(value: string) {
   const [aTsCode, hkTsCode] = value.split('|');
@@ -148,6 +176,34 @@ function formatPercent(value?: string | null) {
   return parsed === null ? '-' : `${parsed.toFixed(2)}%`;
 }
 
+function metricToneClass(value?: string | null) {
+  const parsed = numberValue(value);
+  if (parsed === null) {
+    return 'metric-muted';
+  }
+  if (parsed > 0) {
+    return 'metric-positive';
+  }
+  if (parsed < 0) {
+    return 'metric-negative';
+  }
+  return 'metric-neutral';
+}
+
+function percentileToneClass(value?: string | null) {
+  const parsed = numberValue(value);
+  if (parsed === null) {
+    return 'metric-muted';
+  }
+  if (parsed >= 80) {
+    return 'metric-hot';
+  }
+  if (parsed <= 20) {
+    return 'metric-cold';
+  }
+  return 'metric-neutral';
+}
+
 function formatPrice(value?: string | null, market: 'A' | 'H' = 'A') {
   const parsed = numberValue(value);
   if (parsed === null) {
@@ -158,28 +214,78 @@ function formatPrice(value?: string | null, market: 'A' | 'H' = 'A') {
 }
 
 function priceAlertText(item: WatchlistOpportunity) {
-  const market = item.watchlist.price_alert_market;
-  const targetPrice = item.watchlist.price_alert_target_price;
-  if (!item.watchlist.price_alert_enabled || (market !== 'A' && market !== 'H') || targetPrice === null) {
+  const alerts: string[] = [];
+  if (item.watchlist.a_price_alert_enabled && item.watchlist.a_price_alert_target_price !== null) {
+    const operator = item.watchlist.a_price_alert_operator === 'LTE' ? '≤' : '≥';
+    alerts.push(`A 股 ${operator} ${formatPrice(item.watchlist.a_price_alert_target_price, 'A')}`);
+  }
+  if (item.watchlist.h_price_alert_enabled && item.watchlist.h_price_alert_target_price !== null) {
+    const operator = item.watchlist.h_price_alert_operator === 'LTE' ? '≤' : '≥';
+    alerts.push(`H 股 ${operator} ${formatPrice(item.watchlist.h_price_alert_target_price, 'H')}`);
+  }
+  if (alerts.length === 0) {
     return '股价阈值未设';
   }
-  const operator = item.watchlist.price_alert_operator === 'LTE' ? '≤' : '≥';
-  return `${market} 股 ${operator} ${formatPrice(targetPrice, market)}`;
+  return alerts.join(' / ');
+}
+
+function thresholdHelpText(direction?: PremiumDirection) {
+  const directionLabel = direction === 'AH' ? 'A/H' : 'H/A';
+  return `填写 ${directionLabel} 溢价触发线，单位为百分比；留空则只观察不判断达阈值。系统按“当前${directionLabel}溢价 >= 目标阈值”判定达阈值。`;
+}
+
+function hasAlertConfig(values: WatchlistFormValues) {
+  return (
+    values.target_premium_pct !== null &&
+    values.target_premium_pct !== undefined
+  ) || Boolean(
+    (values.a_price_alert_enabled &&
+      values.a_price_alert_target_price !== null &&
+      values.a_price_alert_target_price !== undefined) ||
+      (values.h_price_alert_enabled &&
+        values.h_price_alert_target_price !== null &&
+        values.h_price_alert_target_price !== undefined)
+  );
+}
+
+function isTradingRefreshWindow(now = new Date()) {
+  const day = now.getDay();
+  if (day === 0 || day === 6) {
+    return false;
+  }
+  const minutes = now.getHours() * 60 + now.getMinutes();
+  const morningStart = 9 * 60 + 30;
+  const morningEnd = 12 * 60;
+  const afternoonStart = 13 * 60;
+  const afternoonEnd = 16 * 60;
+  return (minutes >= morningStart && minutes <= morningEnd) || (minutes >= afternoonStart && minutes <= afternoonEnd);
 }
 
 function statusTag(status?: string | null) {
   const labelMap: Record<string, string> = {
     REACHED: '已达阈值',
+    TRIGGERED: '已达阈值',
     NEAR: '接近阈值',
+    NEAR_TARGET: '接近阈值',
     WATCH: '正常观察',
+    WATCHING: '正常观察',
     DATA_ISSUE: '数据异常',
+    DATA_UNAVAILABLE: '数据缺失',
+    DELAYED_ONLY: '行情延迟',
+    NO_TARGET: '未设阈值',
     NOT_CONNECT: '不可操作'
   };
   const colorMap: Record<string, string> = {
     REACHED: 'red',
+    TRIGGERED: 'red',
     NEAR: 'gold',
+    NEAR_TARGET: 'gold',
     WATCH: 'blue',
+    WATCHING: 'blue',
     DATA_ISSUE: 'orange',
+    DATA_UNAVAILABLE: 'orange',
+    DELAYED_ONLY: 'orange',
+    NO_TARGET: 'default',
     NOT_CONNECT: 'default'
   };
   const key = status || 'WATCH';
@@ -203,10 +309,6 @@ function opportunityPairKey(item: WatchlistOpportunity) {
 
 function opportunityDirection(item: WatchlistOpportunity): PremiumDirection {
   return item.premium?.metric_direction || item.watchlist.preferred_direction;
-}
-
-function premiumDirection(value?: string | null): PremiumDirection {
-  return value === 'AH' ? 'AH' : 'HA';
 }
 
 function holdingMarketLabel(value?: string | null) {
@@ -283,6 +385,13 @@ function buildThresholdDisplayQuestion(item: WatchlistOpportunity) {
 }
 
 type RecommendationSource = 'fresh' | 'cached';
+type OverviewChartMode = 'trend' | 'range' | 'deviation';
+
+const OVERVIEW_CHART_MODE_OPTIONS: Array<{ label: string; value: OverviewChartMode }> = [
+  { label: '走势折线', value: 'trend' },
+  { label: '分位区间', value: 'range' },
+  { label: '偏离柱状', value: 'deviation' }
+];
 
 /**
  * 数据总览页面，默认呈现自选股机会状态。
@@ -290,6 +399,14 @@ type RecommendationSource = 'fresh' | 'cached';
  * author: sunshengxian
  */
 function OverviewPage() {
+  const [watchlistForm] = Form.useForm<WatchlistFormValues>();
+  const watchlistDirection = Form.useWatch('preferred_direction', watchlistForm);
+  const watchlistPushEnabled = Form.useWatch('push_enabled', watchlistForm);
+  const watchlistTargetPremium = Form.useWatch('target_premium_pct', watchlistForm);
+  const watchlistAPriceAlertEnabled = Form.useWatch('a_price_alert_enabled', watchlistForm);
+  const watchlistAPriceAlertTarget = Form.useWatch('a_price_alert_target_price', watchlistForm);
+  const watchlistHPriceAlertEnabled = Form.useWatch('h_price_alert_enabled', watchlistForm);
+  const watchlistHPriceAlertTarget = Form.useWatch('h_price_alert_target_price', watchlistForm);
   const chartRef = useRef<ReactECharts | null>(null);
   const wheelDeltaRef = useRef(0);
   const wheelFrameRef = useRef<number | null>(null);
@@ -301,7 +418,10 @@ function OverviewPage() {
   const [orderedOpportunities, setOrderedOpportunities] = useState<WatchlistOpportunity[]>([]);
   const [draggingWatchlistId, setDraggingWatchlistId] = useState<number | null>(null);
   const [aiRecommendation, setAiRecommendation] = useState('');
+  const [aiRecommendationProgress, setAiRecommendationProgress] = useState('');
   const [aiRecommendationSource, setAiRecommendationSource] = useState<RecommendationSource>('fresh');
+  const [chartMode, setChartMode] = useState<OverviewChartMode>('trend');
+  const [watchlistSettingItem, setWatchlistSettingItem] = useState<WatchlistOpportunity | null>(null);
   const queryClient = useQueryClient();
   const { data, isLoading } = useQuery({
     queryKey: ['premium-summary'],
@@ -309,6 +429,53 @@ function OverviewPage() {
   });
   const pairs = useQuery({ queryKey: ['premium-pairs'], queryFn: () => fetchPremiumPairs() });
   const watchlist = useQuery({ queryKey: ['watchlist'], queryFn: () => fetchWatchlist() });
+  const pushplusBinding = useQuery({
+    queryKey: ['pushplus-binding'],
+    queryFn: fetchPushplusBinding
+  });
+  const qrCodeMutation = useMutation({
+    mutationFn: () => createPushplusQrCode({ expire_seconds: 604800, scan_count: 1 }),
+    onError: (error) => message.error(error instanceof Error ? error.message : '生成二维码失败')
+  });
+  const realtimeWatchlist = useQuery({
+    queryKey: ['persist-realtime-watchlist-opportunities'],
+    queryFn: () => fetchRealtimePremiums({ only_watchlist: true, page_size: 200 }),
+    enabled: Boolean(watchlist.data?.length),
+    refetchInterval: () =>
+      document.visibilityState === 'visible' && isTradingRefreshWindow()
+        ? WATCHLIST_REALTIME_REFRESH_MS
+        : false,
+    refetchIntervalInBackground: false,
+    refetchOnWindowFocus: false,
+    staleTime: WATCHLIST_REALTIME_REFRESH_MS
+  });
+  useEffect(() => {
+    if (realtimeWatchlist.data) {
+      queryClient.invalidateQueries({ queryKey: ['watchlist'] });
+      queryClient.invalidateQueries({ queryKey: ['premium-summary'] });
+    }
+  }, [queryClient, realtimeWatchlist.data]);
+  useEffect(() => {
+    if (!qrCodeMutation.data || pushplusBinding.data?.is_bound) {
+      return undefined;
+    }
+    const timer = window.setInterval(() => {
+      queryClient.invalidateQueries({ queryKey: ['pushplus-binding'] });
+    }, 3000);
+    return () => window.clearInterval(timer);
+  }, [pushplusBinding.data?.is_bound, qrCodeMutation.data, queryClient]);
+  const watchlistAutoRefresh = useQuery({
+    queryKey: ['watchlist-auto-refresh'],
+    queryFn: () => fetchWatchlist(),
+    enabled: Boolean(watchlist.data?.length),
+    refetchInterval: () =>
+      document.visibilityState === 'visible' && isTradingRefreshWindow()
+        ? WATCHLIST_REALTIME_REFRESH_MS
+        : false,
+    refetchIntervalInBackground: false,
+    refetchOnWindowFocus: false,
+    staleTime: WATCHLIST_REALTIME_REFRESH_MS
+  });
   const chartSettingsQuery = useQuery({
     queryKey: ['overview-chart-settings'],
     queryFn: fetchOverviewChartSettings
@@ -340,9 +507,19 @@ function OverviewPage() {
     });
     return Array.from(optionMap.values());
   }, [pairs.data]);
-  const serverOpportunities = useMemo(() => watchlist.data || [], [watchlist.data]);
+  const serverOpportunities = watchlistAutoRefresh.data || watchlist.data || [];
   const opportunities = orderedOpportunities;
   const selectedOpportunity = opportunities.find((item) => item.watchlist.id === selectedWatchlistId) || null;
+  const modalHasAlertConfig = hasAlertConfig({
+    preferred_direction: watchlistDirection || 'HA',
+    target_premium_pct: watchlistTargetPremium,
+    a_price_alert_enabled: watchlistAPriceAlertEnabled,
+    a_price_alert_target_price: watchlistAPriceAlertTarget,
+    h_price_alert_enabled: watchlistHPriceAlertEnabled,
+    h_price_alert_target_price: watchlistHPriceAlertTarget,
+    holding_market: 'UNKNOWN'
+  });
+  const modalRequiresBinding = modalHasAlertConfig && watchlistPushEnabled !== false;
   const direction = fallbackDirection;
   const pair = splitPairKey(pairKey);
   const chartWatchlist = opportunities.find(
@@ -352,21 +529,6 @@ function OverviewPage() {
     queryKey: ['official-premium-trend', pair.aTsCode, pair.hkTsCode, direction],
     enabled: Boolean(pair.aTsCode && pair.hkTsCode),
     queryFn: () => fetchOfficialPremiumTrend(pair.aTsCode, pair.hkTsCode, direction)
-  });
-  const removeWatchlistMutation = useMutation({
-    mutationFn: (item: PremiumItem) => {
-      if (!item.watchlist_id) {
-        throw new Error('自选股不存在');
-      }
-      return deleteWatchlistItem(item.watchlist_id);
-    },
-    onSuccess: () => {
-      message.success('已取消自选');
-      queryClient.invalidateQueries({ queryKey: ['watchlist'] });
-      queryClient.invalidateQueries({ queryKey: ['premium-summary'] });
-      queryClient.invalidateQueries({ queryKey: ['premiums'] });
-    },
-    onError: (error) => message.error(error instanceof Error ? error.message : '取消自选失败')
   });
   const reorderMutation = useMutation({
     mutationFn: (items: WatchlistOpportunity[]) =>
@@ -386,27 +548,88 @@ function OverviewPage() {
       message.error(error instanceof Error ? error.message : '自选排序保存失败');
     }
   });
+  const watchlistSettingMutation = useMutation({
+    mutationFn: ({ item, values }: { item: WatchlistOpportunity; values: WatchlistFormValues }) =>
+      updateWatchlistItem(item.watchlist.id, {
+        display_name: values.display_name?.trim() || null,
+        preferred_direction: values.preferred_direction,
+        target_premium_pct: values.target_premium_pct ?? null,
+        push_enabled: values.push_enabled ?? true,
+        a_price_alert_enabled: Boolean(values.a_price_alert_enabled),
+        a_price_alert_operator: values.a_price_alert_operator || 'GTE',
+        a_price_alert_target_price: values.a_price_alert_target_price ?? null,
+        h_price_alert_enabled: Boolean(values.h_price_alert_enabled),
+        h_price_alert_operator: values.h_price_alert_operator || 'GTE',
+        h_price_alert_target_price: values.h_price_alert_target_price ?? null,
+        holding_market: values.holding_market
+      }),
+    onSuccess: (_, variables) => {
+      message.success('自选配置已更新');
+      setWatchlistSettingItem(null);
+      watchlistForm.resetFields();
+      if (variables.item.watchlist.id === selectedWatchlistId) {
+        setFallbackDirection(variables.values.preferred_direction);
+      }
+      queryClient.invalidateQueries({ queryKey: ['watchlist'] });
+      queryClient.invalidateQueries({ queryKey: ['premium-summary'] });
+      queryClient.invalidateQueries({ queryKey: ['premiums'] });
+    },
+    onError: (error) => message.error(error instanceof Error ? error.message : '保存自选失败')
+  });
+  const removeWatchlistMutation = useMutation({
+    mutationFn: (item: WatchlistOpportunity) => deleteWatchlistItem(item.watchlist.id),
+    onSuccess: (_, item) => {
+      message.success('已取消自选');
+      setOrderedOpportunities((items) =>
+        items.filter((current) => current.watchlist.id !== item.watchlist.id)
+      );
+      if (selectedWatchlistId === item.watchlist.id) {
+        setSelectedWatchlistId(null);
+        setAiRecommendation('');
+        setAiRecommendationProgress('');
+        setAiRecommendationSource('fresh');
+      }
+      queryClient.invalidateQueries({ queryKey: ['watchlist'] });
+      queryClient.invalidateQueries({ queryKey: ['premium-summary'] });
+      queryClient.invalidateQueries({ queryKey: ['premiums'] });
+    },
+    onError: (error) => message.error(error instanceof Error ? error.message : '取消自选失败')
+  });
   const aiRecommendationMutation = useMutation({
     mutationFn: async (item: WatchlistOpportunity) => {
+      setAiRecommendationProgress(THRESHOLD_RECOMMENDATION_PROGRESS_STEPS[0]);
+      let progressIndex = 0;
+      let progressTimer: number | null = window.setInterval(() => {
+        progressIndex = Math.min(progressIndex + 1, THRESHOLD_RECOMMENDATION_PROGRESS_STEPS.length - 1);
+        setAiRecommendationProgress(THRESHOLD_RECOMMENDATION_PROGRESS_STEPS[progressIndex]);
+      }, 2600);
       const direction = opportunityDirection(item);
       const cacheInput = {
         aTsCode: item.watchlist.a_ts_code,
         hkTsCode: item.watchlist.hk_ts_code,
         direction
       };
-      const cached = getCachedThresholdRecommendation(cacheInput);
-      if (cached) {
-        return { answer: cached.answer, source: 'cached' as RecommendationSource };
+      try {
+        const cached = getCachedThresholdRecommendation(cacheInput);
+        if (cached) {
+          return { answer: cached.answer, source: 'cached' as RecommendationSource };
+        }
+        const session = await createChatSession(`阈值建议：${opportunityName(item)}`);
+        const result = await sendChatMessage(session.id, {
+          question: buildThresholdRecommendationPrompt(item),
+          display_question: buildThresholdDisplayQuestion(item),
+          only_watchlist: true,
+          ts_code: item.watchlist.a_ts_code
+        });
+        setCachedThresholdRecommendation(cacheInput, result.answer);
+        return { answer: result.answer, source: 'fresh' as RecommendationSource };
+      } finally {
+        if (progressTimer !== null) {
+          window.clearInterval(progressTimer);
+          progressTimer = null;
+        }
+        setAiRecommendationProgress('');
       }
-      const session = await createChatSession(`阈值建议：${opportunityName(item)}`);
-      const result = await sendChatMessage(session.id, {
-        question: buildThresholdRecommendationPrompt(item),
-        display_question: buildThresholdDisplayQuestion(item),
-        only_watchlist: true,
-        ts_code: item.watchlist.a_ts_code
-      });
-      setCachedThresholdRecommendation(cacheInput, result.answer);
-      return { answer: result.answer, source: 'fresh' as RecommendationSource };
     },
     onSuccess: (result) => {
       setAiRecommendation(result.answer);
@@ -456,9 +679,6 @@ function OverviewPage() {
     setPairKey(`${fallbackPair.a_ts_code}|${fallbackPair.hk_ts_code}`);
   }, [isManualChart, pairKey, pairOptions, selectedOpportunity]);
 
-  const watchlistPremiums = opportunities
-    .map((item) => item.premium)
-    .filter((item): item is PremiumItem => Boolean(item));
   const statusCounts = opportunities.reduce<Record<string, number>>((acc, item) => {
     const key = item.premium?.opportunity_status || 'DATA_ISSUE';
     acc[key] = (acc[key] || 0) + 1;
@@ -524,26 +744,6 @@ function OverviewPage() {
     setFallbackDirection(value);
   };
 
-  const onRemoveWatchlist = (item: PremiumItem) => {
-    Modal.confirm({
-      title: '取消自选',
-      content: `${item.a_name || item.a_ts_code} / ${item.hk_name || item.hk_ts_code}`,
-      okText: '取消自选',
-      okButtonProps: { danger: true },
-      cancelText: '保留',
-      onOk: () => removeWatchlistMutation.mutateAsync(item)
-    });
-  };
-
-  const onShowPremiumTrend = (item: PremiumItem) => {
-    setIsManualChart(!item.watchlist_id);
-    setSelectedWatchlistId(item.watchlist_id || null);
-    setPairKey(`${item.a_ts_code}|${item.hk_ts_code}`);
-    setFallbackDirection(premiumDirection(item.metric_direction));
-    setAiRecommendation('');
-    setAiRecommendationSource('fresh');
-  };
-
   const onDropOpportunity = (targetId: number) => {
     if (!draggingWatchlistId || draggingWatchlistId === targetId) {
       setDraggingWatchlistId(null);
@@ -561,8 +761,52 @@ function OverviewPage() {
       return;
     }
     setAiRecommendation('');
+    setAiRecommendationProgress('');
     setAiRecommendationSource('fresh');
     aiRecommendationMutation.mutate(selectedOpportunity);
+  };
+
+  const onOpenWatchlistSetting = (item: WatchlistOpportunity) => {
+    watchlistForm.setFieldsValue({
+      display_name: item.watchlist.display_name || opportunityName(item),
+      preferred_direction: item.watchlist.preferred_direction || opportunityDirection(item),
+      target_premium_pct: numberValue(item.watchlist.target_premium_pct),
+      push_enabled: item.watchlist.push_enabled ?? true,
+      a_price_alert_enabled: Boolean(item.watchlist.a_price_alert_enabled),
+      a_price_alert_operator: (item.watchlist.a_price_alert_operator as PriceAlertOperator) || 'GTE',
+      a_price_alert_target_price: numberValue(item.watchlist.a_price_alert_target_price),
+      h_price_alert_enabled: Boolean(item.watchlist.h_price_alert_enabled),
+      h_price_alert_operator: (item.watchlist.h_price_alert_operator as PriceAlertOperator) || 'GTE',
+      h_price_alert_target_price: numberValue(item.watchlist.h_price_alert_target_price),
+      holding_market: (item.watchlist.holding_market as HoldingMarket) || 'UNKNOWN'
+    });
+    setWatchlistSettingItem(item);
+  };
+
+  const onSubmitWatchlistSetting = async () => {
+    if (!watchlistSettingItem) {
+      return;
+    }
+    const values = await watchlistForm.validateFields();
+    if (hasAlertConfig(values) && values.push_enabled !== false && !pushplusBinding.data?.is_bound) {
+      message.warning('设置提醒前请先完成 PushPlus 扫码绑定');
+      if (!qrCodeMutation.data && !qrCodeMutation.isPending) {
+        qrCodeMutation.mutate();
+      }
+      return;
+    }
+    watchlistSettingMutation.mutate({ item: watchlistSettingItem, values });
+  };
+
+  const onRemoveWatchlist = (item: WatchlistOpportunity) => {
+    Modal.confirm({
+      title: '取消自选',
+      content: `${opportunityName(item)}（${item.watchlist.a_ts_code} / ${item.watchlist.hk_ts_code}）`,
+      okText: '取消自选',
+      okButtonProps: { danger: true },
+      cancelText: '保留',
+      onOk: () => removeWatchlistMutation.mutateAsync(item)
+    });
   };
 
   const onChangeChartIndicators = (values: Array<string | number | boolean>) => {
@@ -648,9 +892,36 @@ function OverviewPage() {
   );
 
   const trendChartOption = useMemo(() => {
-    const series: Array<
-      Record<string, unknown> & { lineStyle: { color: string; width: number; type?: string } }
-    > = [];
+    const zoomConfig = [
+      {
+        type: 'inside',
+        throttle: 120,
+        startValue: defaultZoomStartValue,
+        endValue: defaultZoomEndValue,
+        minValueSpan: minZoomValueSpan,
+        zoomOnMouseWheel: false,
+        moveOnMouseWheel: false,
+        moveOnMouseMove: true,
+        preventDefaultMouseMove: true
+      },
+      {
+        type: 'slider',
+        height: 26,
+        bottom: 18,
+        brushSelect: false,
+        startValue: defaultZoomStartValue,
+        endValue: defaultZoomEndValue,
+        minValueSpan: minZoomValueSpan
+      }
+    ];
+    const baseTooltip = {
+      trigger: 'axis',
+      valueFormatter: (value: number | string) => {
+        const parsed = Number(value);
+        return Number.isFinite(parsed) ? `${parsed.toFixed(2)}%` : '-';
+      }
+    };
+    const series: Array<Record<string, unknown>> = [];
     if (chartSettings.metric_premium) {
       series.push({
         name: `${directionLabel} 溢价`,
@@ -671,7 +942,7 @@ function OverviewPage() {
         smooth: false,
         showSymbol: false,
         data: trend.data?.map((item) => numberValue(item.premium_median_60)) || [],
-        lineStyle: { width: 1.8, color: MEDIAN60_COLOR, type: 'dashed' },
+        lineStyle: MEDIAN60_LINE_STYLE,
         itemStyle: { color: MEDIAN60_COLOR }
       });
     }
@@ -707,39 +978,118 @@ function OverviewPage() {
         itemStyle: { color: TARGET_COLOR }
       });
     }
-    return {
-      color: series.map((item) => item.lineStyle.color),
-      tooltip: {
-        trigger: 'axis',
-        valueFormatter: (value: number | string) => {
-          const parsed = Number(value);
-          return Number.isFinite(parsed) ? `${parsed.toFixed(2)}%` : '-';
-        }
-      },
-      legend: { top: 0, right: 16 },
-      grid: { left: 54, right: 24, top: 42, bottom: 78 },
-      dataZoom: [
+    if (chartMode === 'range') {
+      const p20Data = trend.data?.map((item) => numberValue(item.premium_p20_60)) || [];
+      const p80Data = trend.data?.map((item) => numberValue(item.premium_p80_60)) || [];
+      const bandData = p80Data.map((value, index) => {
+        const p20 = p20Data[index];
+        return value === null || p20 === null ? null : Number((value - p20).toFixed(2));
+      });
+      const rangeSeries = [
         {
-          type: 'inside',
-          throttle: 120,
-          startValue: defaultZoomStartValue,
-          endValue: defaultZoomEndValue,
-          minValueSpan: minZoomValueSpan,
-          zoomOnMouseWheel: false,
-          moveOnMouseWheel: false,
-          moveOnMouseMove: true,
-          preventDefaultMouseMove: true
+          name: '20%分位',
+          type: 'line',
+          showSymbol: false,
+          stack: 'percentile-band',
+          data: p20Data,
+          lineStyle: { width: 1.5, color: P20_COLOR, type: 'dotted' },
+          itemStyle: { color: P20_COLOR }
         },
         {
-          type: 'slider',
-          height: 26,
-          bottom: 18,
-          brushSelect: false,
-          startValue: defaultZoomStartValue,
-          endValue: defaultZoomEndValue,
-          minValueSpan: minZoomValueSpan
-        }
-      ],
+          name: '20%-80%分位带',
+          type: 'line',
+          showSymbol: false,
+          stack: 'percentile-band',
+          data: bandData,
+          lineStyle: { width: 0, color: P80_COLOR },
+          areaStyle: { color: P80_COLOR, opacity: 0.16 },
+          itemStyle: { color: P80_COLOR }
+        },
+        {
+          name: `${directionLabel} 当前值`,
+          type: 'scatter',
+          symbolSize: 8,
+          data: trend.data?.map((item) => numberValue(item.metric_premium_pct)) || [],
+          itemStyle: { color: premiumColor }
+        },
+        {
+          name: '60日中位数',
+          type: 'line',
+          showSymbol: false,
+          data: trend.data?.map((item) => numberValue(item.premium_median_60)) || [],
+          lineStyle: MEDIAN60_LINE_STYLE,
+          itemStyle: { color: MEDIAN60_COLOR }
+        },
+        ...(targetValue !== null
+          ? [
+              {
+                name: '目标阈值',
+                type: 'line',
+                showSymbol: false,
+                data: trendDates.map(() => targetValue),
+                lineStyle: { width: 2, color: TARGET_COLOR, type: 'dotted' },
+                itemStyle: { color: TARGET_COLOR }
+              }
+            ]
+          : [])
+      ];
+      return {
+        color: [P20_COLOR, P80_COLOR, premiumColor, MEDIAN60_COLOR, TARGET_COLOR],
+        tooltip: baseTooltip,
+        legend: { top: 0, right: 16 },
+        grid: { left: 54, right: 24, top: 42, bottom: 78 },
+        dataZoom: zoomConfig,
+        xAxis: { type: 'category', data: trendDates, axisLabel: { hideOverlap: true } },
+        yAxis: { type: 'value', scale: true, axisLabel: { formatter: '{value}%' } },
+        series: rangeSeries
+      };
+    }
+    if (chartMode === 'deviation') {
+      const deviationData =
+        trend.data?.map((item) => {
+          const current = numberValue(item.metric_premium_pct);
+          const median = numberValue(item.premium_median_60);
+          return current === null || median === null ? null : Number((current - median).toFixed(2));
+        }) || [];
+      return {
+        color: [premiumColor, TARGET_COLOR],
+        tooltip: baseTooltip,
+        legend: { top: 0, right: 16 },
+        grid: { left: 54, right: 24, top: 42, bottom: 78 },
+        dataZoom: zoomConfig,
+        xAxis: { type: 'category', data: trendDates, axisLabel: { hideOverlap: true } },
+        yAxis: { type: 'value', scale: true, axisLabel: { formatter: '{value}%' } },
+        series: [
+          {
+            name: '偏离60日中位数',
+            type: 'bar',
+            data: deviationData,
+            itemStyle: {
+              color: (params: { value: number | null }) => {
+                if (params.value === null || params.value === 0) {
+                  return MEDIAN60_COLOR;
+                }
+                return params.value > 0 ? AH_COLOR : P20_COLOR;
+              }
+            }
+          },
+          {
+            name: '零轴',
+            type: 'line',
+            showSymbol: false,
+            data: trendDates.map(() => 0),
+            lineStyle: { width: 1.5, color: MEDIAN60_COLOR, type: 'dashed' },
+            itemStyle: { color: MEDIAN60_COLOR }
+          }
+        ]
+      };
+    }
+    return {
+      color: [premiumColor, MEDIAN60_COLOR, P20_COLOR, P80_COLOR, TARGET_COLOR],
+      tooltip: baseTooltip,
+      legend: { top: 0, right: 16 },
+      grid: { left: 54, right: 24, top: 42, bottom: 78 },
+      dataZoom: zoomConfig,
       xAxis: {
         type: 'category',
         data: trendDates,
@@ -755,6 +1105,7 @@ function OverviewPage() {
       chartSettings.p20_60,
       chartSettings.p80_60,
       chartSettings.target_threshold,
+      chartMode,
       defaultZoomEndValue,
       defaultZoomStartValue,
       direction,
@@ -770,24 +1121,24 @@ function OverviewPage() {
   return (
     <main className="page">
       <PageHeader title="自选机会台" />
-      <Row gutter={[16, 16]}>
+      <Row className="overview-stat-row" gutter={[16, 16]}>
         <Col xs={24} md={6}>
-          <Card>
+          <Card className="overview-stat-card overview-stat-card-date">
             <Statistic title="最新交易日" value={data?.latest_trade_date || '-'} loading={isLoading} />
           </Card>
         </Col>
         <Col xs={24} md={6}>
-          <Card>
+          <Card className="overview-stat-card overview-stat-card-connect">
             <Statistic title="港股通 AH 记录" value={data?.hk_connect_count || 0} loading={isLoading} />
           </Card>
         </Col>
         <Col xs={24} md={6}>
-          <Card>
+          <Card className="overview-stat-card overview-stat-card-watchlist">
             <Statistic title="自选股票" value={data?.watchlist_count || 0} loading={watchlist.isLoading} />
           </Card>
         </Col>
         <Col xs={24} md={6}>
-          <Card>
+          <Card className="overview-stat-card overview-stat-card-alert">
             <Statistic title="达阈值 / 接近" value={`${statusCounts.REACHED || 0} / ${statusCounts.NEAR || 0}`} />
           </Card>
         </Col>
@@ -795,7 +1146,7 @@ function OverviewPage() {
 
       <section className="panel premium-principle-panel">
         <div className="principle-main">
-          <div className="panel-title">今日价差锦囊</div>
+          <div className="panel-title">今日投研词条</div>
           <Typography.Paragraph className="principle-text">
             {principleSnippets[0]}
           </Typography.Paragraph>
@@ -814,7 +1165,7 @@ function OverviewPage() {
           <div>
             <div className="panel-title">自选机会</div>
             <Typography.Text type="secondary">
-              官方 AH 口径，H/A 由 A/H 反推；港股通通道来自当日沪深港通名单。
+              交易时段实时快照会先写回官方溢价表并打实时标记，卡片始终读取官方表主口径。
             </Typography.Text>
           </div>
           <Button
@@ -830,30 +1181,64 @@ function OverviewPage() {
         ) : opportunities.length ? (
           <div className="opportunity-grid">
             {opportunities.map((item) => (
-              <button
+              <div
                 key={item.watchlist.id}
+                role="button"
+                tabIndex={0}
                 draggable
                 className={`opportunity-card ${item.watchlist.id === selectedWatchlistId ? 'active' : ''}${
                   item.watchlist.id === draggingWatchlistId ? ' dragging' : ''
                 }`}
-                onDragStart={(event: DragEvent<HTMLButtonElement>) => {
+                onDragStart={(event: DragEvent<HTMLDivElement>) => {
                   event.dataTransfer.effectAllowed = 'move';
                   setDraggingWatchlistId(item.watchlist.id);
                 }}
-                onDragOver={(event: DragEvent<HTMLButtonElement>) => {
+                onDragOver={(event: DragEvent<HTMLDivElement>) => {
                   event.preventDefault();
                   event.dataTransfer.dropEffect = 'move';
                 }}
                 onDrop={() => onDropOpportunity(item.watchlist.id)}
                 onDragEnd={() => setDraggingWatchlistId(null)}
                 onClick={() => onSelectOpportunity(item)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    onSelectOpportunity(item);
+                  }
+                }}
               >
                 <div className="opportunity-card-head">
                   <span className="opportunity-card-title">
                     <GripVertical size={15} className="drag-handle" />
                     <strong>{opportunityName(item)}</strong>
                   </span>
-                  {statusTag(item.premium?.opportunity_status)}
+                  <span className="opportunity-card-head-actions">
+                    {statusTag(item.premium?.opportunity_status)}
+                    <Button
+                      size="small"
+                      type="text"
+                      icon={<Settings size={15} />}
+                      title="设置自选"
+                      aria-label="设置自选"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        onOpenWatchlistSetting(item);
+                      }}
+                    />
+                    <Button
+                      size="small"
+                      type="text"
+                      danger
+                      icon={<Trash2 size={15} />}
+                      title="取消自选"
+                      aria-label="取消自选"
+                      loading={removeWatchlistMutation.isPending}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        onRemoveWatchlist(item);
+                      }}
+                    />
+                  </span>
                 </div>
                 <div className="opportunity-card-codes">
                   {item.watchlist.a_ts_code} / {item.watchlist.hk_ts_code}
@@ -871,19 +1256,25 @@ function OverviewPage() {
                 <div className="opportunity-card-metrics">
                   <span>
                     {item.premium?.metric_direction || item.watchlist.preferred_direction}
-                    <b>{formatPercent(item.premium?.metric_premium_pct)}</b>
+                    <b className={opportunityDirection(item) === 'HA' ? 'metric-ha' : 'metric-ah'}>
+                      {formatPercent(item.premium?.metric_premium_pct)}
+                    </b>
                   </span>
                   <span>
                     目标阈值
-                    <b>{formatPercent(item.watchlist.target_premium_pct)}</b>
+                    <b className="metric-target">{formatPercent(item.watchlist.target_premium_pct)}</b>
                   </span>
                   <span>
                     距阈值
-                    <b>{formatPercent(item.premium?.distance_to_target_pct)}</b>
+                    <b className={metricToneClass(item.premium?.distance_to_target_pct)}>
+                      {formatPercent(item.premium?.distance_to_target_pct)}
+                    </b>
                   </span>
                   <span>
                     60日分位
-                    <b>{formatPercent(item.premium?.premium_percentile_60)}</b>
+                    <b className={percentileToneClass(item.premium?.premium_percentile_60)}>
+                      {formatPercent(item.premium?.premium_percentile_60)}
+                    </b>
                   </span>
                 </div>
                 <div className="opportunity-card-thresholds">
@@ -896,13 +1287,11 @@ function OverviewPage() {
                   <Tag color={item.premium?.is_hk_connect ? 'green' : 'default'}>
                     {item.premium?.connect_channels || '非港股通'}
                   </Tag>
-                  <span>
-                    {item.premium?.source_updated_at
-                      ? formatEast8DateTime(item.premium.source_updated_at)
-                      : item.premium?.trade_date || '无数据'}
-                  </span>
+                  <Tag color={item.premium?.is_realtime ? 'green' : 'blue'}>
+                    {item.premium?.is_realtime ? '实时' : '快照'}
+                  </Tag>
                 </div>
-              </button>
+              </div>
             ))}
           </div>
         ) : (
@@ -924,7 +1313,11 @@ function OverviewPage() {
                 <ReactMarkdown>{aiRecommendation}</ReactMarkdown>
               </div>
             ) : (
-              <Skeleton active paragraph={{ rows: 4 }} />
+              <LlmProgressNote
+                className="threshold-progress-note"
+                text={aiRecommendationProgress}
+                fallback="正在推荐阈值..."
+              />
             )}
           </div>
         ) : null}
@@ -937,6 +1330,12 @@ function OverviewPage() {
               {trendTitleName} {directionLabel} 溢价走势
             </div>
             <Space wrap>
+              <Select
+                className="overview-chart-mode-select"
+                value={chartMode}
+                options={OVERVIEW_CHART_MODE_OPTIONS}
+                onChange={setChartMode}
+              />
               <Select
                 className="overview-pair-select"
                 showSearch
@@ -987,7 +1386,7 @@ function OverviewPage() {
           {trend.data?.length ? (
             <ReactECharts
               ref={chartRef}
-              key={`${pair.aTsCode}-${pair.hkTsCode}-${direction}`}
+              key={`${pair.aTsCode}-${pair.hkTsCode}-${direction}-${chartMode}`}
               option={trendChartOption}
               notMerge
               onEvents={chartEvents}
@@ -998,24 +1397,115 @@ function OverviewPage() {
             <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} />
           )}
         </section>
-        <section className="panel overview-rank-panel">
-          <div className="panel-title">自选明细</div>
-          {watchlist.isLoading ? (
-            <Skeleton active />
-          ) : watchlistPremiums.length ? (
-            <PremiumTable
-              data={watchlistPremiums}
-              pagination={false}
-              onTrend={onShowPremiumTrend}
-              onRemoveWatchlist={onRemoveWatchlist}
-            />
-          ) : data?.top_premiums.length ? (
-            <PremiumTable data={data.top_premiums} pagination={false} onTrend={onShowPremiumTrend} />
-          ) : (
-            <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} />
-          )}
-        </section>
       </div>
+      <Modal
+        title="设置自选"
+        open={Boolean(watchlistSettingItem)}
+        onOk={onSubmitWatchlistSetting}
+        confirmLoading={watchlistSettingMutation.isPending}
+        onCancel={() => {
+          setWatchlistSettingItem(null);
+          watchlistForm.resetFields();
+        }}
+        okText="保存"
+        cancelText="取消"
+      >
+        <Form form={watchlistForm} layout="vertical">
+          <Form.Item label="展示名" name="display_name">
+            <Input maxLength={128} />
+          </Form.Item>
+          <Form.Item label="关注方向" name="preferred_direction" rules={[{ required: true }]}>
+            <Select
+              options={[
+                { value: 'HA', label: 'H/A' },
+                { value: 'AH', label: 'A/H' }
+              ]}
+            />
+          </Form.Item>
+          <Form.Item
+            label="目标阈值"
+            name="target_premium_pct"
+            extra={thresholdHelpText(watchlistDirection)}
+          >
+            <InputNumber className="full-width" addonAfter="%" precision={2} placeholder="例如 -15 或 30" />
+          </Form.Item>
+          <Form.Item
+            label="消息推送"
+            name="push_enabled"
+            valuePropName="checked"
+            extra="默认开启；关闭后仍保留自选提醒配置，但不会发送 PushPlus 消息。"
+          >
+            <Switch checkedChildren="开启" unCheckedChildren="关闭" />
+          </Form.Item>
+          {modalRequiresBinding && !pushplusBinding.data?.is_bound ? (
+            <div className="pushplus-alert-bind-box">
+              <Alert
+                showIcon
+                type="warning"
+                message="设置提醒前需要绑定 PushPlus 好友"
+                description="当前账号还没有绑定微信推送。请扫码完成绑定后再保存提醒。"
+              />
+              <Space align="start" className="pushplus-alert-bind-actions">
+                <Button
+                  icon={<QrCode size={16} />}
+                  loading={qrCodeMutation.isPending}
+                  onClick={() => qrCodeMutation.mutate()}
+                >
+                  生成绑定二维码
+                </Button>
+                {qrCodeMutation.data?.qr_code_img_url ? (
+                  <Image
+                    width={180}
+                    src={qrCodeMutation.data.qr_code_img_url}
+                    alt="PushPlus 绑定二维码"
+                  />
+                ) : null}
+              </Space>
+            </div>
+          ) : null}
+          <div className="watchlist-price-alert-grid">
+            <Form.Item label="A 股提醒" name="a_price_alert_enabled" valuePropName="checked">
+              <Switch checkedChildren="开启" unCheckedChildren="关闭" />
+            </Form.Item>
+            <Form.Item label="A 股方向" name="a_price_alert_operator">
+              <Select
+                options={[
+                  { value: 'GTE', label: '大于等于' },
+                  { value: 'LTE', label: '小于等于' }
+                ]}
+              />
+            </Form.Item>
+            <Form.Item label="A 股目标价" name="a_price_alert_target_price">
+              <InputNumber className="full-width" precision={3} placeholder="人民币触发价" />
+            </Form.Item>
+          </div>
+          <div className="watchlist-price-alert-grid">
+            <Form.Item label="H 股提醒" name="h_price_alert_enabled" valuePropName="checked">
+              <Switch checkedChildren="开启" unCheckedChildren="关闭" />
+            </Form.Item>
+            <Form.Item label="H 股方向" name="h_price_alert_operator">
+              <Select
+                options={[
+                  { value: 'GTE', label: '大于等于' },
+                  { value: 'LTE', label: '小于等于' }
+                ]}
+              />
+            </Form.Item>
+            <Form.Item label="H 股目标价" name="h_price_alert_target_price">
+              <InputNumber className="full-width" precision={3} placeholder="港币触发价" />
+            </Form.Item>
+          </div>
+          <Form.Item label="持有侧" name="holding_market" rules={[{ required: true }]}>
+            <Select
+              options={[
+                { value: 'UNKNOWN', label: '未设置' },
+                { value: 'A', label: 'A 股' },
+                { value: 'H', label: 'H 股' }
+              ]}
+            />
+          </Form.Item>
+        </Form>
+      </Modal>
     </main>
   );
 }

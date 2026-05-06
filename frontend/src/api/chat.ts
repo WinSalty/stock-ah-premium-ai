@@ -2,6 +2,7 @@ import { API_BASE_URL, ApiError, getAuthToken, requestJson } from './client';
 import type {
   ChatMessageRequest,
   ChatMessageResponse,
+  ChatSessionBatchDeleteResponse,
   ChatSession,
   ChatSessionDetail
 } from '../types/domain';
@@ -35,6 +36,13 @@ export function deleteChatSession(sessionId: number) {
       const body = await response.json().catch(() => ({}));
       throw new ApiError(response.status, body.detail || response.statusText);
     }
+  });
+}
+
+export function batchDeleteChatSessions(sessionIds: number[]) {
+  return requestJson<ChatSessionBatchDeleteResponse>('/api/chat/sessions/batch-delete', {
+    method: 'POST',
+    body: JSON.stringify({ session_ids: sessionIds })
   });
 }
 

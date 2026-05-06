@@ -17,6 +17,8 @@ class LlmCallMetricItem(BaseModel):
     user_id: int | None = None
     session_id: int | None = None
     phase: str
+    phase_label: str | None = None
+    phase_description: str | None = None
     provider: str | None = None
     model: str | None = None
     success: bool
@@ -25,6 +27,8 @@ class LlmCallMetricItem(BaseModel):
     output_chars: int
     chunk_count: int
     row_count: int
+    request_payload_json: str | None = None
+    response_content: str | None = None
     error_message: str | None = None
     created_at: datetime
     updated_at: datetime

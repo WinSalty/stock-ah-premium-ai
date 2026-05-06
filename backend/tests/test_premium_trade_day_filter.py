@@ -10,6 +10,7 @@ from app.db.base import Base
 from app.db.models.market import (
     ATradeCalendar,
     HKTradeCalendar,
+    HsgtConstituent,
     OfficialAHComparison,
 )
 from app.services.sync_service import DATASET_SPECS, SyncService
@@ -89,3 +90,50 @@ def test_ah_comparison_sync_skips_non_joint_trade_day() -> None:
             select(OfficialAHComparison).where(OfficialAHComparison.trade_date == target_date)
         )
     assert remaining is None
+
+
+def test_hsgt_sync_prunes_old_constituent_dates() -> None:
+    """确认港股通名单同步后只保留最新生效日期。
+
+    创建日期：2026-05-05
+    author: sunshengxian
+    """
+
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    old_date = date(2026, 5, 4)
+    latest_date = date(2026, 5, 5)
+    with Session(engine) as db:
+        db.add_all(
+            [
+                HsgtConstituent(
+                    trade_date=old_date,
+                    ts_code="03968.HK",
+                    connect_type="SH_HK",
+                    name="招商银行",
+                ),
+                HsgtConstituent(
+                    trade_date=latest_date,
+                    ts_code="03968.HK",
+                    connect_type="SH_HK",
+                    name="招商银行",
+                ),
+                HsgtConstituent(
+                    trade_date=latest_date,
+                    ts_code="03968.HK",
+                    connect_type="SZ_HK",
+                    name="招商银行",
+                ),
+            ]
+        )
+        db.commit()
+        service = SyncService.__new__(SyncService)
+        service.db = db
+
+        service._prune_hsgt_to_latest_date()
+        db.commit()
+
+        rows = list(db.scalars(select(HsgtConstituent).order_by(HsgtConstituent.connect_type)))
+
+    assert {item.trade_date for item in rows} == {latest_date}
+    assert [item.connect_type for item in rows] == ["SH_HK", "SZ_HK"]

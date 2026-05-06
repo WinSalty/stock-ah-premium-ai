@@ -34,6 +34,26 @@ class ChatSessionResponse(OrmModel):
     updated_at: datetime
 
 
+class ChatSessionBatchDelete(BaseModel):
+    """批量删除会话请求。
+
+    创建日期：2026-05-05
+    author: sunshengxian
+    """
+
+    session_ids: list[int] = Field(min_length=1, max_length=100)
+
+
+class ChatSessionBatchDeleteResponse(BaseModel):
+    """批量删除会话响应。
+
+    创建日期：2026-05-05
+    author: sunshengxian
+    """
+
+    deleted_count: int
+
+
 class ChatStoredMessageResponse(BaseModel):
     """已保存聊天消息响应。
 

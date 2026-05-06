@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy.dialects.mysql import LONGTEXT
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base, TimestampMixin
@@ -60,6 +61,8 @@ class LlmCallMetric(TimestampMixin, Base):
     user_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     session_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     phase: Mapped[str] = mapped_column(String(64), nullable=False)
+    phase_label: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    phase_description: Mapped[str | None] = mapped_column(Text, nullable=True)
     provider: Mapped[str | None] = mapped_column(String(32), nullable=True)
     model: Mapped[str | None] = mapped_column(String(64), nullable=True)
     success: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
@@ -68,4 +71,12 @@ class LlmCallMetric(TimestampMixin, Base):
     output_chars: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     chunk_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     row_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    request_payload_json: Mapped[str | None] = mapped_column(
+        Text().with_variant(LONGTEXT, "mysql"),
+        nullable=True,
+    )
+    response_content: Mapped[str | None] = mapped_column(
+        Text().with_variant(LONGTEXT, "mysql"),
+        nullable=True,
+    )
     error_message: Mapped[str | None] = mapped_column(String(512), nullable=True)

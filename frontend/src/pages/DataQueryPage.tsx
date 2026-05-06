@@ -12,6 +12,17 @@ import type { QueryCellValue, QueryColumn } from '../types/domain';
 type QueryRow = Record<string, QueryCellValue> & { __rowKey: string };
 type DateRange = [dayjs.Dayjs, dayjs.Dayjs] | null;
 
+const NUMERIC_VALUE_EXCLUDED_KEYS = new Set([
+  'id',
+  'sort_order',
+  'row_count',
+  'trade_unit',
+  'scan_count'
+]);
+const NUMERIC_VALUE_EXCLUDED_KEY_PATTERN =
+  /(^|_)(code|date|time|status|source|name|market|exchange|industry|area|type|currency|curr|json|message|reason|note|tag|label|unit)$/i;
+const NUMERIC_STRING_PATTERN = /^[-+]?(?:\d+\.?\d*|\.\d+)(?:e[-+]?\d+)?$/i;
+
 /**
  * 同步数据查询页面。
  * 创建日期：2026-05-04
@@ -194,9 +205,10 @@ function renderCell(value: QueryCellValue, column: QueryColumn) {
     const color = status === 'SUCCESS' || status === 'OK' ? 'blue' : status === 'FAILED' ? 'red' : 'gold';
     return <Tag color={color}>{status}</Tag>;
   }
+  const displayValue = formatNumericQueryValue(value, column);
   return (
     <OverflowCell
-      value={value}
+      value={displayValue}
       fieldKey={column.key}
       mono={column.key.includes('json') || column.key.includes('code')}
       threshold={isDateLikeColumn(column.key) ? 19 : 24}
@@ -213,6 +225,35 @@ function resolveColumnWidth(column: QueryColumn) {
 
 function isDateLikeColumn(key: string) {
   return key.endsWith('_date') || key.endsWith('_at') || key.includes('time');
+}
+
+function formatNumericQueryValue(value: QueryCellValue, column: QueryColumn) {
+  if (!shouldFormatNumericValue(value, column)) {
+    return value;
+  }
+  return Number(value).toFixed(3);
+}
+
+function shouldFormatNumericValue(value: QueryCellValue, column: QueryColumn) {
+  if (typeof value === 'boolean' || value === null || value === undefined) {
+    return false;
+  }
+  if (
+    NUMERIC_VALUE_EXCLUDED_KEYS.has(column.key) ||
+    isDateLikeColumn(column.key) ||
+    NUMERIC_VALUE_EXCLUDED_KEY_PATTERN.test(column.key)
+  ) {
+    return false;
+  }
+  if (typeof value === 'number') {
+    return Number.isFinite(value) && !Number.isInteger(value);
+  }
+  const cleanValue = value.trim();
+  if (!NUMERIC_STRING_PATTERN.test(cleanValue)) {
+    return false;
+  }
+  const numberValue = Number(cleanValue);
+  return Number.isFinite(numberValue);
 }
 
 export default DataQueryPage;

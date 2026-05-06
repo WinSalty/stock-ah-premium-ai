@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -28,6 +29,7 @@ UNAVAILABLE_QUALITY = "UNAVAILABLE"
 STALE_QUALITY = "STALE"
 ERROR_QUALITY = "ERROR"
 OFFICIAL_AH_COMPARISON_SCALE = "0.01"
+LOCAL_TZ = ZoneInfo("Asia/Shanghai")
 
 
 class RealtimePremiumService:
@@ -99,7 +101,7 @@ class RealtimePremiumService:
             else None
         )
         quality = self._quote_quality(a_quote, hk_quote, fx_quote)
-        return RealtimePremiumResponse(
+        result = RealtimePremiumResponse(
             a_ts_code=a_ts_code,
             hk_ts_code=hk_ts_code,
             a_name=a_name,
@@ -120,13 +122,15 @@ class RealtimePremiumService:
             quote_quality=quality,
             is_realtime=quality == REALTIME_QUALITY,
             source=quote_sources((a_quote, hk_quote, fx_quote)),
-            calculated_at=datetime.now(),
+            calculated_at=datetime.now(UTC).replace(tzinfo=None),
             a_quote=self._quote_item(a_quote),
             hk_quote=self._quote_item(hk_quote),
             fx_quote=self._quote_item(fx_quote),
             watchlist_id=watchlist.id if watchlist else None,
             is_watchlist=watchlist is not None,
         )
+        self._persist_realtime_result(result)
+        return result
 
     def _query_targets(
         self,
@@ -283,6 +287,87 @@ class RealtimePremiumService:
             source=quote.source,
             quality=quote.quality,
         )
+
+    def _persist_realtime_result(self, result: RealtimePremiumResponse) -> None:
+        """将可用实时计算结果写回官方 AH 比价表，供页面统一读取主口径。
+
+        创建日期：2026-05-06
+        author: sunshengxian
+        """
+
+        if (
+            result.quote_quality not in {REALTIME_QUALITY, STALE_FX_QUALITY}
+            or result.a_last_price is None
+            or result.hk_last_price is None
+            or result.ah_ratio is None
+        ):
+            return
+        ah_comparison = quantize_decimal(result.ah_ratio, OFFICIAL_AH_COMPARISON_SCALE)
+        if ah_comparison is None or ah_comparison == Decimal("0"):
+            return
+        ah_premium = quantize_decimal((ah_comparison - Decimal("1")) * Decimal("100"))
+        ha_comparison = quantize_decimal(Decimal("1") / ah_comparison)
+        ha_premium = (
+            quantize_decimal((ha_comparison - Decimal("1")) * Decimal("100"))
+            if ha_comparison is not None
+            else None
+        )
+        trade_date = self._realtime_data_date(result)
+        if trade_date is None:
+            return
+        row = self.db.scalar(
+            select(OfficialAHComparison).where(
+                OfficialAHComparison.trade_date == trade_date,
+                OfficialAHComparison.a_ts_code == result.a_ts_code,
+                OfficialAHComparison.hk_ts_code == result.hk_ts_code,
+            )
+        )
+        if row is None:
+            row = OfficialAHComparison(
+                trade_date=trade_date,
+                a_ts_code=result.a_ts_code,
+                hk_ts_code=result.hk_ts_code,
+                a_name=result.a_name or result.display_name,
+                hk_name=result.hk_name,
+            )
+            self.db.add(row)
+        elif result.a_name and not row.a_name:
+            row.a_name = result.a_name
+        if result.hk_name and not row.hk_name:
+            row.hk_name = result.hk_name
+        row.a_close = result.a_last_price
+        row.hk_close = result.hk_last_price
+        row.ah_comparison = ah_comparison
+        row.ah_premium = ah_premium
+        row.ha_comparison = ha_comparison
+        row.ha_premium = ha_premium
+        row.is_realtime = True
+        row.data_source = "REALTIME_CALC"
+        row.source_updated_at = result.calculated_at
+        self.db.commit()
+
+    def _realtime_data_date(self, result: RealtimePremiumResponse) -> date | None:
+        """从 A/H 报价时间推导数据日期，避免把记录生成日期误写成行情日期。
+
+        创建日期：2026-05-06
+        author: sunshengxian
+        """
+
+        quote_dates = [
+            self._quote_data_date(quote)
+            for quote in (result.a_quote, result.hk_quote)
+        ]
+        valid_dates = [item for item in quote_dates if item is not None]
+        if not valid_dates:
+            return None
+        return min(valid_dates)
+
+    def _quote_data_date(self, quote: RealtimeQuoteItem | None) -> date | None:
+        if quote is None or quote.quote_time is None:
+            return None
+        if quote.quote_time.tzinfo is None:
+            return quote.quote_time.date()
+        return quote.quote_time.astimezone(LOCAL_TZ).date()
 
     def _watchlist_for_pair(
         self,

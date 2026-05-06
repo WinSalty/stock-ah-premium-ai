@@ -1,11 +1,13 @@
-import { Button, Form, Input, Popconfirm, Segmented, Skeleton, Spin, Table, message } from 'antd';
-import { Plus, SendHorizontal, Trash2 } from 'lucide-react';
+import { Button, Checkbox, Form, Input, Popconfirm, Segmented, Skeleton, Table, message } from 'antd';
+import { Download, FileText, Plus, SendHorizontal, Trash2 } from 'lucide-react';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { useEffect, useRef, useState } from 'react';
 import PageHeader from '../components/PageHeader';
 import OverflowCell from '../components/OverflowCell';
+import LlmProgressNote from '../components/LlmProgressNote';
 import {
+  batchDeleteChatSessions,
   createChatSession,
   deleteChatSession,
   getChatSession,
@@ -19,6 +21,8 @@ import type {
   ChatStoredMessage
 } from '../types/domain';
 import { formatEast8DateTime } from '../utils/datetime';
+import { exportChatAnswersToWord } from '../utils/chatWordExport';
+import { CHAT_PROGRESS_STEPS } from '../constants/llmProgress';
 
 interface ChatFormValues {
   question: string;
@@ -135,12 +139,7 @@ const markdownComponents: Components = {
 };
 
 const PRESET_QUESTION_COUNT = 4;
-const CHAT_PROGRESS_STEPS = [
-  '正在理解你的问题...',
-  '正在整理相关信息...',
-  '正在形成分析框架...',
-  '正在组织回答...'
-];
+const CHAT_AUTO_SCROLL_THRESHOLD = 96;
 const DEFAULT_CHAT_MODEL: ChatModel = 'deepseek-v4-flash';
 const CHAT_MODEL_OPTIONS: { label: string; value: ChatModel }[] = [
   { label: 'DeepSeek Flash', value: 'deepseek-v4-flash' },
@@ -188,7 +187,9 @@ function randomPresetQuestions(previous: string[] = []) {
  */
 function ChatPage() {
   const [form] = Form.useForm<ChatFormValues>();
-  const historyEndRef = useRef<HTMLDivElement | null>(null);
+  const historyRef = useRef<HTMLElement | null>(null);
+  const shouldAutoScrollRef = useRef(true);
+  const lastTurnCountRef = useRef(0);
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [session, setSession] = useState<ChatSession | null>(null);
   const [turns, setTurns] = useState<ChatTurn[]>([]);
@@ -197,14 +198,36 @@ function ChatPage() {
   const [isLoadingSessions, setIsLoadingSessions] = useState(false);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
   const [selectedModel, setSelectedModel] = useState<ChatModel>(DEFAULT_CHAT_MODEL);
+  const [selectedSessionIds, setSelectedSessionIds] = useState<number[]>([]);
 
   useEffect(() => {
     void loadInitialSessions();
   }, []);
 
   useEffect(() => {
-    historyEndRef.current?.scrollIntoView({ block: 'end' });
+    const history = historyRef.current;
+    if (!history) {
+      return;
+    }
+    const hasNewTurn = turns.length > lastTurnCountRef.current;
+    lastTurnCountRef.current = turns.length;
+    if (!hasNewTurn && !isLoadingHistory && !shouldAutoScrollRef.current) {
+      return;
+    }
+    window.requestAnimationFrame(() => {
+      history.scrollTop = history.scrollHeight;
+      shouldAutoScrollRef.current = true;
+    });
   }, [turns, isLoadingHistory]);
+
+  const onHistoryScroll = () => {
+    const history = historyRef.current;
+    if (!history) {
+      return;
+    }
+    const distanceToBottom = history.scrollHeight - history.scrollTop - history.clientHeight;
+    shouldAutoScrollRef.current = distanceToBottom <= CHAT_AUTO_SCROLL_THRESHOLD;
+  };
 
   const loadInitialSessions = async () => {
     setIsLoadingSessions(true);
@@ -226,6 +249,7 @@ function ChatPage() {
   const refreshSessions = async (activeSessionId?: number) => {
     const items = await listChatSessions();
     setSessions(items);
+    setSelectedSessionIds((ids) => ids.filter((id) => items.some((item) => item.id === id)));
     if (activeSessionId) {
       const activeSession = items.find((item) => item.id === activeSessionId);
       if (activeSession) {
@@ -243,6 +267,7 @@ function ChatPage() {
     }
     try {
       const detail = await getChatSession(sessionId);
+      shouldAutoScrollRef.current = true;
       setSession(detail);
       setTurns(buildTurns(detail.messages));
       window.localStorage.setItem(LAST_SESSION_KEY, String(detail.id));
@@ -261,9 +286,11 @@ function ChatPage() {
     }
     try {
       const created = await createChatSession();
+      shouldAutoScrollRef.current = true;
       setSession(created);
       setTurns([]);
       setSessions((items) => [created, ...items]);
+      setSelectedSessionIds([]);
       window.localStorage.setItem(LAST_SESSION_KEY, String(created.id));
       setPresetQuestions((items) => randomPresetQuestions(items));
       form.resetFields();
@@ -281,6 +308,7 @@ function ChatPage() {
       message.success('会话已删除');
       const items = await listChatSessions();
       setSessions(items);
+      setSelectedSessionIds((ids) => ids.filter((id) => id !== sessionId));
       if (session?.id === sessionId) {
         const nextSession = items[0];
         if (nextSession) {
@@ -296,6 +324,47 @@ function ChatPage() {
       }
     } catch (error) {
       message.error(error instanceof Error ? error.message : '删除会话失败');
+    }
+  };
+
+  const toggleSessionSelection = (sessionId: number, checked: boolean) => {
+    setSelectedSessionIds((ids) =>
+      checked ? Array.from(new Set([...ids, sessionId])) : ids.filter((id) => id !== sessionId)
+    );
+  };
+
+  const handleSelectAllSessions = () => {
+    setSelectedSessionIds(sessions.map((item) => item.id));
+  };
+
+  const handleClearSessionSelection = () => {
+    setSelectedSessionIds([]);
+  };
+
+  const handleBatchDeleteSessions = async () => {
+    if (isSending || selectedSessionIds.length === 0) {
+      return;
+    }
+    try {
+      const ids = [...selectedSessionIds];
+      const response = await batchDeleteChatSessions(ids);
+      message.success(`已删除 ${response.deleted_count} 个会话`);
+      const items = await listChatSessions();
+      setSessions(items);
+      setSelectedSessionIds([]);
+      if (session && ids.includes(session.id)) {
+        const nextSession = items[0];
+        if (nextSession) {
+          await openSession(nextSession.id, false);
+        } else {
+          setSession(null);
+          setTurns([]);
+          setPresetQuestions((items) => randomPresetQuestions(items));
+          window.localStorage.removeItem(LAST_SESSION_KEY);
+        }
+      }
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '批量删除会话失败');
     }
   };
 
@@ -320,17 +389,18 @@ function ChatPage() {
     );
   };
 
-  const handleSubmit = async (values: ChatFormValues) => {
+  const submitQuestion = async (rawQuestion: string) => {
     if (isSending) {
       return;
     }
-    const question = values.question.trim();
+    const question = rawQuestion.trim();
     if (!question) {
       return;
     }
     const turnId = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
     let progressIndex = 0;
-    let progressTimer: ReturnType<typeof window.setInterval> | null = null;
+    let progressTimer: number | null = null;
+    shouldAutoScrollRef.current = true;
     setIsSending(true);
     form.setFieldValue('question', '');
     setTurns((items) => [
@@ -405,6 +475,26 @@ function ChatPage() {
     }
   };
 
+  const handleSubmit = async (values: ChatFormValues) => {
+    await submitQuestion(values.question);
+  };
+
+  const exportTurns = async (targetTurns: ChatTurn[], title: string) => {
+    const answeredTurns = targetTurns.filter((turn) => turn.response?.answer?.trim());
+    if (!answeredTurns.length) {
+      message.warning('当前没有可导出的回答内容');
+      return;
+    }
+    await exportChatAnswersToWord(
+      title,
+      answeredTurns.map((turn) => ({
+        question: turn.question,
+        answer: turn.response?.answer || ''
+      }))
+    );
+    message.success('Word 文档已生成');
+  };
+
   return (
     <main className="page chat-page">
       <PageHeader title="智能问答" />
@@ -422,6 +512,40 @@ function ChatPage() {
               disabled={isSending}
             />
           </div>
+          {sessions.length ? (
+            <div className="chat-session-bulkbar">
+              <span>{selectedSessionIds.length ? `已选 ${selectedSessionIds.length}` : '批量管理'}</span>
+              <div>
+                <Button type="link" size="small" onClick={handleSelectAllSessions} disabled={isSending}>
+                  全选
+                </Button>
+                <Button
+                  type="link"
+                  size="small"
+                  onClick={handleClearSessionSelection}
+                  disabled={isSending || selectedSessionIds.length === 0}
+                >
+                  清空
+                </Button>
+                <Popconfirm
+                  title="批量删除会话"
+                  description={`确认删除选中的 ${selectedSessionIds.length} 个会话？`}
+                  okText="删除"
+                  cancelText="取消"
+                  onConfirm={() => void handleBatchDeleteSessions()}
+                  disabled={isSending || selectedSessionIds.length === 0}
+                >
+                  <Button
+                    type="text"
+                    size="small"
+                    danger
+                    icon={<Trash2 size={14} />}
+                    disabled={isSending || selectedSessionIds.length === 0}
+                  />
+                </Popconfirm>
+              </div>
+            </div>
+          ) : null}
           <div className="chat-session-list">
             {isLoadingSessions ? <Skeleton active paragraph={{ rows: 5 }} /> : null}
             {!isLoadingSessions && sessions.length === 0 ? (
@@ -432,6 +556,12 @@ function ChatPage() {
                 key={item.id}
                 className={`chat-session-item${session?.id === item.id ? ' active' : ''}`}
               >
+                <Checkbox
+                  checked={selectedSessionIds.includes(item.id)}
+                  onChange={(event) => toggleSessionSelection(item.id, event.target.checked)}
+                  disabled={isSending}
+                  aria-label={`选择会话 ${item.title}`}
+                />
                 <button
                   type="button"
                   className="chat-session-open"
@@ -465,13 +595,24 @@ function ChatPage() {
         </aside>
 
         <div className="chat-main">
-          <section className="chat-history">
+          <div className="chat-main-toolbar">
+            <span>{session ? session.title : '未选择会话'}</span>
+            <Button
+              size="small"
+              icon={<FileText size={15} />}
+              onClick={() => void exportTurns(turns, session?.title || '智能问答回答')}
+              disabled={!turns.some((turn) => turn.response?.answer?.trim())}
+            >
+              导出当前会话
+            </Button>
+          </div>
+          <section className="chat-history" ref={historyRef} onScroll={onHistoryScroll}>
             {isLoadingHistory ? <Skeleton active paragraph={{ rows: 6 }} /> : null}
             {!isLoadingHistory && turns.length === 0 && !isSending ? (
               <div className="chat-empty-state">
                 <div className="question-bank">
                   {presetQuestions.map((item) => (
-                    <Button key={item} onClick={() => form.setFieldValue('question', item)}>
+                    <Button key={item} onClick={() => void submitQuestion(item)} disabled={isSending}>
                       {item}
                     </Button>
                   ))}
@@ -483,6 +624,19 @@ function ChatPage() {
                   <div className="chat-turn" key={turn.id}>
                     <div className="chat-question">{turn.question}</div>
                     <div className="chat-answer">
+                      <div className="chat-answer-actions">
+                        <Button
+                          type="text"
+                          size="small"
+                          icon={<Download size={14} />}
+                          onClick={() =>
+                            void exportTurns([turn], `${session?.title || '智能问答'}-${turn.question}`)
+                          }
+                          disabled={!turn.response?.answer?.trim()}
+                        >
+                          导出
+                        </Button>
+                      </div>
                       <div className="markdown-answer">
                         <ReactMarkdown
                           remarkPlugins={[remarkGfm]}
@@ -491,10 +645,7 @@ function ChatPage() {
                           {turn.response?.answer || ''}
                         </ReactMarkdown>
                         {turn.streaming && !turn.response?.answer ? (
-                          <div className="chat-progress-note">
-                            <Spin size="small" />
-                            <span>{turn.progressText || '正在分析...'}</span>
-                          </div>
+                          <LlmProgressNote text={turn.progressText} />
                         ) : null}
                         {turn.streaming && turn.response?.answer ? <span className="stream-caret" /> : null}
                       </div>
@@ -504,7 +655,7 @@ function ChatPage() {
                 ))
               : null}
             {isSending && turns.length === 0 ? <Skeleton active paragraph={{ rows: 4 }} /> : null}
-            <div className="chat-history-end" ref={historyEndRef} />
+            <div className="chat-history-end" />
           </section>
 
           <section className="chat-composer">

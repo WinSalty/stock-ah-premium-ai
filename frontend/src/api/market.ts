@@ -6,7 +6,8 @@ import type {
   PremiumOfficialTrendPoint,
   PremiumPairOption,
   PremiumSummaryResponse,
-  PremiumDirection
+  PremiumDirection,
+  RealtimePremiumListResponse
 } from '../types/domain';
 
 export interface PremiumQueryParams {
@@ -45,6 +46,17 @@ export function fetchPremiums(params: PremiumQueryParams) {
     }
   });
   return requestJson<PremiumListResponse>(`/api/ah-premiums?${search.toString()}`);
+}
+
+export function fetchRealtimePremiums(params: Pick<PremiumQueryParams, 'only_watchlist' | 'page_size'> = {}) {
+  const search = new URLSearchParams();
+  if (params.only_watchlist !== undefined) {
+    search.set('only_watchlist', String(params.only_watchlist));
+  }
+  if (params.page_size !== undefined) {
+    search.set('page_size', String(params.page_size));
+  }
+  return requestJson<RealtimePremiumListResponse>(`/api/ah-premiums/realtime?${search.toString()}`);
 }
 
 export function fetchPremiumTrend(aTsCode: string, hkTsCode: string, direction: PremiumDirection = 'HA') {

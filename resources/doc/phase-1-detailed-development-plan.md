@@ -75,7 +75,7 @@ LLM_MODEL=deepseek-v4-flash
 QWEN_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
 QWEN_API_KEY_FILE=/Users/salty/codeProject/ai/doc/qwen-apikey.txt
 QWEN_API_KEY=<local-only-fallback>
-QWEN_QUESTION_ROUTER_MODEL=qwen3.6-flash
+QWEN_QUESTION_ROUTER_MODEL=deepseek-v4-flash
 ```
 
 ## 3. Tushare 接口范围
@@ -301,7 +301,7 @@ stock-ah-premium-ai/
 - `ah_pair_service`：维护 AH 配对，支持官方接口导入和人工导入。
 - `fx_rate_service`：维护直接汇率和交叉汇率，暴露按日期取 HKD/CNY 的方法。
 - `official_premium_calc_service`：基于官方 A/H 比价重算 H/A 派生字段和来源标记。
-- `llm_service`：封装 DeepSeek 和阿里 Qwen OpenAI-compatible Chat API，不把密钥暴露给前端；投资研究边界、SQL 和知识库读取决策使用 Qwen `qwen3.6-flash` 前置路由。
+- `llm_service`：封装 DeepSeek 和阿里 Qwen OpenAI-compatible Chat API，不把密钥暴露给前端；投资研究边界、SQL 和知识库读取决策使用 `deepseek-v4-flash` 前置路由，问答主模型仍支持 DeepSeek 与 Qwen 切换。
 - `sql_guard_service`：对 LLM 生成的 SQL 做只读、白名单、limit、超时校验。
 
 ## 7. API 设计
@@ -473,7 +473,7 @@ flowchart LR
 | P1 后端骨架与数据库 | 创建 FastAPI 项目、配置管理、Alembic、MySQL 连接、建表迁移 | 后端项目、迁移脚本 | 已完成，本地 MySQL 初始化通过 |
 | P2 Tushare 同步 | 封装 Tushare 客户端，实现基础信息、行情、港股通、汇率同步 | 同步 API、同步任务、单元测试 | 已完成；`hk_daily` 因权限禁用 |
 | P3 AH 配对与溢价计算 | 导入 AH 配对，反推 A/H 与 H/A 溢价，落官方 AH 比价表 | 计算服务、结果查询 API | 已完成，页面以官方 AH 比价表为主 |
-| P4 LLM 问答 | DeepSeek/Qwen OpenAI-compatible 适配、只读 SQL Guard、问答 API | 聊天 API、提示词模板、只读查询视图 | 已编码，支持问答模型选择和 Qwen 前置路由 |
+| P4 LLM 问答 | DeepSeek/Qwen OpenAI-compatible 适配、只读 SQL Guard、问答 API | 聊天 API、提示词模板、只读查询视图 | 已编码，支持问答模型选择和 DeepSeek Flash 前置路由 |
 | P5 前端页面 | 总览、同步、查询、AH 溢价、智能问答页面 | React 前端 | 已完成，支持长字段悬浮和东八区时间展示 |
 | P6 联调与验收 | 端到端测试、异常处理、README、启动脚本 | 完整本地运行说明 | 本地 MySQL 初始化、批量同步、静态检查和构建已通过；LLM 密钥通过本机文件注入 |
 

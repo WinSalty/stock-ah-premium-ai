@@ -50,7 +50,7 @@ class Settings(BaseSettings):
         alias="QWEN_API_KEY_FILE",
     )
     qwen_question_router_model: str = Field(
-        default="qwen3.6-flash",
+        default="deepseek-v4-flash",
         alias="QWEN_QUESTION_ROUTER_MODEL",
     )
     qwen_question_classifier_model: str | None = Field(
@@ -155,8 +155,8 @@ class Settings(BaseSettings):
             return self.qwen_api_key.strip()
         return None
 
-    def resolve_qwen_question_router_model(self) -> str:
-        """读取 Qwen 前置路由模型，兼容旧分类器环境变量名。
+    def resolve_question_router_model(self) -> str:
+        """读取问答前置路由模型，兼容旧 Qwen 分类器环境变量名。
 
         创建日期：2026-05-05
         author: sunshengxian

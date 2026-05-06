@@ -26,7 +26,7 @@
 
 A/H 溢价与可交易性：
 
-- `hsgt_constituent`：沪深港通标的名单。
+- `hsgt_constituent`：沪深港通标的名单；同步后仅保留表内最新生效日期的数据，用于判断当前港股通可操作性。
 - `fx_rate_daily`：外汇汇率日线。
 - `ah_stock_pair`：AH 股票配对。
 - `official_ah_comparison`：Tushare 官方 AH 比价快照，当前主展示口径。
@@ -53,7 +53,7 @@ A 股选股因子：
 - `data_quality_issue`：数据质量问题记录。
 - `llm_chat_session`：LLM 问答会话，用于保存投资问答主题和更新时间，按 `user_id` 隔离，`deleted_at` 非空表示会话已逻辑删除。
 - `llm_chat_message`：LLM 问答消息，用于保存用户问题、助手回答、内部查询口径和结果预览，支持后续会话上下文记忆。
-- `llm_call_metric`：LLM 调用耗时指标，按 `question_id` 串联分类、SQL、回答和流式首包等阶段，不保存问题原文和 API Key。
+- `llm_call_metric`：LLM 调用耗时指标，按每轮问答唯一 `question_id` 串联路由、SQL、回答和流式首包等阶段；新增 `phase_label`、`phase_description` 解释阶段中文含义，`request_payload_json` 使用 `LONGTEXT` 记录实际发送给 LLM 的请求 JSON 和上下文 messages，不保存鉴权头和 API Key；`response_content` 使用 `LONGTEXT` 记录大模型返回的原始响应内容，流式回答保存拼接后的完整内容。
 
 ## 使用建议
 

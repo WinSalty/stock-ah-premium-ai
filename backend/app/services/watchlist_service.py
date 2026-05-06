@@ -86,10 +86,12 @@ class WatchlistService:
             preferred_direction=self._normalize_direction(payload.preferred_direction),
             target_premium_pct=payload.target_premium_pct,
             push_enabled=payload.push_enabled,
-            price_alert_enabled=payload.price_alert_enabled,
-            price_alert_market=self._normalize_price_alert_market(payload.price_alert_market),
-            price_alert_operator=self._normalize_price_alert_operator(payload.price_alert_operator),
-            price_alert_target_price=payload.price_alert_target_price,
+            a_price_alert_enabled=payload.a_price_alert_enabled,
+            a_price_alert_operator=self._normalize_price_alert_operator(payload.a_price_alert_operator),
+            a_price_alert_target_price=payload.a_price_alert_target_price,
+            h_price_alert_enabled=payload.h_price_alert_enabled,
+            h_price_alert_operator=self._normalize_price_alert_operator(payload.h_price_alert_operator),
+            h_price_alert_target_price=payload.h_price_alert_target_price,
             holding_market=self._normalize_holding_market(payload.holding_market),
             sort_order=payload.sort_order,
             note=payload.note,
@@ -158,10 +160,8 @@ class WatchlistService:
                 item.preferred_direction = self._normalize_direction(str(value))
             elif key == "holding_market" and value is not None:
                 item.holding_market = self._normalize_holding_market(str(value))
-            elif key == "price_alert_market" and value is not None:
-                item.price_alert_market = self._normalize_price_alert_market(str(value))
-            elif key == "price_alert_operator" and value is not None:
-                item.price_alert_operator = self._normalize_price_alert_operator(str(value))
+            elif key in {"a_price_alert_operator", "h_price_alert_operator"} and value is not None:
+                setattr(item, key, self._normalize_price_alert_operator(str(value)))
             else:
                 setattr(item, key, value)
 
@@ -169,10 +169,6 @@ class WatchlistService:
         return "AH" if value.upper() == "AH" else "HA"
 
     def _normalize_holding_market(self, value: str) -> str:
-        normalized = value.upper()
-        return normalized if normalized in {"A", "H"} else "UNKNOWN"
-
-    def _normalize_price_alert_market(self, value: str) -> str:
         normalized = value.upper()
         return normalized if normalized in {"A", "H"} else "UNKNOWN"
 
@@ -193,8 +189,8 @@ class WatchlistService:
             raise WatchlistError("设置提醒前请先完成 PushPlus 扫码绑定")
 
     def _has_alert_config(self, item: WatchlistStock) -> bool:
-        return item.target_premium_pct is not None or (
-            item.price_alert_enabled
-            and item.price_alert_market in {"A", "H"}
-            and item.price_alert_target_price is not None
+        return (
+            item.target_premium_pct is not None
+            or (item.a_price_alert_enabled and item.a_price_alert_target_price is not None)
+            or (item.h_price_alert_enabled and item.h_price_alert_target_price is not None)
         )

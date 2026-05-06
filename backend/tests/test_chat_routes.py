@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.api import routes_chat
 from app.api.routes_chat import (
+    batch_delete_sessions,
     create_message,
     create_session,
     delete_session,
@@ -16,7 +17,7 @@ from app.api.routes_chat import (
 from app.db.base import Base
 from app.db.models.auth import AppUser
 from app.db.models.chat import LlmChatMessage
-from app.schemas.chat import ChatMessageCreate, ChatSessionCreate
+from app.schemas.chat import ChatMessageCreate, ChatSessionBatchDelete, ChatSessionCreate
 from app.services.llm_service import ChatAnswer, LlmDailyLimitExceeded
 
 
@@ -54,6 +55,35 @@ def test_chat_session_delete_is_logical_and_filtered_from_list() -> None:
         assert db.get(type(session), session.id).deleted_at is not None
         with pytest.raises(HTTPException):
             get_session(session.id, db, user)
+
+
+def test_chat_session_batch_delete_only_deletes_current_user_sessions() -> None:
+    """确认批量删除仅处理当前用户的未删除会话。
+
+    创建日期：2026-05-05
+    author: sunshengxian
+    """
+
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    with Session(engine) as db:
+        user = add_user(db)
+        other_user = add_user(db, "other")
+        first = create_session(ChatSessionCreate(title="第一条"), db, user)
+        second = create_session(ChatSessionCreate(title="第二条"), db, user)
+        other = create_session(ChatSessionCreate(title="他人会话"), db, other_user)
+
+        response = batch_delete_sessions(
+            ChatSessionBatchDelete(session_ids=[first.id, second.id, other.id, second.id]),
+            db,
+            user,
+        )
+
+        assert response.deleted_count == 2
+        assert list_sessions(db, user) == []
+        assert db.get(type(first), first.id).deleted_at is not None
+        assert db.get(type(second), second.id).deleted_at is not None
+        assert db.get(type(other), other.id).deleted_at is None
 
 
 def test_chat_message_stores_display_question_without_internal_prompt(monkeypatch) -> None:

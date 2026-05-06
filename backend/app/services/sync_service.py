@@ -6,7 +6,7 @@ from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
@@ -431,6 +431,8 @@ class SyncService:
             from app.services.ah_pair_service import AHPairService
 
             AHPairService(self.db).upsert_from_official_rows(rows)
+        if spec.name == "stock_hsgt" and rows:
+            self._prune_hsgt_to_latest_date()
         self.db.commit()
         return row_count
 
@@ -608,6 +610,18 @@ class SyncService:
         self.db.execute(
             delete(OfficialAHComparison).where(OfficialAHComparison.trade_date == trade_date)
         )
+
+    def _prune_hsgt_to_latest_date(self) -> None:
+        """港股通名单只保留表内最新生效日期的数据。
+
+        创建日期：2026-05-05
+        author: sunshengxian
+        """
+
+        latest_date = self.db.scalar(select(func.max(HsgtConstituent.trade_date)))
+        if latest_date is None:
+            return
+        self.db.execute(delete(HsgtConstituent).where(HsgtConstituent.trade_date != latest_date))
 
     def _normalize_fx_row(self, row: dict[str, Any]) -> None:
         raw_ts_code = row.get("raw_ts_code") or ""

@@ -40,6 +40,9 @@ EVENT_PRICE_REACHED = "PRICE_REACHED"
 PUSH_CHANNEL = "PUSHPLUS"
 PUSH_STATUS_SENT = "SENT"
 PUSH_STATUS_FAILED = "FAILED"
+DAILY_EVENT_TYPE_LIMIT = 5
+THRESHOLD_DEVIATION_STEP_PCT = Decimal("1")
+PRICE_DEVIATION_STEP_PCT = Decimal("2")
 PRICE_OPERATOR_GTE = "GTE"
 PRICE_OPERATOR_LTE = "LTE"
 MARKET_A = "A"
@@ -344,9 +347,10 @@ class NotificationService:
             threshold_event = self._scan_threshold_alert(item, target_day, local_scan_time)
             if threshold_event is not None:
                 events.append(threshold_event)
-            price_event = self._scan_price_alert(item, target_day, local_scan_time)
-            if price_event is not None:
-                events.append(price_event)
+            for market in (MARKET_A, MARKET_H):
+                price_event = self._scan_price_alert(item, target_day, local_scan_time, market)
+                if price_event is not None:
+                    events.append(price_event)
         return events
 
     def list_alert_events(self, user_id: int, limit: int = 50) -> list[AlertEvent]:
@@ -389,11 +393,20 @@ class NotificationService:
         metric = realtime.metric_premium_pct
         if metric is None or metric < item.target_premium_pct:
             return None
+        deviation_pct = metric - item.target_premium_pct
+        alert_level = self._deviation_level(deviation_pct, THRESHOLD_DEVIATION_STEP_PCT)
+        threshold_count = self._daily_event_type_count(
+            item.user_id,
+            trading_day,
+            EVENT_THRESHOLD_REACHED,
+        )
+        if threshold_count >= DAILY_EVENT_TYPE_LIMIT:
+            return None
         title = f"{self._stock_label(item)} {direction} 阈值触发"
         content = self._threshold_message(item, trading_day, direction, metric)
         dedupe_key = (
             f"{EVENT_THRESHOLD_REACHED}:{item.user_id}:{item.id}:{direction}:"
-            f"{item.target_premium_pct}:{trading_day.isoformat()}"
+            f"{item.target_premium_pct}:level-{alert_level}:{trading_day.isoformat()}"
         )
         return self._create_and_push_event(
             item=item,
@@ -412,37 +425,67 @@ class NotificationService:
         item: WatchlistStock,
         trading_day: date,
         scan_time: datetime,
+        market: str,
     ) -> AlertEvent | None:
+        if market == MARKET_A:
+            enabled = item.a_price_alert_enabled
+            operator_config = item.a_price_alert_operator
+            target_price = item.a_price_alert_target_price
+            ts_code = item.a_ts_code
+        else:
+            enabled = item.h_price_alert_enabled
+            operator_config = item.h_price_alert_operator
+            target_price = item.h_price_alert_target_price
+            ts_code = item.hk_ts_code
         if (
-            not item.price_alert_enabled
-            or item.price_alert_target_price is None
-            or item.price_alert_market not in {MARKET_A, MARKET_H}
-            or not self._is_market_trade_day(item.price_alert_market, trading_day)
-            or not self._is_market_realtime_session(item.price_alert_market, scan_time)
+            not enabled
+            or target_price is None
+            or not self._is_market_trade_day(market, trading_day)
+            or not self._is_market_realtime_session(market, scan_time)
         ):
             return None
-        ts_code = item.a_ts_code if item.price_alert_market == MARKET_A else item.hk_ts_code
-        quote = self._latest_realtime_quote(item.price_alert_market, ts_code)
+        quote = self._latest_realtime_quote(market, ts_code)
         if not self._is_realtime_quote_usable(quote):
             return None
         last_price = quote.last_price
         operator = (
-            item.price_alert_operator
-            if item.price_alert_operator == PRICE_OPERATOR_LTE
+            operator_config
+            if operator_config == PRICE_OPERATOR_LTE
             else PRICE_OPERATOR_GTE
         )
         reached = (
-            last_price >= item.price_alert_target_price
+            last_price >= target_price
             if operator == PRICE_OPERATOR_GTE
-            else last_price <= item.price_alert_target_price
+            else last_price <= target_price
         )
         if not reached:
             return None
+        deviation_pct = self._price_deviation_pct(
+            last_price,
+            target_price,
+            operator,
+        )
+        alert_level = self._deviation_level(deviation_pct, PRICE_DEVIATION_STEP_PCT)
+        price_count = self._daily_event_type_count(
+            item.user_id,
+            trading_day,
+            EVENT_PRICE_REACHED,
+        )
+        if price_count >= DAILY_EVENT_TYPE_LIMIT:
+            return None
         title = f"{self._stock_label(item)} 股价提醒"
-        content = self._price_message(item, trading_day, ts_code, last_price, operator)
+        content = self._price_message(
+            item,
+            trading_day,
+            ts_code,
+            last_price,
+            operator,
+            market,
+            target_price,
+        )
         dedupe_key = (
-            f"{EVENT_PRICE_REACHED}:{item.user_id}:{item.id}:{item.price_alert_market}:"
-            f"{operator}:{item.price_alert_target_price}:{trading_day.isoformat()}"
+            f"{EVENT_PRICE_REACHED}:{item.user_id}:{item.id}:{market}:"
+            f"{operator}:{target_price}:level-{alert_level}:{trading_day.isoformat()}"
         )
         return self._create_and_push_event(
             item=item,
@@ -451,11 +494,11 @@ class NotificationService:
             title=title,
             content=content,
             dedupe_key=dedupe_key,
-            price_alert_market=item.price_alert_market,
+            price_alert_market=market,
             price_alert_operator=operator,
             price_alert_ts_code=ts_code,
             last_price=last_price,
-            target_price=item.price_alert_target_price,
+            target_price=target_price,
         )
 
     def _create_and_push_event(
@@ -524,6 +567,57 @@ class NotificationService:
         self.db.refresh(event)
         return event
 
+    def _daily_event_type_count(self, user_id: int, trading_day: date, event_type: str) -> int:
+        """统计用户单日单类提醒数量。
+
+        创建日期：2026-05-05
+        author: sunshengxian
+        """
+
+        return len(
+            self.db.scalars(
+                select(AlertEvent.id).where(
+                    AlertEvent.user_id == user_id,
+                    AlertEvent.trading_day == trading_day,
+                    AlertEvent.event_type == event_type,
+                )
+            ).all()
+        )
+
+    def _deviation_level(self, deviation_pct: Decimal, step_pct: Decimal) -> int:
+        """按偏离比例计算提醒档位，触发当档为 0。
+
+        创建日期：2026-05-05
+        author: sunshengxian
+        """
+
+        if deviation_pct <= 0:
+            return 0
+        return int(deviation_pct // step_pct)
+
+    def _price_deviation_pct(
+        self,
+        last_price: Decimal,
+        target_price: Decimal,
+        operator: str,
+    ) -> Decimal:
+        """计算股价相对提醒价的偏离百分比。
+
+        创建日期：2026-05-05
+        author: sunshengxian
+        """
+
+        if target_price <= 0:
+            return Decimal("0")
+        distance = (
+            last_price - target_price
+            if operator == PRICE_OPERATOR_GTE
+            else target_price - last_price
+        )
+        if distance <= 0:
+            return Decimal("0")
+        return (distance / target_price) * Decimal("100")
+
     def _threshold_message(
         self,
         item: WatchlistStock,
@@ -563,14 +657,15 @@ class NotificationService:
         ts_code: str,
         last_price: Decimal,
         operator: str,
+        market: str,
+        target_price: Decimal,
     ) -> str:
         operator_symbol = ">=" if operator == PRICE_OPERATOR_GTE else "<="
         operator_text = "大于等于" if operator == PRICE_OPERATOR_GTE else "小于等于"
-        market_label = "A 股" if item.price_alert_market == MARKET_A else "H 股"
-        target_price = item.price_alert_target_price or Decimal("0")
+        market_label = "A 股" if market == MARKET_A else "H 股"
         price_text = self._format_decimal(last_price)
         target_text = self._format_decimal(target_price)
-        currency = "人民币" if item.price_alert_market == MARKET_A else "港币"
+        currency = "人民币" if market == MARKET_A else "港币"
         return self._html_message(
             title="股价提醒触发",
             badge="股价提醒",

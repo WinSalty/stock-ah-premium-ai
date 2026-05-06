@@ -17,21 +17,21 @@ import {
 } from 'antd';
 import ReactECharts from 'echarts-for-react';
 import ReactMarkdown from 'react-markdown';
-import { Bot, Calculator, QrCode, Search } from 'lucide-react';
+import { Bot, QrCode, Search } from 'lucide-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useMemo, useState } from 'react';
 import dayjs from 'dayjs';
+import LlmProgressNote from '../components/LlmProgressNote';
 import PageHeader from '../components/PageHeader';
 import PremiumTable from '../components/PremiumTable';
 import { createChatSession, sendChatMessage } from '../api/chat';
-import { calculatePremium, fetchPremiumTrend, fetchPremiums } from '../api/market';
+import { fetchPremiumTrend, fetchPremiums } from '../api/market';
 import { createPushplusQrCode, fetchPushplusBinding } from '../api/notifications';
 import { createWatchlistItem, deleteWatchlistItem, updateWatchlistItem } from '../api/watchlist';
 import type {
   HoldingMarket,
   PremiumDirection,
   PremiumItem,
-  PriceAlertMarket,
   PriceAlertOperator
 } from '../types/domain';
 import type { PremiumQueryParams } from '../api/market';
@@ -39,6 +39,7 @@ import {
   getCachedThresholdRecommendation,
   setCachedThresholdRecommendation
 } from '../utils/thresholdRecommendationCache';
+import { THRESHOLD_RECOMMENDATION_PROGRESS_STEPS } from '../constants/llmProgress';
 
 const AH_COLOR = '#2563eb';
 const HA_COLOR = '#0f766e';
@@ -64,10 +65,12 @@ interface WatchlistFormValues {
   preferred_direction: PremiumDirection;
   target_premium_pct?: number | null;
   push_enabled?: boolean;
-  price_alert_enabled?: boolean;
-  price_alert_market?: PriceAlertMarket;
-  price_alert_operator?: PriceAlertOperator;
-  price_alert_target_price?: number | null;
+  a_price_alert_enabled?: boolean;
+  a_price_alert_operator?: PriceAlertOperator;
+  a_price_alert_target_price?: number | null;
+  h_price_alert_enabled?: boolean;
+  h_price_alert_operator?: PriceAlertOperator;
+  h_price_alert_target_price?: number | null;
   holding_market: HoldingMarket;
   note?: string;
 }
@@ -99,11 +102,12 @@ function hasAlertConfig(values: WatchlistFormValues) {
     values.target_premium_pct !== null &&
     values.target_premium_pct !== undefined
   ) || Boolean(
-    values.price_alert_enabled &&
-      values.price_alert_market &&
-      values.price_alert_market !== 'UNKNOWN' &&
-      values.price_alert_target_price !== null &&
-      values.price_alert_target_price !== undefined
+    (values.a_price_alert_enabled &&
+      values.a_price_alert_target_price !== null &&
+      values.a_price_alert_target_price !== undefined) ||
+      (values.h_price_alert_enabled &&
+        values.h_price_alert_target_price !== null &&
+        values.h_price_alert_target_price !== undefined)
   );
 }
 
@@ -157,7 +161,7 @@ function buildModalThresholdDisplayQuestion(item: PremiumItem, values: Watchlist
 type RecommendationSource = 'fresh' | 'cached';
 
 /**
- * AH 官方比价查询和官方派生指标重算页面。
+ * AH 官方比价查询和自选机会筛选页面。
  * 创建日期：2026-05-04
  * author: sunshengxian
  */
@@ -167,9 +171,10 @@ function PremiumPage() {
   const watchlistDirection = Form.useWatch('preferred_direction', watchlistForm);
   const watchlistPushEnabled = Form.useWatch('push_enabled', watchlistForm);
   const watchlistTargetPremium = Form.useWatch('target_premium_pct', watchlistForm);
-  const watchlistPriceAlertEnabled = Form.useWatch('price_alert_enabled', watchlistForm);
-  const watchlistPriceAlertMarket = Form.useWatch('price_alert_market', watchlistForm);
-  const watchlistPriceAlertTarget = Form.useWatch('price_alert_target_price', watchlistForm);
+  const watchlistAPriceAlertEnabled = Form.useWatch('a_price_alert_enabled', watchlistForm);
+  const watchlistAPriceAlertTarget = Form.useWatch('a_price_alert_target_price', watchlistForm);
+  const watchlistHPriceAlertEnabled = Form.useWatch('h_price_alert_enabled', watchlistForm);
+  const watchlistHPriceAlertTarget = Form.useWatch('h_price_alert_target_price', watchlistForm);
   const [page, setPage] = useState(1);
   const [filters, setFilters] = useState<PremiumQueryParams>({
     direction: 'HA',
@@ -178,6 +183,7 @@ function PremiumPage() {
   const [selected, setSelected] = useState<PremiumItem | null>(null);
   const [watchlistModal, setWatchlistModal] = useState<WatchlistModalState | null>(null);
   const [thresholdRecommendation, setThresholdRecommendation] = useState('');
+  const [thresholdRecommendationProgress, setThresholdRecommendationProgress] = useState('');
   const [thresholdRecommendationSource, setThresholdRecommendationSource] =
     useState<RecommendationSource>('fresh');
   const queryClient = useQueryClient();
@@ -193,15 +199,6 @@ function PremiumPage() {
     queryKey: ['premium-trend', selected?.a_ts_code, selected?.hk_ts_code, selected?.metric_direction],
     queryFn: () => fetchPremiumTrend(selected!.a_ts_code, selected!.hk_ts_code, selected!.metric_direction),
     enabled: Boolean(selected)
-  });
-  const calculateMutation = useMutation({
-    mutationFn: calculatePremium,
-    onSuccess: (result) => {
-      message.success(`派生指标重算完成：${result.calculated_rows} 条`);
-      queryClient.invalidateQueries({ queryKey: ['premiums'] });
-      queryClient.invalidateQueries({ queryKey: ['premium-summary'] });
-    },
-    onError: (error) => message.error(error instanceof Error ? error.message : '计算失败')
   });
   const qrCodeMutation = useMutation({
     mutationFn: () => createPushplusQrCode({ expire_seconds: 604800, scan_count: 1 }),
@@ -220,10 +217,12 @@ function PremiumPage() {
           preferred_direction: values.preferred_direction,
           target_premium_pct: values.target_premium_pct ?? null,
           push_enabled: values.push_enabled ?? true,
-          price_alert_enabled: Boolean(values.price_alert_enabled),
-          price_alert_market: values.price_alert_market || 'UNKNOWN',
-          price_alert_operator: values.price_alert_operator || 'GTE',
-          price_alert_target_price: values.price_alert_target_price ?? null,
+          a_price_alert_enabled: Boolean(values.a_price_alert_enabled),
+          a_price_alert_operator: values.a_price_alert_operator || 'GTE',
+          a_price_alert_target_price: values.a_price_alert_target_price ?? null,
+          h_price_alert_enabled: Boolean(values.h_price_alert_enabled),
+          h_price_alert_operator: values.h_price_alert_operator || 'GTE',
+          h_price_alert_target_price: values.h_price_alert_target_price ?? null,
           holding_market: values.holding_market
         });
       }
@@ -234,10 +233,12 @@ function PremiumPage() {
         preferred_direction: values.preferred_direction,
         target_premium_pct: values.target_premium_pct ?? undefined,
         push_enabled: values.push_enabled ?? true,
-        price_alert_enabled: Boolean(values.price_alert_enabled),
-        price_alert_market: values.price_alert_market || 'UNKNOWN',
-        price_alert_operator: values.price_alert_operator || 'GTE',
-        price_alert_target_price: values.price_alert_target_price ?? undefined,
+        a_price_alert_enabled: Boolean(values.a_price_alert_enabled),
+        a_price_alert_operator: values.a_price_alert_operator || 'GTE',
+        a_price_alert_target_price: values.a_price_alert_target_price ?? undefined,
+        h_price_alert_enabled: Boolean(values.h_price_alert_enabled),
+        h_price_alert_operator: values.h_price_alert_operator || 'GTE',
+        h_price_alert_target_price: values.h_price_alert_target_price ?? undefined,
         holding_market: values.holding_market,
         note: note || undefined
       });
@@ -272,6 +273,12 @@ function PremiumPage() {
       if (!watchlistModal) {
         throw new Error('请选择股票');
       }
+      setThresholdRecommendationProgress(THRESHOLD_RECOMMENDATION_PROGRESS_STEPS[0]);
+      let progressIndex = 0;
+      let progressTimer: number | null = window.setInterval(() => {
+        progressIndex = Math.min(progressIndex + 1, THRESHOLD_RECOMMENDATION_PROGRESS_STEPS.length - 1);
+        setThresholdRecommendationProgress(THRESHOLD_RECOMMENDATION_PROGRESS_STEPS[progressIndex]);
+      }, 2600);
       const values = watchlistForm.getFieldsValue();
       const direction = values.preferred_direction || watchlistModal.item.metric_direction || 'HA';
       const cacheInput = {
@@ -279,21 +286,29 @@ function PremiumPage() {
         hkTsCode: watchlistModal.item.hk_ts_code,
         direction
       };
-      const cached = getCachedThresholdRecommendation(cacheInput);
-      if (cached) {
-        return { answer: cached.answer, source: 'cached' as RecommendationSource };
+      try {
+        const cached = getCachedThresholdRecommendation(cacheInput);
+        if (cached) {
+          return { answer: cached.answer, source: 'cached' as RecommendationSource };
+        }
+        const session = await createChatSession(
+          `阈值建议：${values.display_name || watchlistModal.item.a_name || watchlistModal.item.a_ts_code}`
+        );
+        const result = await sendChatMessage(session.id, {
+          question: buildModalThresholdPrompt(watchlistModal.item, values),
+          display_question: buildModalThresholdDisplayQuestion(watchlistModal.item, values),
+          only_watchlist: true,
+          ts_code: watchlistModal.item.a_ts_code
+        });
+        setCachedThresholdRecommendation(cacheInput, result.answer);
+        return { answer: result.answer, source: 'fresh' as RecommendationSource };
+      } finally {
+        if (progressTimer !== null) {
+          window.clearInterval(progressTimer);
+          progressTimer = null;
+        }
+        setThresholdRecommendationProgress('');
       }
-      const session = await createChatSession(
-        `阈值建议：${values.display_name || watchlistModal.item.a_name || watchlistModal.item.a_ts_code}`
-      );
-      const result = await sendChatMessage(session.id, {
-        question: buildModalThresholdPrompt(watchlistModal.item, values),
-        display_question: buildModalThresholdDisplayQuestion(watchlistModal.item, values),
-        only_watchlist: true,
-        ts_code: watchlistModal.item.a_ts_code
-      });
-      setCachedThresholdRecommendation(cacheInput, result.answer);
-      return { answer: result.answer, source: 'fresh' as RecommendationSource };
     },
     onSuccess: (result) => {
       setThresholdRecommendation(result.answer);
@@ -306,9 +321,10 @@ function PremiumPage() {
   const modalHasAlertConfig = hasAlertConfig({
     preferred_direction: watchlistDirection || 'HA',
     target_premium_pct: watchlistTargetPremium,
-    price_alert_enabled: watchlistPriceAlertEnabled,
-    price_alert_market: watchlistPriceAlertMarket,
-    price_alert_target_price: watchlistPriceAlertTarget,
+    a_price_alert_enabled: watchlistAPriceAlertEnabled,
+    a_price_alert_target_price: watchlistAPriceAlertTarget,
+    h_price_alert_enabled: watchlistHPriceAlertEnabled,
+    h_price_alert_target_price: watchlistHPriceAlertTarget,
     holding_market: 'UNKNOWN'
   });
   const modalRequiresBinding = modalHasAlertConfig && watchlistPushEnabled !== false;
@@ -389,26 +405,23 @@ function PremiumPage() {
     });
   };
 
-  const onCalculate = () => {
-    const tradeDate = form.getFieldValue('trade_date') as dayjs.Dayjs | undefined;
-    const targetDate = tradeDate || dayjs();
-    calculateMutation.mutate({ start_date: targetDate.format('YYYY-MM-DD') });
-  };
-
   const onAddWatchlist = (item: PremiumItem) => {
     watchlistForm.setFieldsValue({
       display_name: item.a_name || item.hk_name || undefined,
       preferred_direction: item.metric_direction || filters.direction || 'HA',
       target_premium_pct: undefined,
       push_enabled: true,
-      price_alert_enabled: false,
-      price_alert_market: 'UNKNOWN',
-      price_alert_operator: 'GTE',
-      price_alert_target_price: undefined,
+      a_price_alert_enabled: false,
+      a_price_alert_operator: 'GTE',
+      a_price_alert_target_price: undefined,
+      h_price_alert_enabled: false,
+      h_price_alert_operator: 'GTE',
+      h_price_alert_target_price: undefined,
       holding_market: 'UNKNOWN',
       note: undefined
     });
     setThresholdRecommendation('');
+    setThresholdRecommendationProgress('');
     setThresholdRecommendationSource('fresh');
     setWatchlistModal({ mode: 'create', item });
   };
@@ -419,14 +432,17 @@ function PremiumPage() {
       preferred_direction: item.preferred_direction || item.metric_direction || 'HA',
       target_premium_pct: numberValue(item.target_premium_pct),
       push_enabled: item.push_enabled ?? true,
-      price_alert_enabled: Boolean(item.price_alert_enabled),
-      price_alert_market: (item.price_alert_market as PriceAlertMarket) || 'UNKNOWN',
-      price_alert_operator: (item.price_alert_operator as PriceAlertOperator) || 'GTE',
-      price_alert_target_price: numberValue(item.price_alert_target_price),
+      a_price_alert_enabled: Boolean(item.a_price_alert_enabled),
+      a_price_alert_operator: (item.a_price_alert_operator as PriceAlertOperator) || 'GTE',
+      a_price_alert_target_price: numberValue(item.a_price_alert_target_price),
+      h_price_alert_enabled: Boolean(item.h_price_alert_enabled),
+      h_price_alert_operator: (item.h_price_alert_operator as PriceAlertOperator) || 'GTE',
+      h_price_alert_target_price: numberValue(item.h_price_alert_target_price),
       holding_market: (item.holding_market as HoldingMarket) || 'UNKNOWN',
       note: undefined
     });
     setThresholdRecommendation('');
+    setThresholdRecommendationProgress('');
     setThresholdRecommendationSource('fresh');
     setWatchlistModal({ mode: 'edit', item });
   };
@@ -515,9 +531,6 @@ function PremiumPage() {
                 <Button type="primary" htmlType="submit" icon={<Search size={16} />}>
                   查询
                 </Button>
-                <Button icon={<Calculator size={16} />} onClick={onCalculate} loading={calculateMutation.isPending}>
-                  重算派生
-                </Button>
               </Space>
             </Form.Item>
           </div>
@@ -559,6 +572,7 @@ function PremiumPage() {
           setWatchlistModal(null);
           watchlistForm.resetFields();
           setThresholdRecommendation('');
+          setThresholdRecommendationProgress('');
           setThresholdRecommendationSource('fresh');
         }}
         okText="保存"
@@ -590,6 +604,7 @@ function PremiumPage() {
                 loading={thresholdRecommendationMutation.isPending}
                 onClick={() => {
                   setThresholdRecommendation('');
+                  setThresholdRecommendationProgress('');
                   setThresholdRecommendationSource('fresh');
                   thresholdRecommendationMutation.mutate();
                 }}
@@ -611,7 +626,11 @@ function PremiumPage() {
                   <ReactMarkdown>{thresholdRecommendation}</ReactMarkdown>
                 </div>
               ) : (
-                <Skeleton active paragraph={{ rows: 4 }} />
+                <LlmProgressNote
+                  className="threshold-progress-note"
+                  text={thresholdRecommendationProgress}
+                  fallback="正在推荐阈值..."
+                />
               )}
             </div>
           ) : null}
@@ -650,19 +669,10 @@ function PremiumPage() {
             </div>
           ) : null}
           <div className="watchlist-price-alert-grid">
-            <Form.Item label="股价提醒" name="price_alert_enabled" valuePropName="checked">
+            <Form.Item label="A 股提醒" name="a_price_alert_enabled" valuePropName="checked">
               <Switch checkedChildren="开启" unCheckedChildren="关闭" />
             </Form.Item>
-            <Form.Item label="提醒市场" name="price_alert_market">
-              <Select
-                options={[
-                  { value: 'UNKNOWN', label: '未设置' },
-                  { value: 'A', label: 'A 股' },
-                  { value: 'H', label: 'H 股' }
-                ]}
-              />
-            </Form.Item>
-            <Form.Item label="触发方向" name="price_alert_operator">
+            <Form.Item label="A 股方向" name="a_price_alert_operator">
               <Select
                 options={[
                   { value: 'GTE', label: '大于等于' },
@@ -670,8 +680,24 @@ function PremiumPage() {
                 ]}
               />
             </Form.Item>
-            <Form.Item label="目标价格" name="price_alert_target_price">
-              <InputNumber className="full-width" precision={3} placeholder="触发价" />
+            <Form.Item label="A 股目标价" name="a_price_alert_target_price">
+              <InputNumber className="full-width" precision={3} placeholder="人民币触发价" />
+            </Form.Item>
+          </div>
+          <div className="watchlist-price-alert-grid">
+            <Form.Item label="H 股提醒" name="h_price_alert_enabled" valuePropName="checked">
+              <Switch checkedChildren="开启" unCheckedChildren="关闭" />
+            </Form.Item>
+            <Form.Item label="H 股方向" name="h_price_alert_operator">
+              <Select
+                options={[
+                  { value: 'GTE', label: '大于等于' },
+                  { value: 'LTE', label: '小于等于' }
+                ]}
+              />
+            </Form.Item>
+            <Form.Item label="H 股目标价" name="h_price_alert_target_price">
+              <InputNumber className="full-width" precision={3} placeholder="港币触发价" />
             </Form.Item>
           </div>
           <Form.Item label="持有侧" name="holding_market" rules={[{ required: true }]}>

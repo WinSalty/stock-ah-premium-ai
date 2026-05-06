@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from datetime import datetime, time, timedelta
 from time import perf_counter
 from typing import Any
+from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 import httpx
@@ -18,6 +19,7 @@ from sqlalchemy.orm import Session
 from app.core.config import Settings, get_settings
 from app.db.models.chat import LlmCallMetric
 from app.services.investment_knowledge_service import InvestmentKnowledgeService
+from app.services.llm_metric_definitions import phase_description, phase_label
 from app.services.sql_guard_service import SqlGuardError, SqlGuardService
 
 logger = logging.getLogger(__name__)
@@ -57,8 +59,12 @@ INVESTMENT_ADVISOR_SYSTEM_PROMPT = """你是专业、有独立观点、注重证
 2. 用中文 GitHub Flavored Markdown 输出专业报告。必须遵守以下格式契约：
    - 标题只使用 `#`、`##`、`###`，`#` 后必须有一个空格，例如 `## 一、核心结论`。
    - 每个标题必须单独占一行，标题前后各保留一个空行；禁止输出 `#标题`、`# 标题## 小标题`。
-   - 表格必须独立成块，表格前后各保留一个空行；禁止把标题、正文和表格表头写在同一行。
-   - 表格必须包含表头行、分隔行和数据行，且每行列数一致；如果无法保证表格合法，改用项目符号列表。
+   - `## 一、核心结论` 第一块禁止使用表格，只能用 3 到 5 条项目符号输出结论、风险偏好和配置优先级。
+   - 表格只能从第二个二级标题之后使用；表格必须独立成块，表格前后各保留一个空行。
+   - 禁止把标题、正文、表格表头或表格分隔线写在同一行；表格前一行和后一行必须为空行。
+   - 表格必须包含表头行、分隔行和数据行，且每行列数完全一致；
+分隔行必须是 `| --- | --- |` 这种 GFM 格式。
+   - 如果无法保证表格合法，必须改用项目符号列表；不要输出半截表格、伪表格或仅由竖线分隔的正文。
    - 禁止使用 HTML、代码块包裹正文、连续横线分隔符或任何非标准 Markdown 变体。
 3. 可以结合你的金融知识、历史经验和产业逻辑进行判断；
 精确数值必须来自分析材料，材料不足时用清晰假设做情景推演。
@@ -70,14 +76,16 @@ INVESTMENT_ADVISOR_SYSTEM_PROMPT = """你是专业、有独立观点、注重证
 Markdown 格式示例：
 ## 一、核心结论
 
-| 维度 | 判断 | 含义 |
-| --- | --- | --- |
-| 资产定性 | 现金流资产 | 适合观察分红和周期稳定性 |
+- 资产定性：现金流资产，适合观察分红和周期稳定性。
+- 风险偏好：保守型优先高确定性资产，进取型只在反证条件未触发时小仓位参与弹性资产。
+- 配置优先级：先确定底仓，再配置弹性资产。
 
 ## 二、配置建议
 
-- 保守型：优先现金流稳定资产。
-- 进取型：只在反证条件未触发时小仓位参与弹性资产。
+| 组合类型 | 适配资产 | 主要条件 |
+| --- | --- | --- |
+| 保守型 | 现金流稳定资产 | 分红、估值和波动可控 |
+| 进取型 | 修复弹性资产 | 反证条件未触发 |
 """
 
 SQL_SYSTEM_PROMPT = """你是只读金融数据查询规划器。只生成可执行 MySQL SELECT SQL，并且只返回 JSON。
@@ -350,7 +358,7 @@ class LlmService:
         author: sunshengxian
         """
 
-        question_id = self._question_trace_id(question)
+        question_id = self._new_trace_id()
         request_context = context or {}
         user_id, session_id = self._trace_scope(request_context)
         started_at = perf_counter()
@@ -444,7 +452,7 @@ class LlmService:
         author: sunshengxian
         """
 
-        question_id = self._question_trace_id(question)
+        question_id = self._new_trace_id()
         request_context = context or {}
         user_id, session_id = self._trace_scope(request_context)
         started_at = perf_counter()
@@ -674,7 +682,9 @@ class LlmService:
             "但不要编造具体行情数字。"
             "不要过度自我设限；在证据足够时可以给出清晰的看多/中性/谨慎判断、"
             "配置优先级、仓位思路和触发条件。"
-            "请直接给出结论、表格、投资逻辑、配置建议、执行条件、反证条件和跟踪项。"
+            "请直接给出结论、投资逻辑、配置建议、执行条件、反证条件和跟踪项。"
+            "第一块 `## 一、核心结论` 必须使用项目符号列表，不要使用表格。"
+            "如需表格，只能从第二块开始使用，并确保表格前后空行、表头、分隔行和列数完全合法。"
             "不要输出模板化免责句或泛泛风险警告。\n"
             f"{json.dumps(payload, ensure_ascii=False, default=str)}"
         )
@@ -706,13 +716,14 @@ class LlmService:
             "messages": messages,
             "temperature": temperature,
         }
+        request_payload_json = self._metric_request_payload_json(payload)
         started_at = perf_counter()
         with httpx.Client(timeout=LLM_CHAT_TIMEOUT_SECONDS) as client:
             response = client.post(url, headers=headers, json=payload)
         self._raise_for_status(response, endpoint.provider)
         body = response.json()
         content = body["choices"][0]["message"]["content"]
-        self._log_llm_completion(endpoint, trace, started_at, content)
+        self._log_llm_completion(endpoint, trace, started_at, content, request_payload_json)
         return content
 
     def _chat_completion_stream(
@@ -740,10 +751,12 @@ class LlmService:
             "temperature": 0.1,
             "stream": True,
         }
+        request_payload_json = self._metric_request_payload_json(payload)
         started_at = perf_counter()
         first_chunk_at: float | None = None
         chunk_count = 0
         char_count = 0
+        response_parts: list[str] = []
         with httpx.Client(timeout=LLM_STREAM_TIMEOUT_SECONDS) as client:
             with client.stream("POST", url, headers=headers, json=payload) as response:
                 self._raise_for_status(response, endpoint.provider)
@@ -760,9 +773,15 @@ class LlmService:
                         now = perf_counter()
                         if first_chunk_at is None:
                             first_chunk_at = now
-                            self._log_llm_first_chunk(endpoint, trace, started_at)
+                            self._log_llm_first_chunk(
+                                endpoint,
+                                trace,
+                                started_at,
+                                request_payload_json,
+                            )
                         chunk_count += 1
                         char_count += len(content)
+                        response_parts.append(content)
                         yield content
         self._log_llm_stream_done(
             endpoint,
@@ -771,6 +790,8 @@ class LlmService:
             first_chunk_at,
             chunk_count,
             char_count,
+            request_payload_json,
+            "".join(response_parts),
         )
         if total_started_at is not None and trace is not None:
             self._log_total_elapsed(
@@ -907,14 +928,14 @@ class LlmService:
             "请明天再试或联系管理员调整配置。"
         )
 
-    def _question_trace_id(self, question: str) -> str:
-        """生成不暴露问题原文的短追踪 ID。
+    def _new_trace_id(self) -> str:
+        """生成单轮问答唯一追踪 ID，不暴露问题原文。
 
         创建日期：2026-05-05
         author: sunshengxian
         """
 
-        return f"{abs(hash(question.strip())) % 10_000_000:07d}"
+        return uuid4().hex
 
     def _trace_values(
         self,
@@ -943,6 +964,15 @@ class LlmService:
         except (TypeError, ValueError):
             return None
 
+    def _metric_request_payload_json(self, payload: dict[str, Any]) -> str:
+        """序列化实际发送给 LLM 的请求参数，不包含鉴权头和 API Key。
+
+        创建日期：2026-05-05
+        author: sunshengxian
+        """
+
+        return json.dumps(payload, ensure_ascii=False, default=str)
+
     def _record_llm_metric(
         self,
         *,
@@ -959,6 +989,8 @@ class LlmService:
         row_count: int = 0,
         success: bool = True,
         error_message: str | None = None,
+        request_payload_json: str | None = None,
+        response_content: str | None = None,
     ) -> None:
         """记录 LLM 调用耗时指标，失败不影响问答主流程。
 
@@ -971,6 +1003,8 @@ class LlmService:
             user_id=user_id,
             session_id=session_id,
             phase=phase,
+            phase_label=phase_label(phase),
+            phase_description=phase_description(phase),
             provider=provider,
             model=model,
             success=1 if success else 0,
@@ -979,6 +1013,8 @@ class LlmService:
             output_chars=output_chars,
             chunk_count=chunk_count,
             row_count=row_count,
+            request_payload_json=request_payload_json,
+            response_content=response_content,
             error_message=error_message[:512] if error_message else None,
         )
         try:
@@ -994,6 +1030,7 @@ class LlmService:
         trace: LlmCallTrace | None,
         started_at: float,
         content: str,
+        request_payload_json: str,
     ) -> None:
         question_id, phase = self._trace_values(trace)
         elapsed_ms = (perf_counter() - started_at) * 1000
@@ -1017,6 +1054,8 @@ class LlmService:
                 model=endpoint.model,
                 elapsed_ms=elapsed_ms,
                 output_chars=len(content),
+                request_payload_json=request_payload_json,
+                response_content=content,
                 success=True,
             )
 
@@ -1025,6 +1064,7 @@ class LlmService:
         endpoint: LlmEndpoint,
         trace: LlmCallTrace | None,
         started_at: float,
+        request_payload_json: str,
     ) -> None:
         question_id, phase = self._trace_values(trace)
         first_chunk_ms = (perf_counter() - started_at) * 1000
@@ -1045,6 +1085,7 @@ class LlmService:
                 provider=endpoint.provider,
                 model=endpoint.model,
                 first_chunk_ms=first_chunk_ms,
+                request_payload_json=request_payload_json,
                 success=True,
             )
 
@@ -1056,6 +1097,8 @@ class LlmService:
         first_chunk_at: float | None,
         chunk_count: int,
         char_count: int,
+        request_payload_json: str,
+        response_content: str,
     ) -> None:
         question_id, phase = self._trace_values(trace)
         elapsed_ms = (perf_counter() - started_at) * 1000
@@ -1084,6 +1127,8 @@ class LlmService:
                 first_chunk_ms=first_chunk_ms,
                 output_chars=char_count,
                 chunk_count=chunk_count,
+                request_payload_json=request_payload_json,
+                response_content=response_content,
                 success=True,
             )
 
@@ -1366,10 +1411,10 @@ class LlmService:
             content = self._chat_completion(
                 json.dumps(payload, ensure_ascii=False, default=str),
                 system_prompt=QUESTION_ROUTER_SYSTEM_PROMPT,
-                model=self.settings.resolve_qwen_question_router_model(),
+                model=self.settings.resolve_question_router_model(),
                 temperature=0,
                 trace=LlmCallTrace(
-                    question_id=question_id or self._question_trace_id(question),
+                    question_id=question_id or self._new_trace_id(),
                     phase="question_router",
                     user_id=user_id,
                     session_id=session_id,
@@ -1378,11 +1423,11 @@ class LlmService:
             payload = self._extract_json(content)
             return self._route_from_payload(payload)
         except (ValueError, KeyError, TypeError, json.JSONDecodeError, httpx.HTTPError):
-            logger.error("Qwen 问答前置路由失败，降级使用本地兜底规则", exc_info=True)
+            logger.error("问答前置路由模型失败，降级使用本地兜底规则", exc_info=True)
             return self._local_question_route(question, context)
 
     def _route_from_payload(self, payload: dict[str, Any]) -> QuestionRoute:
-        """把 Qwen 路由 JSON 转换为内部结构。
+        """把前置路由 JSON 转换为内部结构。
 
         创建日期：2026-05-05
         author: sunshengxian
@@ -1405,7 +1450,7 @@ class LlmService:
         question: str,
         context: dict[str, Any] | None = None,
     ) -> QuestionRoute:
-        """Qwen 路由不可用时的保守兜底。
+        """前置路由不可用时的保守兜底。
 
         创建日期：2026-05-05
         author: sunshengxian
@@ -1419,9 +1464,9 @@ class LlmService:
                 is_answerable=True,
                 should_query_data=self._should_query_data(question, context or {}),
                 use_knowledge=False,
-                reason="Qwen 路由不可用，本地规则放行",
+                reason="前置路由不可用，本地规则放行",
             )
-        return QuestionRoute(False, False, False, reason="Qwen 路由不可用且本地规则不确定")
+        return QuestionRoute(False, False, False, reason="前置路由不可用且本地规则不确定")
 
     def _is_investment_related_question(
         self,

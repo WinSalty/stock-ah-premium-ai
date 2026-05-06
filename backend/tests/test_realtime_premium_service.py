@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.db.base import Base
 from app.db.models.auth import AppUser
-from app.db.models.market import RealtimeQuoteSnapshot, WatchlistStock
+from app.db.models.market import OfficialAHComparison, RealtimeQuoteSnapshot, WatchlistStock
 from app.services.realtime_premium_service import RealtimePremiumService
 
 
@@ -71,6 +71,7 @@ def test_realtime_premium_service_calculates_from_quote_snapshot_table() -> None
             user_id=1,
             only_watchlist=True,
         )
+        realtime_row = db.query(OfficialAHComparison).one()
 
     assert result.total == 1
     item = result.items[0]
@@ -84,6 +85,15 @@ def test_realtime_premium_service_calculates_from_quote_snapshot_table() -> None
     assert item.opportunity_status == "TRIGGERED"
     assert item.distance_to_target_pct == Decimal("-0.86956500")
     assert item.source == "MANUAL,MANUAL_FX"
+    assert realtime_row.a_close == Decimal("40.000000")
+    assert realtime_row.hk_close == Decimal("32.000000")
+    assert realtime_row.ah_comparison == Decimal("1.36000000")
+    assert realtime_row.ah_premium == Decimal("36.00000000")
+    assert realtime_row.ha_comparison == Decimal("0.73529412")
+    assert realtime_row.ha_premium == Decimal("-26.47058800")
+    assert realtime_row.trade_date == quote_time.date()
+    assert realtime_row.is_realtime is True
+    assert realtime_row.data_source == "REALTIME_CALC"
 
 
 def test_realtime_premium_service_marks_partial_when_quote_is_missing() -> None:

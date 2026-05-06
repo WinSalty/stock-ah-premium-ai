@@ -18,6 +18,8 @@ from app.db.session import get_db
 from app.schemas.chat import (
     ChatMessageCreate,
     ChatMessageResponse,
+    ChatSessionBatchDelete,
+    ChatSessionBatchDeleteResponse,
     ChatSessionCreate,
     ChatSessionDetailResponse,
     ChatSessionResponse,
@@ -263,6 +265,36 @@ def delete_session(
     session.updated_at = now
     db.commit()
     return Response(status_code=204)
+
+
+@router.post("/chat/sessions/batch-delete", response_model=ChatSessionBatchDeleteResponse)
+def batch_delete_sessions(
+    payload: ChatSessionBatchDelete,
+    db: DbSession,
+    current_user: CurrentUser,
+) -> ChatSessionBatchDeleteResponse:
+    """批量逻辑删除 LLM 问答会话。
+
+    创建日期：2026-05-05
+    author: sunshengxian
+    """
+
+    unique_ids = list(dict.fromkeys(payload.session_ids))
+    statement = (
+        select(LlmChatSession)
+        .where(LlmChatSession.user_id == current_user.id)
+        .where(LlmChatSession.deleted_at.is_(None))
+        .where(LlmChatSession.id.in_(unique_ids))
+    )
+    sessions = list(db.scalars(statement).all())
+    if not sessions:
+        return ChatSessionBatchDeleteResponse(deleted_count=0)
+    now = _now_east8()
+    for session in sessions:
+        session.deleted_at = now
+        session.updated_at = now
+    db.commit()
+    return ChatSessionBatchDeleteResponse(deleted_count=len(sessions))
 
 
 @router.post("/chat/sessions/{session_id}/messages", response_model=ChatMessageResponse)
