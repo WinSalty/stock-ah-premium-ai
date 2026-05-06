@@ -17,6 +17,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.core.config import Settings, get_settings
+from app.db.models.auth import AppUser
 from app.db.models.chat import LlmCallMetric
 from app.services.investment_knowledge_service import InvestmentKnowledgeService
 from app.services.llm_metric_definitions import phase_description, phase_label
@@ -43,6 +44,8 @@ ANSWER_KNOWLEDGE_CHUNK_LIMIT = 5
 DEEPSEEK_PRO_CHAT_MODEL = "deepseek-v4-pro"
 QWEN_CHAT_MODEL = "qwen3.6-flash"
 SUPPORTED_CHAT_MODELS = (DEFAULT_CHAT_MODEL, DEEPSEEK_PRO_CHAT_MODEL, QWEN_CHAT_MODEL)
+LLM_METRIC_TITLE_MAX_CHARS = 48
+LLM_METRIC_USER_NAME_MAX_CHARS = 64
 
 INVESTMENT_ADVISOR_SYSTEM_PROMPT = """你是专业、有独立观点、注重证据链的金融投资分析顾问。
 这是用户自己的本地投资评估项目，用户需要明确、可执行、可复核的真实建议。
@@ -308,6 +311,8 @@ class LlmCallTrace:
     phase: str
     user_id: int | None = None
     session_id: int | None = None
+    conversation_title: str | None = None
+    user_name: str | None = None
 
 
 @dataclass(frozen=True)
@@ -345,6 +350,7 @@ class LlmService:
         self.settings = settings or get_settings()
         self.sql_guard = SqlGuardService()
         self.knowledge_service = InvestmentKnowledgeService()
+        self._metric_context_by_question_id: dict[str, tuple[str | None, str | None]] = {}
 
     def answer(
         self,
@@ -361,6 +367,7 @@ class LlmService:
         question_id = self._new_trace_id()
         request_context = context or {}
         user_id, session_id = self._trace_scope(request_context)
+        self._register_metric_context(question_id, question, request_context, user_id)
         started_at = perf_counter()
         selected_model = self._normalize_chat_model(model or self.settings.llm_model)
         if self._is_service_intro_question(question):
@@ -426,6 +433,8 @@ class LlmService:
                 phase="answer",
                 user_id=user_id,
                 session_id=session_id,
+                conversation_title=self._metric_conversation_title(question_id),
+                user_name=self._metric_user_name(question_id),
             ),
         )
         answer = self._strip_forbidden_preamble(answer)
@@ -455,6 +464,7 @@ class LlmService:
         question_id = self._new_trace_id()
         request_context = context or {}
         user_id, session_id = self._trace_scope(request_context)
+        self._register_metric_context(question_id, question, request_context, user_id)
         started_at = perf_counter()
         selected_model = self._normalize_chat_model(model or self.settings.llm_model)
         if self._is_service_intro_question(question):
@@ -518,6 +528,8 @@ class LlmService:
                     phase="answer_stream",
                     user_id=user_id,
                     session_id=session_id,
+                    conversation_title=self._metric_conversation_title(question_id),
+                    user_name=self._metric_user_name(question_id),
                 ),
                 total_started_at=started_at,
                 row_count=len(rows),
@@ -566,6 +578,8 @@ class LlmService:
                             question_id=question_id,
                             user_id=user_id,
                             session_id=session_id,
+                            conversation_title=self._metric_conversation_title(question_id),
+                            user_name=self._metric_user_name(question_id),
                             provider="Database",
                             model=None,
                             elapsed_ms=(perf_counter() - sql_started_at) * 1000,
@@ -623,6 +637,8 @@ class LlmService:
                 phase="generate_sql",
                 user_id=user_id,
                 session_id=session_id,
+                conversation_title=self._metric_conversation_title(question_id),
+                user_name=self._metric_user_name(question_id),
             ),
         )
         payload = self._extract_json(content)
@@ -662,7 +678,11 @@ class LlmService:
         filters = {
             key: value
             for key, value in context.items()
-            if key != "conversation_history" and value not in (None, "", [])
+            if (
+                key != "conversation_history"
+                and not key.startswith("_metric_")
+                and value not in (None, "", [])
+            )
         }
         payload = {
             "user_question": question,
@@ -956,6 +976,68 @@ class LlmService:
         session_id = self._optional_int(context.get("session_id"))
         return user_id, session_id
 
+    def _register_metric_context(
+        self,
+        question_id: str,
+        question: str,
+        context: dict[str, Any],
+        user_id: int | None,
+    ) -> None:
+        """缓存本轮指标展示上下文。
+
+        创建日期：2026-05-06
+        author: sunshengxian
+        """
+
+        display_question = str(context.get("_metric_question") or question)
+        conversation_title = self._metric_title_from_question(display_question)
+        user_name = self._metric_user_name_from_context(context, user_id)
+        self._metric_context_by_question_id[question_id] = (conversation_title, user_name)
+
+    def _metric_title_from_question(self, question: str) -> str:
+        normalized = " ".join(question.strip().split())
+        return (normalized[:LLM_METRIC_TITLE_MAX_CHARS] or "新的投资问答")
+
+    def _metric_user_name_from_context(
+        self,
+        context: dict[str, Any],
+        user_id: int | None,
+    ) -> str | None:
+        context_user_name = str(context.get("_metric_user_name") or "").strip()
+        if context_user_name:
+            return context_user_name[:LLM_METRIC_USER_NAME_MAX_CHARS]
+        if user_id is None:
+            return None
+        try:
+            user = self.db.get(AppUser, user_id)
+        except Exception:
+            self.db.rollback()
+            logger.error("LLM 指标用户名称读取失败 user_id=%s", user_id, exc_info=True)
+            return None
+        if user is None:
+            return None
+        user_name = (user.display_name or user.username or "").strip()
+        return user_name[:LLM_METRIC_USER_NAME_MAX_CHARS] or None
+
+    def _metric_conversation_title(self, question_id: str | None) -> str | None:
+        if question_id is None:
+            return None
+        return self._metric_context_by_question_id.get(question_id, (None, None))[0]
+
+    def _metric_user_name(self, question_id: str | None) -> str | None:
+        if question_id is None:
+            return None
+        return self._metric_context_by_question_id.get(question_id, (None, None))[1]
+
+    def _public_context(self, context: dict[str, Any]) -> dict[str, Any]:
+        """移除只用于指标落库的内部上下文字段。
+
+        创建日期：2026-05-06
+        author: sunshengxian
+        """
+
+        return {key: value for key, value in context.items() if not key.startswith("_metric_")}
+
     def _optional_int(self, value: Any) -> int | None:
         if value in (None, ""):
             return None
@@ -980,8 +1062,10 @@ class LlmService:
         question_id: str,
         user_id: int | None,
         session_id: int | None,
-        provider: str | None,
-        model: str | None,
+        conversation_title: str | None = None,
+        user_name: str | None = None,
+        provider: str | None = None,
+        model: str | None = None,
         elapsed_ms: float | None = None,
         first_chunk_ms: float | None = None,
         output_chars: int = 0,
@@ -1000,7 +1084,9 @@ class LlmService:
 
         metric = LlmCallMetric(
             question_id=question_id,
+            conversation_title=conversation_title,
             user_id=user_id,
+            user_name=user_name,
             session_id=session_id,
             phase=phase,
             phase_label=phase_label(phase),
@@ -1050,6 +1136,8 @@ class LlmService:
                 question_id=trace.question_id,
                 user_id=trace.user_id,
                 session_id=trace.session_id,
+                conversation_title=trace.conversation_title,
+                user_name=trace.user_name,
                 provider=endpoint.provider,
                 model=endpoint.model,
                 elapsed_ms=elapsed_ms,
@@ -1082,6 +1170,8 @@ class LlmService:
                 question_id=trace.question_id,
                 user_id=trace.user_id,
                 session_id=trace.session_id,
+                conversation_title=trace.conversation_title,
+                user_name=trace.user_name,
                 provider=endpoint.provider,
                 model=endpoint.model,
                 first_chunk_ms=first_chunk_ms,
@@ -1121,6 +1211,8 @@ class LlmService:
                 question_id=trace.question_id,
                 user_id=trace.user_id,
                 session_id=trace.session_id,
+                conversation_title=trace.conversation_title,
+                user_name=trace.user_name,
                 provider=endpoint.provider,
                 model=endpoint.model,
                 elapsed_ms=elapsed_ms,
@@ -1156,6 +1248,8 @@ class LlmService:
             question_id=question_id,
             user_id=user_id,
             session_id=session_id,
+            conversation_title=self._metric_conversation_title(question_id),
+            user_name=self._metric_user_name(question_id),
             provider="Internal",
             model=model,
             elapsed_ms=elapsed_ms,
@@ -1167,7 +1261,7 @@ class LlmService:
         context_json = json.dumps(
             {
                 "question": question,
-                "context": context,
+                "context": self._public_context(context),
                 "conversation_history": self._conversation_history(context)[-6:],
             },
             ensure_ascii=False,
@@ -1203,7 +1297,7 @@ class LlmService:
     ) -> str:
         payload = {
             "question": question,
-            "context": context,
+            "context": self._public_context(context),
             "failed_sql": sql,
             "error": error[:1200],
             "schema": self._schema(),
@@ -1224,6 +1318,8 @@ class LlmService:
                 phase="repair_sql",
                 user_id=user_id,
                 session_id=session_id,
+                conversation_title=self._metric_conversation_title(question_id),
+                user_name=self._metric_user_name(question_id),
             ),
         )
         payload = self._extract_json(content)
@@ -1403,7 +1499,11 @@ class LlmService:
             "frontend_context": {
                 key: value
                 for key, value in context.items()
-                if key != "conversation_history" and value not in (None, "", [])
+                if (
+                    key != "conversation_history"
+                    and not key.startswith("_metric_")
+                    and value not in (None, "", [])
+                )
             },
             "knowledge_catalog": self.knowledge_service.catalog(),
         }
@@ -1418,6 +1518,8 @@ class LlmService:
                     phase="question_router",
                     user_id=user_id,
                     session_id=session_id,
+                    conversation_title=self._metric_conversation_title(question_id),
+                    user_name=self._metric_user_name(question_id),
                 ),
             )
             payload = self._extract_json(content)

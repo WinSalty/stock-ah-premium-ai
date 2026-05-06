@@ -314,6 +314,31 @@ CREATE TABLE IF NOT EXISTS `alert_event` (
     FOREIGN KEY (`watchlist_id`) REFERENCES `watchlist_stock` (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='提醒事件与推送记录表';
 
+CREATE TABLE IF NOT EXISTS `pushplus_message_log` (
+  `id` INT NOT NULL AUTO_INCREMENT COMMENT '自增主键',
+  `user_id` INT NOT NULL COMMENT '接收系统用户 ID',
+  `alert_event_id` INT DEFAULT NULL COMMENT '关联提醒事件 ID，测试推送为空',
+  `recipient_type` VARCHAR(16) NOT NULL COMMENT '接收类型，FRIEND 好友消息或 PERSONAL 一对一消息',
+  `recipient_friend_id` INT DEFAULT NULL COMMENT 'PushPlus 好友 ID，一对一消息为空',
+  `recipient_name` VARCHAR(128) DEFAULT NULL COMMENT '接收对象展示名称',
+  `message_title` VARCHAR(128) NOT NULL COMMENT '推送标题',
+  `message_content` TEXT NOT NULL COMMENT '推送内容',
+  `push_channel` VARCHAR(32) NOT NULL DEFAULT 'PUSHPLUS' COMMENT '推送渠道',
+  `push_status` VARCHAR(16) NOT NULL DEFAULT 'PENDING' COMMENT '推送状态',
+  `push_message_id` VARCHAR(128) DEFAULT NULL COMMENT 'PushPlus 消息流水号',
+  `error_message` TEXT DEFAULT NULL COMMENT '失败错误信息',
+  `sent_at` DATETIME DEFAULT NULL COMMENT '发送成功时间',
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '记录创建时间',
+  `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '记录更新时间',
+  PRIMARY KEY (`id`),
+  KEY `idx_pushplus_message_log_user_created` (`user_id`, `created_at`),
+  KEY `idx_pushplus_message_log_status_created` (`push_status`, `created_at`),
+  CONSTRAINT `fk_pushplus_message_log_user`
+    FOREIGN KEY (`user_id`) REFERENCES `app_user` (`id`),
+  CONSTRAINT `fk_pushplus_message_log_alert_event`
+    FOREIGN KEY (`alert_event_id`) REFERENCES `alert_event` (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='PushPlus 推送消息流水表';
+
 CREATE TABLE IF NOT EXISTS `stock_selection_factor_snapshot` (
   `id` INT NOT NULL AUTO_INCREMENT COMMENT '自增主键',
   `factor_date` DATE NOT NULL COMMENT '因子快照日期',
@@ -433,7 +458,9 @@ CREATE TABLE IF NOT EXISTS `llm_chat_message` (
 CREATE TABLE IF NOT EXISTS `llm_call_metric` (
   `id` INT NOT NULL AUTO_INCREMENT COMMENT '自增主键',
   `question_id` VARCHAR(32) NOT NULL COMMENT '单轮问题追踪 ID，不包含问题原文',
+  `conversation_title` VARCHAR(128) DEFAULT NULL COMMENT '对话标题，由用户提问清洗截取生成',
   `user_id` INT DEFAULT NULL COMMENT '所属用户 ID',
+  `user_name` VARCHAR(64) DEFAULT NULL COMMENT '用户展示名称，优先展示名称否则登录名',
   `session_id` INT DEFAULT NULL COMMENT '所属会话 ID',
   `phase` VARCHAR(64) NOT NULL COMMENT '调用阶段，如 question_router、generate_sql、answer_stream',
   `phase_label` VARCHAR(64) DEFAULT NULL COMMENT '调用阶段中文名称',

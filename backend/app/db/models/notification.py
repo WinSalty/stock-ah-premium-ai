@@ -79,3 +79,31 @@ class AlertEvent(TimestampMixin, Base):
     error_message: Mapped[str | None] = mapped_column(Text)
     dedupe_key: Mapped[str] = mapped_column(String(255), nullable=False)
     sent_at: Mapped[datetime | None] = mapped_column(DateTime)
+
+
+class PushplusMessageLog(TimestampMixin, Base):
+    """PushPlus 推送消息流水。
+
+    创建日期：2026-05-06
+    author: sunshengxian
+    """
+
+    __tablename__ = "pushplus_message_log"
+    __table_args__ = (
+        Index("idx_pushplus_message_log_user_created", "user_id", "created_at"),
+        Index("idx_pushplus_message_log_status_created", "push_status", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("app_user.id"), nullable=False)
+    alert_event_id: Mapped[int | None] = mapped_column(ForeignKey("alert_event.id"))
+    recipient_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    recipient_friend_id: Mapped[int | None] = mapped_column(Integer)
+    recipient_name: Mapped[str | None] = mapped_column(String(128))
+    message_title: Mapped[str] = mapped_column(String(128), nullable=False)
+    message_content: Mapped[str] = mapped_column(Text, nullable=False)
+    push_channel: Mapped[str] = mapped_column(String(32), nullable=False, default="PUSHPLUS")
+    push_status: Mapped[str] = mapped_column(String(16), nullable=False, default="PENDING")
+    push_message_id: Mapped[str | None] = mapped_column(String(128))
+    error_message: Mapped[str | None] = mapped_column(Text)
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime)

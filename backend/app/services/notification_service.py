@@ -19,11 +19,12 @@ from app.db.models.market import (
     HKTradeCalendar,
     WatchlistStock,
 )
-from app.db.models.notification import AlertEvent, PushplusBinding
+from app.db.models.notification import AlertEvent, PushplusBinding, PushplusMessageLog
 from app.schemas.notification import (
     AdminPushplusBindingResponse,
     PushplusBindingResponse,
     PushplusFriendResponse,
+    PushplusMessageLogResponse,
 )
 from app.services.pushplus_client import PushplusClient, PushplusError, PushplusFriend
 from app.services.realtime_market_service import RealtimeMarketDataService, RealtimeQuote
@@ -40,6 +41,9 @@ EVENT_PRICE_REACHED = "PRICE_REACHED"
 PUSH_CHANNEL = "PUSHPLUS"
 PUSH_STATUS_SENT = "SENT"
 PUSH_STATUS_FAILED = "FAILED"
+PUSH_STATUS_PENDING = "PENDING"
+PUSH_RECIPIENT_FRIEND = "FRIEND"
+PUSH_RECIPIENT_PERSONAL = "PERSONAL"
 DAILY_EVENT_TYPE_LIMIT = 5
 THRESHOLD_DEVIATION_STEP_PCT = Decimal("1")
 PRICE_DEVIATION_STEP_PCT = Decimal("2")
@@ -364,6 +368,42 @@ class NotificationService:
             ).all()
         )
 
+    def list_pushplus_message_logs(self, limit: int = 100) -> list[PushplusMessageLogResponse]:
+        """管理员查询 PushPlus 推送流水。
+
+        创建日期：2026-05-06
+        author: sunshengxian
+        """
+
+        rows = self.db.execute(
+            select(PushplusMessageLog, AppUser)
+            .join(AppUser, AppUser.id == PushplusMessageLog.user_id)
+            .order_by(desc(PushplusMessageLog.id))
+            .limit(limit)
+        ).all()
+        return [
+            PushplusMessageLogResponse(
+                id=log.id,
+                user_id=log.user_id,
+                username=user.username,
+                display_name=user.display_name,
+                alert_event_id=log.alert_event_id,
+                recipient_type=log.recipient_type,
+                recipient_friend_id=log.recipient_friend_id,
+                recipient_name=log.recipient_name,
+                message_title=log.message_title,
+                message_content=log.message_content,
+                push_channel=log.push_channel,
+                push_status=log.push_status,
+                push_message_id=log.push_message_id,
+                error_message=log.error_message,
+                sent_at=log.sent_at,
+                created_at=log.created_at,
+                updated_at=log.updated_at,
+            )
+            for log, user in rows
+        ]
+
     def _scan_threshold_alert(
         self,
         item: WatchlistStock,
@@ -540,7 +580,12 @@ class NotificationService:
             return None
         self.db.refresh(event)
         try:
-            event.push_message_id = self._send_pushplus_message(item.user_id, title, content)
+            event.push_message_id = self._send_pushplus_message(
+                item.user_id,
+                title,
+                content,
+                alert_event_id=event.id,
+            )
             event.push_status = PUSH_STATUS_SENT
             event.sent_at = self._now_naive()
         except PushplusError as exc:
@@ -841,11 +886,74 @@ class NotificationService:
 
         return self._active_binding(user_id) is not None or self._is_default_admin_user(user_id)
 
-    def _send_pushplus_message(self, user_id: int, title: str, content: str) -> str:
-        if self._is_default_admin_user(user_id):
-            return self.pushplus_client.send_personal_message(title, content)
-        binding = self._require_active_binding(user_id)
-        return self.pushplus_client.send_friend_message(binding.friend_token, title, content)
+    def _send_pushplus_message(
+        self,
+        user_id: int,
+        title: str,
+        content: str,
+        alert_event_id: int | None = None,
+    ) -> str:
+        log = self._create_pushplus_message_log(user_id, title, content, alert_event_id)
+        try:
+            if log.recipient_type == PUSH_RECIPIENT_PERSONAL:
+                message_id = self.pushplus_client.send_personal_message(title, content)
+            else:
+                binding = self._require_active_binding(user_id)
+                message_id = self.pushplus_client.send_friend_message(
+                    binding.friend_token,
+                    title,
+                    content,
+                )
+        except PushplusError as exc:
+            log.push_status = PUSH_STATUS_FAILED
+            log.error_message = str(exc)
+            self.db.commit()
+            raise
+        log.push_status = PUSH_STATUS_SENT
+        log.push_message_id = message_id
+        log.sent_at = self._now_naive()
+        self.db.commit()
+        return message_id
+
+    def _create_pushplus_message_log(
+        self,
+        user_id: int,
+        title: str,
+        content: str,
+        alert_event_id: int | None,
+    ) -> PushplusMessageLog:
+        binding = (
+            None
+            if self._is_default_admin_user(user_id)
+            else self._require_active_binding(user_id)
+        )
+        log = PushplusMessageLog(
+            user_id=user_id,
+            alert_event_id=alert_event_id,
+            recipient_type=PUSH_RECIPIENT_PERSONAL if binding is None else PUSH_RECIPIENT_FRIEND,
+            recipient_friend_id=binding.friend_id if binding else None,
+            recipient_name=self._pushplus_recipient_name(user_id, binding),
+            message_title=title,
+            message_content=content,
+            push_channel=PUSH_CHANNEL,
+            push_status=PUSH_STATUS_PENDING,
+        )
+        self.db.add(log)
+        self.db.commit()
+        self.db.refresh(log)
+        return log
+
+    def _pushplus_recipient_name(
+        self,
+        user_id: int,
+        binding: PushplusBinding | None,
+    ) -> str | None:
+        if binding is not None:
+            return binding.friend_remark or binding.friend_nick_name or f"好友 {binding.friend_id}"
+        user = self.db.get(AppUser, user_id)
+        if user is None:
+            return "PushPlus 个人账号"
+        return user.display_name or user.username or "PushPlus 个人账号"
 
     def _active_binding(self, user_id: int) -> PushplusBinding | None:
         return self.db.scalar(

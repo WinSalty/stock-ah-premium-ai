@@ -15,7 +15,7 @@ from app.db.models.market import (
     StockSelectionFactorSnapshot,
     WatchlistStock,
 )
-from app.db.models.notification import AlertEvent, PushplusBinding
+from app.db.models.notification import AlertEvent, PushplusBinding, PushplusMessageLog
 from app.db.models.sync import DataQualityIssue, SyncCheckpoint, SyncRun
 
 __all__ = [
@@ -37,6 +37,7 @@ __all__ = [
     "LlmChatSession",
     "OfficialAHComparison",
     "PushplusBinding",
+    "PushplusMessageLog",
     "RealtimeQuoteSnapshot",
     "StockSelectionFactorSnapshot",
     "SyncCheckpoint",

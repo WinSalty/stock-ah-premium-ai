@@ -89,7 +89,9 @@ export interface LlmMetricSummary {
 export interface LlmMetricItem {
   id: number;
   question_id: string;
+  conversation_title: string | null;
   user_id: number | null;
+  user_name: string | null;
   session_id: number | null;
   phase: string;
   phase_label: string | null;
@@ -521,6 +523,26 @@ export interface TestPushRequest {
 export interface TestPushResponse {
   ok: boolean;
   message_id: string | null;
+}
+
+export interface PushplusMessageLog {
+  id: number;
+  user_id: number;
+  username: string | null;
+  display_name: string | null;
+  alert_event_id: number | null;
+  recipient_type: string;
+  recipient_friend_id: number | null;
+  recipient_name: string | null;
+  message_title: string;
+  message_content: string;
+  push_channel: string;
+  push_status: string;
+  push_message_id: string | null;
+  error_message: string | null;
+  sent_at: string | null;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface AlertEvent {

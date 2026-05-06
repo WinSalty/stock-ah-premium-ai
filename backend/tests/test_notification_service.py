@@ -11,7 +11,6 @@ from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
 from app.api.routes_notifications import router as notifications_router
-from app.db.session import get_db
 from app.core.config import Settings
 from app.db.base import Base
 from app.db.models.auth import AppUser
@@ -21,7 +20,8 @@ from app.db.models.market import (
     RealtimeQuoteSnapshot,
     WatchlistStock,
 )
-from app.db.models.notification import AlertEvent, PushplusBinding
+from app.db.models.notification import AlertEvent, PushplusBinding, PushplusMessageLog
+from app.db.session import get_db
 from app.schemas.watchlist import WatchlistCreate
 from app.services.notification_service import (
     EVENT_PRICE_REACHED,
@@ -278,6 +278,14 @@ def test_test_push_wraps_content_as_html() -> None:
     assert "消息链路已连通" in sent_content
     assert "价差信号" in sent_content
     assert "#7c3aed" not in sent_content
+    with Session(engine) as db:
+        logs = list(db.scalars(select(PushplusMessageLog)).all())
+    assert len(logs) == 1
+    assert logs[0].message_title == "AH 提醒测试"
+    assert logs[0].recipient_type == "FRIEND"
+    assert logs[0].recipient_name == "测试好友"
+    assert logs[0].push_status == "SENT"
+    assert logs[0].push_message_id == "msg-1"
 
 
 def test_admin_test_push_uses_personal_message_without_binding() -> None:
@@ -311,6 +319,11 @@ def test_admin_test_push_uses_personal_message_without_binding() -> None:
     assert len(fake_client.sent) == 1
     assert fake_client.sent[0][0] == "PERSONAL"
     assert "PushPlus 一对一消息推送已连通" in fake_client.sent[0][2]
+    with Session(engine) as db:
+        logs = list(db.scalars(select(PushplusMessageLog)).all())
+    assert len(logs) == 1
+    assert logs[0].recipient_type == "PERSONAL"
+    assert logs[0].recipient_name == "admin"
 
 
 def test_bound_user_cannot_create_pushplus_qr_code() -> None:
@@ -401,6 +414,34 @@ def test_threshold_alert_pushes_once_per_deviation_level() -> None:
     assert "<table" in fake_client.sent[0][2]
     assert "当前溢价" in fake_client.sent[0][2]
     assert "目标阈值" in fake_client.sent[0][2]
+    with Session(engine) as db:
+        logs = list(db.scalars(select(PushplusMessageLog)).all())
+    assert len(logs) == 2
+    assert {log.alert_event_id for log in logs} == {event.id for event in total_events}
+
+
+def test_admin_can_list_pushplus_message_logs() -> None:
+    """确认管理员可查看 PushPlus 推送流水。
+
+    创建日期：2026-05-06
+    author: sunshengxian
+    """
+
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    fake_client = FakePushplusClient()
+    with Session(engine) as db:
+        user = add_user_with_binding(db)
+        service = NotificationService(db, pushplus_client=fake_client)
+        service.send_test_push(user.id, "记录测试", "推送记录内容")
+
+        logs = service.list_pushplus_message_logs()
+
+    assert len(logs) == 1
+    assert logs[0].username == "notify"
+    assert logs[0].recipient_name == "测试好友"
+    assert logs[0].message_title == "记录测试"
+    assert logs[0].push_status == "SENT"
 
 
 def test_threshold_alert_limits_daily_event_type_to_five_per_user() -> None:
@@ -682,6 +723,27 @@ def test_pushplus_callback_endpoint_accepts_validation_probe() -> None:
     assert response.json() == {"code": 200, "msg": "success"}
 
 
+def test_pushplus_callback_endpoint_accepts_get_probe() -> None:
+    """确认 PushPlus 使用 GET 校验回调地址时也能通过。
+
+    创建日期：2026-05-06
+    author: sunshengxian
+    """
+
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    client = build_notification_test_client(engine)
+
+    response = client.get("/api/notifications/pushplus/callback")
+
+    assert response.status_code == 200
+    assert response.json() == {"code": 200, "msg": "success"}
+
+
 def test_pushplus_callback_endpoint_binds_user_from_add_friend_payload() -> None:
     """确认 PushPlus 真实回调可通过公网接口完成用户绑定。
 
@@ -696,7 +758,12 @@ def test_pushplus_callback_endpoint_binds_user_from_add_friend_payload() -> None
     )
     Base.metadata.create_all(engine)
     with Session(engine) as db:
-        user = AppUser(username="callback-api-user", password_hash="hash", role="USER", is_active=True)
+        user = AppUser(
+            username="callback-api-user",
+            password_hash="hash",
+            role="USER",
+            is_active=True,
+        )
         db.add(user)
         db.commit()
         db.refresh(user)
@@ -724,6 +791,42 @@ def test_pushplus_callback_endpoint_binds_user_from_add_friend_payload() -> None
     assert stored is not None
     assert stored.friend_id == 9527
     assert stored.friend_token == "friend-token-9527"
+
+
+def test_pushplus_callback_endpoint_ignores_invalid_qrcode_probe() -> None:
+    """确认 PushPlus 使用测试二维码值探测 POST 回调时不会阻断保存。
+
+    创建日期：2026-05-06
+    author: sunshengxian
+    """
+
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    client = build_notification_test_client(engine)
+
+    response = client.post(
+        "/api/notifications/pushplus/callback",
+        json={
+            "event": "add_friend",
+            "qrCode": "pushplus-probe",
+            "friendInfo": {
+                "friendId": 5,
+                "token": "probe-friend-token",
+                "nickName": "探测请求",
+                "isFollow": 1,
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"code": 200, "msg": "success"}
+    with Session(engine) as db:
+        stored = list(db.scalars(select(PushplusBinding)).all())
+    assert stored == []
 
 
 def test_watchlist_alert_requires_pushplus_binding() -> None:

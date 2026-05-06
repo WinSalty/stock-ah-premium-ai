@@ -1,15 +1,21 @@
-import { Button, Checkbox, Form, Input, Modal, Select, Space, Switch, Table, Tag, Typography, message } from 'antd';
+import { Button, Checkbox, Form, Input, Modal, Select, Space, Switch, Table, Tag, Tooltip, Typography, message } from 'antd';
 import { Edit3, KeyRound, Link2, Plus, RefreshCw } from 'lucide-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import PageHeader from '../components/PageHeader';
 import { createInvitation, fetchInvitations, fetchUsers, updateUser } from '../api/auth';
-import { adminBindPushplusFriend, fetchAdminPushplusBindings, fetchPushplusFriends } from '../api/notifications';
+import {
+  adminBindPushplusFriend,
+  fetchAdminPushplusBindings,
+  fetchAdminPushplusMessages,
+  fetchPushplusFriends
+} from '../api/notifications';
 import type {
   AdminPushplusBindRequest,
   InvitationResponse,
   PushplusBinding,
   PushplusFriend,
+  PushplusMessageLog,
   UserInfo,
   UserUpdateRequest
 } from '../types/domain';
@@ -58,6 +64,10 @@ function UserAdminPage({ currentUser, onUserUpdated }: UserAdminPageProps) {
     queryKey: ['pushplus-friends'],
     queryFn: fetchPushplusFriends,
     enabled: false
+  });
+  const pushplusMessages = useQuery({
+    queryKey: ['pushplus-admin-messages'],
+    queryFn: fetchAdminPushplusMessages
   });
   const createMutation = useMutation({
     mutationFn: createInvitation,
@@ -297,6 +307,101 @@ function UserAdminPage({ currentUser, onUserUpdated }: UserAdminPageProps) {
       <section className="panel user-admin-table-panel">
         <div className="query-result-head">
           <div>
+            <div className="panel-title">PushPlus 推送记录</div>
+            <Typography.Text type="secondary">记录每一次实际提交给 PushPlus 的消息、接收对象和发送结果。</Typography.Text>
+          </div>
+          <Button
+            icon={<RefreshCw size={16} />}
+            loading={pushplusMessages.isFetching}
+            onClick={() => pushplusMessages.refetch()}
+          >
+            刷新记录
+          </Button>
+        </div>
+        <Table<PushplusMessageLog>
+          rowKey="id"
+          loading={pushplusMessages.isLoading}
+          dataSource={pushplusMessages.data || []}
+          scroll={{ x: 1160 }}
+          pagination={{ pageSize: 10 }}
+          columns={[
+            {
+              title: '推送时间',
+              dataIndex: 'sent_at',
+              width: 180,
+              render: (_, record) => formatEast8DateTime(record.sent_at || record.created_at, { naiveAsEast8: true })
+            },
+            {
+              title: '系统用户',
+              width: 180,
+              render: (_, record) => (
+                <div className="user-cell">
+                  <Typography.Text strong>{record.display_name || record.username || `用户 ${record.user_id}`}</Typography.Text>
+                  <Typography.Text type="secondary">{record.username || record.user_id}</Typography.Text>
+                </div>
+              )
+            },
+            {
+              title: '推送给',
+              width: 190,
+              render: (_, record) => (
+                <div className="user-cell">
+                  <Typography.Text>{record.recipient_name || '-'}</Typography.Text>
+                  <Typography.Text type="secondary">
+                    {record.recipient_type === 'PERSONAL'
+                      ? '个人账号'
+                      : record.recipient_friend_id
+                        ? `好友 ${record.recipient_friend_id}`
+                        : '好友消息'}
+                  </Typography.Text>
+                </div>
+              )
+            },
+            {
+              title: '标题',
+              dataIndex: 'message_title',
+              width: 180,
+              ellipsis: true
+            },
+            {
+              title: '内容',
+              dataIndex: 'message_content',
+              ellipsis: true,
+              render: (value: string) => (
+                <Tooltip
+                  overlayClassName="pushplus-message-tooltip"
+                  title={<span className="pushplus-message-tooltip-content">{pushplusMessageText(value)}</span>}
+                >
+                  <Typography.Text className="pushplus-message-preview">
+                    {pushplusMessagePreview(value)}
+                  </Typography.Text>
+                </Tooltip>
+              )
+            },
+            {
+              title: '状态',
+              width: 100,
+              render: (_, record) => renderPushStatus(record.push_status)
+            },
+            {
+              title: '流水号',
+              dataIndex: 'push_message_id',
+              width: 150,
+              render: (value) => value || '-'
+            },
+            {
+              title: '错误',
+              dataIndex: 'error_message',
+              width: 180,
+              ellipsis: true,
+              render: (value) => value || '-'
+            }
+          ]}
+        />
+      </section>
+      <section className="panel user-admin-table-panel">
+        <div className="query-result-head">
+          <div>
             <div className="panel-title">生成邀请码</div>
             <Typography.Text type="secondary">新用户使用邀请码注册后默认是普通角色。</Typography.Text>
           </div>
@@ -383,6 +488,37 @@ function UserAdminPage({ currentUser, onUserUpdated }: UserAdminPageProps) {
       </Modal>
     </main>
   );
+}
+
+function renderPushStatus(status: string) {
+  const normalized = status || 'PENDING';
+  if (normalized === 'SENT') {
+    return <Tag color="green">已发送</Tag>;
+  }
+  if (normalized === 'FAILED') {
+    return <Tag color="red">失败</Tag>;
+  }
+  return <Tag color="blue">待发送</Tag>;
+}
+
+function pushplusMessagePreview(value: string) {
+  const text = pushplusMessageText(value);
+  return text.length > 96 ? `${text.slice(0, 96)}...` : text || '-';
+}
+
+function pushplusMessageText(value: string) {
+  return value
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/(div|p|tr|table|tbody)>/gi, '\n')
+    .replace(/<[^>]*>/g, '')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .split('\n')
+    .map((line) => line.replace(/\s+/g, ' ').trim())
+    .filter(Boolean)
+    .join('\n');
 }
 
 export default UserAdminPage;

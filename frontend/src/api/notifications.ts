@@ -5,6 +5,7 @@ import type {
   PushplusBindRequest,
   PushplusBinding,
   PushplusFriend,
+  PushplusMessageLog,
   PushplusQrCodeRequest,
   PushplusQrCodeResponse,
   TestPushRequest,
@@ -28,6 +29,10 @@ export function fetchPushplusFriends() {
 
 export function fetchAdminPushplusBindings() {
   return requestJson<PushplusBinding[]>('/api/notifications/admin/pushplus/bindings');
+}
+
+export function fetchAdminPushplusMessages() {
+  return requestJson<PushplusMessageLog[]>('/api/notifications/admin/pushplus/messages');
 }
 
 export function adminBindPushplusFriend(payload: AdminPushplusBindRequest) {

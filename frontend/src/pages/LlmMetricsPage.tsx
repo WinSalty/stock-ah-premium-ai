@@ -73,6 +73,7 @@ const phaseOptions = [
 
 const fieldDescriptions: Record<string, string> = {
   created_at: '该阶段指标落库时间，页面按东八区展示。',
+  conversation_title: '本轮对话标题，由用户提问清洗并截取前 48 个字符生成，便于快速识别问题主题。',
   question_id: '单轮问答唯一追踪 ID；一轮问答会产生多条不同阶段记录，重复提问也会生成新的 ID。',
   phase: '阶段流水名称。不同阶段采集口径不同，因此某些计数字段在该阶段为 0 是正常现象。',
   provider: '调用来源：Qwen/DeepSeek 是外部模型，Database 是数据库执行，Internal 是本地快路径或整轮汇总。',
@@ -85,6 +86,7 @@ const fieldDescriptions: Record<string, string> = {
   output_chars: '模型输出字符数。回答类阶段有意义；SQL 执行、首包、整轮汇总等阶段通常为 0。',
   request_payload_json: '实际发送给 OpenAI-compatible 接口的请求 JSON，包括模型、messages、temperature 和 stream，不包含 Authorization 或 API Key。',
   response_content: '大模型返回的原始响应内容。流式回答只在 answer_stream 完成记录保存拼接后的完整内容。',
+  user_name: '系统用户展示名称；优先使用展示名称，没有展示名称时使用登录名。',
   session_id: '聊天会话 ID；后台任务或无会话上下文时为空。',
   user_id: '系统用户 ID；无用户上下文时为空。',
   error_message: '阶段失败时记录的错误摘要，最多保留后端截断后的内容。'
@@ -154,6 +156,13 @@ function LlmMetricsPage() {
           </Typography.Text>
         )
       },
+      {
+        title: <HelpTitle label="对话标题" help={fieldDescriptions.conversation_title} />,
+        dataIndex: 'conversation_title',
+        width: 220,
+        ellipsis: true,
+        render: renderText
+      },
       { title: <HelpTitle label="追踪 ID" help={fieldDescriptions.question_id} />, dataIndex: 'question_id', width: 112 },
       {
         title: <HelpTitle label="阶段" help={fieldDescriptions.phase} />,
@@ -219,6 +228,12 @@ function LlmMetricsPage() {
           ) : (
             <Typography.Text type="secondary">-</Typography.Text>
           )
+      },
+      {
+        title: <HelpTitle label="用户名称" help={fieldDescriptions.user_name} />,
+        dataIndex: 'user_name',
+        width: 130,
+        render: renderText
       },
       {
         title: <HelpTitle label="首包" help={fieldDescriptions.first_chunk_ms} />,
@@ -396,7 +411,7 @@ function LlmMetricsPage() {
           dataSource={metrics.data?.rows || []}
           columns={columns}
           locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} /> }}
-          scroll={{ x: 1860 }}
+          scroll={{ x: 2210 }}
           pagination={{
             current: page,
             pageSize,

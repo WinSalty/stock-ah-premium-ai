@@ -78,6 +78,7 @@
   - PushPlus 测试消息、阈值提醒和股价提醒统一使用 HTML 模板发送，消息采用非紫色轻量卡片和价差信号图样式，并展示触发类型、标的、交易日、当前阈值/价格和目标阈值/价格等明细。
   - 默认管理员账号无法添加自己为 PushPlus 好友时，测试消息、阈值提醒和股价提醒会特殊走 PushPlus 一对一消息，继续使用原 PushPlus 用户 token；普通用户仍走好友消息和绑定校验。
   - 自选股保存提醒配置时会校验当前用户必须已有 PushPlus 绑定，未绑定时前端弹出二维码引导，后端同步拒绝未绑定提醒保存。
+  - 新增 `pushplus_message_log` 推送流水表和管理员查询接口；测试推送、阈值提醒、股价提醒都会记录实际推送时间、系统用户、PushPlus 接收对象、标题、内容、状态、消息流水号和错误信息，用户管理页可直接查看。
 - LLM 问答：
   - OpenAI-compatible Chat API 封装支持 DeepSeek 和阿里 Qwen，问答页面可在 `deepseek-v4-flash`、`deepseek-v4-pro` 与 `qwen3.6-flash` 间选择，默认使用 `deepseek-v4-flash`；兼容历史配置 `deepseek-v4-pro[1m]` 到 DeepSeek API 支持的模型名，当前不额外传 `reasoning_effort`。
   - DeepSeek API Key 优先读取 `/Users/salty/codeProject/ai/doc/deepseek-apikey.txt`，`LLM_API_KEY` 仅作兜底；Qwen API Key 优先读取 `/Users/salty/codeProject/ai/doc/qwen-apikey.txt`，`QWEN_API_KEY` 仅作兜底，不把密钥暴露给前端。
@@ -99,6 +100,7 @@
   - LLM 耗时参数弹窗改为结构化展示请求参数：顶部汇总模型、温度、流式开关和消息数，下方按 `system/user` 等 role 分块展示 messages 内容，便于排查上下文。
   - LLM 耗时指标新增 `response_content` 字段，使用 MySQL `LONGTEXT` 记录大模型返回的原始响应内容；流式回答在 `answer_stream` 完成记录中保存拼接后的完整内容。页面表格已将“参数”移动到“耗时”后，并在其后新增“响应”查看弹窗。
   - LLM 耗时追踪 ID 已改为每轮问答生成 32 位随机 UUID，不再按问题文本哈希，避免不同会话重复提问时阶段记录混在同一个追踪 ID 下。
+  - LLM 耗时指标新增 `conversation_title` 和 `user_name` 字段；对话标题由用户提问清洗截取生成，页面列顺序调整为“时间、对话标题、追踪 ID…响应、用户名称…”，便于管理员按问题主题和用户排查。
   - 关注/自选股的 H/A 折价、H/A 溢价问题已按对应方向排序，避免把 H 股折价和 H 股溢价混用。
   - AH 溢价、折价和套利类问题会追加候选池、市场分布、自选机会和 `llm-knowledge/ah-premium/` 中的投资研究片段。
   - 只读 SQL Guard：只允许 SELECT、禁止多语句和写库操作、限制白名单视图、自动 limit。

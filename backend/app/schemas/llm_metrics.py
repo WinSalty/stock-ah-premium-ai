@@ -14,7 +14,9 @@ class LlmCallMetricItem(BaseModel):
 
     id: int
     question_id: str
+    conversation_title: str | None = None
     user_id: int | None = None
+    user_name: str | None = None
     session_id: int | None = None
     phase: str
     phase_label: str | None = None

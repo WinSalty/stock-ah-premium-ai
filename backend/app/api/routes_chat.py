@@ -87,6 +87,16 @@ def _visible_question(payload: ChatMessageCreate) -> str:
     return (payload.display_question or payload.question).strip()[:256] or payload.question
 
 
+def _display_user_name(current_user: CurrentUser) -> str:
+    """读取指标中展示的用户名称。
+
+    创建日期：2026-05-06
+    author: sunshengxian
+    """
+
+    return (current_user.display_name or current_user.username).strip()
+
+
 def _parse_rows(message: LlmChatMessage) -> list[dict[str, object]]:
     """解析消息中保存的数据预览。
 
@@ -328,6 +338,8 @@ def create_message(
     )
     context["user_id"] = current_user.id
     context["session_id"] = session_id
+    context["_metric_question"] = visible_question
+    context["_metric_user_name"] = _display_user_name(current_user)
     context["conversation_history"] = history
     _touch_session(session, visible_question, has_history=bool(history))
     db.commit()
@@ -392,6 +404,8 @@ def create_message_stream(
     )
     context["user_id"] = current_user.id
     context["session_id"] = session_id
+    context["_metric_question"] = visible_question
+    context["_metric_user_name"] = _display_user_name(current_user)
     context["conversation_history"] = history
 
     def stream() -> Iterator[str]:

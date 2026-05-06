@@ -352,80 +352,6 @@ body {
   grid-template-columns: minmax(0, 1fr);
 }
 
-.overview-stat-row {
-  margin-bottom: 4px;
-}
-
-.overview-stat-card {
-  position: relative;
-  min-height: 120px;
-  overflow: hidden;
-  border: 1px solid #dfe7f1;
-  border-radius: 8px;
-  background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
-  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.06);
-}
-
-.overview-stat-card::before {
-  position: absolute;
-  top: 0;
-  right: 0;
-  left: 0;
-  height: 4px;
-  content: '';
-  background: var(--overview-stat-color, #2563eb);
-}
-
-.overview-stat-card::after {
-  position: absolute;
-  right: -32px;
-  bottom: -42px;
-  width: 112px;
-  height: 112px;
-  border-radius: 50%;
-  content: '';
-  background: color-mix(in srgb, var(--overview-stat-color, #2563eb) 12%, transparent);
-}
-
-.overview-stat-card .ant-card-body {
-  position: relative;
-  z-index: 1;
-  display: flex;
-  min-height: 118px;
-  align-items: center;
-  padding: 22px 20px;
-}
-
-.overview-stat-card .ant-statistic-title {
-  margin-bottom: 10px;
-  color: #64748b;
-  font-size: 13px;
-  font-weight: 700;
-}
-
-.overview-stat-card .ant-statistic-content {
-  color: var(--overview-stat-color, #1d4ed8);
-  font-size: 28px;
-  font-weight: 800;
-  line-height: 1.15;
-}
-
-.overview-stat-card-date {
-  --overview-stat-color: #1d4ed8;
-}
-
-.overview-stat-card-connect {
-  --overview-stat-color: #0f766e;
-}
-
-.overview-stat-card-watchlist {
-  --overview-stat-color: #7c3aed;
-}
-
-.overview-stat-card-alert {
-  --overview-stat-color: #c2410c;
-}
-
 .overview-chart-panel {
   min-height: 560px;
 }
@@ -798,6 +724,32 @@ body {
 
 .pushplus-manual-bind-select {
   min-width: 220px;
+}
+
+.pushplus-message-preview {
+  display: block;
+  overflow: hidden;
+  max-width: 100%;
+  line-height: 1.45;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  word-spacing: 0;
+}
+
+.pushplus-message-tooltip {
+  max-width: min(720px, calc(100vw - 32px));
+}
+
+.pushplus-message-tooltip .ant-tooltip-inner {
+  max-height: min(62vh, 520px);
+  overflow: auto;
+}
+
+.pushplus-message-tooltip-content {
+  display: block;
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.55;
 }
 
 .pushplus-binding-row {

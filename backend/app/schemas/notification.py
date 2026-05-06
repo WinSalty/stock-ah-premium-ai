@@ -168,3 +168,29 @@ class AlertEventResponse(OrmModel):
     sent_at: datetime | None
     created_at: datetime
     updated_at: datetime
+
+
+class PushplusMessageLogResponse(OrmModel):
+    """管理员查看 PushPlus 推送消息流水。
+
+    创建日期：2026-05-06
+    author: sunshengxian
+    """
+
+    id: int
+    user_id: int
+    username: str | None = None
+    display_name: str | None = None
+    alert_event_id: int | None
+    recipient_type: str
+    recipient_friend_id: int | None
+    recipient_name: str | None
+    message_title: str
+    message_content: str
+    push_channel: str
+    push_status: str
+    push_message_id: str | None
+    error_message: str | None
+    sent_at: datetime | None
+    created_at: datetime
+    updated_at: datetime

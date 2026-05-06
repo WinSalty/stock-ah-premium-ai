@@ -3,7 +3,6 @@ import {
   Button,
   Card,
   Checkbox,
-  Col,
   Empty,
   Form,
   Image,
@@ -11,11 +10,9 @@ import {
   InputNumber,
   Modal,
   Popover,
-  Row,
   Select,
   Skeleton,
   Space,
-  Statistic,
   Switch,
   Tag,
   Typography,
@@ -32,7 +29,6 @@ import { createChatSession, sendChatMessage } from '../api/chat';
 import {
   fetchOfficialPremiumTrend,
   fetchPremiumPairs,
-  fetchPremiumSummary,
   fetchRealtimePremiums
 } from '../api/market';
 import { fetchOverviewChartSettings, updateOverviewChartSettings } from '../api/settings';
@@ -428,10 +424,6 @@ function OverviewPage({ currentUser }: OverviewPageProps) {
   const [chartMode, setChartMode] = useState<OverviewChartMode>('trend');
   const [watchlistSettingItem, setWatchlistSettingItem] = useState<WatchlistOpportunity | null>(null);
   const queryClient = useQueryClient();
-  const { data, isLoading } = useQuery({
-    queryKey: ['premium-summary'],
-    queryFn: fetchPremiumSummary
-  });
   const pairs = useQuery({ queryKey: ['premium-pairs'], queryFn: () => fetchPremiumPairs() });
   const watchlist = useQuery({ queryKey: ['watchlist'], queryFn: () => fetchWatchlist() });
   const pushplusBinding = useQuery({
@@ -460,7 +452,6 @@ function OverviewPage({ currentUser }: OverviewPageProps) {
   useEffect(() => {
     if (realtimeWatchlist.data) {
       queryClient.invalidateQueries({ queryKey: ['watchlist'] });
-      queryClient.invalidateQueries({ queryKey: ['premium-summary'] });
     }
   }, [queryClient, realtimeWatchlist.data]);
   useEffect(() => {
@@ -549,7 +540,6 @@ function OverviewPage({ currentUser }: OverviewPageProps) {
       ),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['watchlist'] });
-      queryClient.invalidateQueries({ queryKey: ['premium-summary'] });
     },
     onError: (error) => {
       setOrderedOpportunities(serverOpportunities);
@@ -579,7 +569,6 @@ function OverviewPage({ currentUser }: OverviewPageProps) {
         setFallbackDirection(variables.values.preferred_direction);
       }
       queryClient.invalidateQueries({ queryKey: ['watchlist'] });
-      queryClient.invalidateQueries({ queryKey: ['premium-summary'] });
       queryClient.invalidateQueries({ queryKey: ['premiums'] });
     },
     onError: (error) => message.error(error instanceof Error ? error.message : '保存自选失败')
@@ -598,7 +587,6 @@ function OverviewPage({ currentUser }: OverviewPageProps) {
         setAiRecommendationSource('fresh');
       }
       queryClient.invalidateQueries({ queryKey: ['watchlist'] });
-      queryClient.invalidateQueries({ queryKey: ['premium-summary'] });
       queryClient.invalidateQueries({ queryKey: ['premiums'] });
     },
     onError: (error) => message.error(error instanceof Error ? error.message : '取消自选失败')
@@ -687,11 +675,6 @@ function OverviewPage({ currentUser }: OverviewPageProps) {
     setPairKey(`${fallbackPair.a_ts_code}|${fallbackPair.hk_ts_code}`);
   }, [isManualChart, pairKey, pairOptions, selectedOpportunity]);
 
-  const statusCounts = opportunities.reduce<Record<string, number>>((acc, item) => {
-    const key = item.premium?.opportunity_status || 'DATA_ISSUE';
-    acc[key] = (acc[key] || 0) + 1;
-    return acc;
-  }, {});
   const selectedPair = pairOptions.find((item) => `${item.a_ts_code}|${item.hk_ts_code}` === pairKey);
   const trendTitleName = chartWatchlist ? opportunityName(chartWatchlist) : selectedPair?.a_name || pair.aTsCode;
   const directionLabel = direction === 'HA' ? 'H/A' : 'A/H';
@@ -1129,28 +1112,6 @@ function OverviewPage({ currentUser }: OverviewPageProps) {
   return (
     <main className="page">
       <PageHeader title="自选机会台" />
-      <Row className="overview-stat-row" gutter={[16, 16]}>
-        <Col xs={24} md={6}>
-          <Card className="overview-stat-card overview-stat-card-date">
-            <Statistic title="最新交易日" value={data?.latest_trade_date || '-'} loading={isLoading} />
-          </Card>
-        </Col>
-        <Col xs={24} md={6}>
-          <Card className="overview-stat-card overview-stat-card-connect">
-            <Statistic title="港股通 AH 记录" value={data?.hk_connect_count || 0} loading={isLoading} />
-          </Card>
-        </Col>
-        <Col xs={24} md={6}>
-          <Card className="overview-stat-card overview-stat-card-watchlist">
-            <Statistic title="自选股票" value={data?.watchlist_count || 0} loading={watchlist.isLoading} />
-          </Card>
-        </Col>
-        <Col xs={24} md={6}>
-          <Card className="overview-stat-card overview-stat-card-alert">
-            <Statistic title="达阈值 / 接近" value={`${statusCounts.REACHED || 0} / ${statusCounts.NEAR || 0}`} />
-          </Card>
-        </Col>
-      </Row>
 
       <section className="panel premium-principle-panel">
         <div className="principle-main">

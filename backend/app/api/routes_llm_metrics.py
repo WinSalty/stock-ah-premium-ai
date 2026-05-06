@@ -53,19 +53,23 @@ def list_llm_metrics(
     total = db.scalar(select(func.count()).select_from(LlmCallMetric).where(*filters)) or 0
     summary = _summary(db, filters)
     statement = (
-        select(LlmCallMetric)
+        select(LlmCallMetric, AppUser.display_name, AppUser.username)
+        .outerjoin(AppUser, AppUser.id == LlmCallMetric.user_id)
         .where(*filters)
         .order_by(desc(LlmCallMetric.id))
         .offset((page - 1) * page_size)
         .limit(page_size)
     )
-    rows = list(db.scalars(statement).all())
+    rows = list(db.execute(statement).all())
     return LlmCallMetricResponse(
         total=total,
         page=page,
         page_size=page_size,
         summary=summary,
-        rows=[_metric_item(row) for row in rows],
+        rows=[
+            _metric_item(metric, _fallback_user_name(display_name, username))
+            for metric, display_name, username in rows
+        ],
     )
 
 
@@ -118,11 +122,13 @@ def _summary(db: DbSession, filters: list[object]) -> LlmCallMetricSummary:
     )
 
 
-def _metric_item(metric: LlmCallMetric) -> LlmCallMetricItem:
+def _metric_item(metric: LlmCallMetric, fallback_user_name: str | None = None) -> LlmCallMetricItem:
     return LlmCallMetricItem(
         id=metric.id,
         question_id=metric.question_id,
+        conversation_title=metric.conversation_title,
         user_id=metric.user_id,
+        user_name=metric.user_name or fallback_user_name,
         session_id=metric.session_id,
         phase=metric.phase,
         phase_label=metric.phase_label,
@@ -147,3 +153,9 @@ def _round_metric(value: float | None) -> float | None:
     if value is None:
         return None
     return round(float(value), 1)
+
+
+def _fallback_user_name(display_name: str | None, username: str | None) -> str | None:
+    display_name = (display_name or "").strip()
+    username = (username or "").strip()
+    return display_name or username or None

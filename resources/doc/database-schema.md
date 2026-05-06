@@ -1,6 +1,6 @@
 # 数据库表结构说明
 
-更新日期：2026-05-05
+更新日期：2026-05-06
 
 ## 维护口径
 
@@ -51,9 +51,12 @@ A 股选股因子：
 - `sync_run`：数据同步任务运行记录。
 - `sync_checkpoint`：数据同步断点。
 - `data_quality_issue`：数据质量问题记录。
+- `pushplus_binding`：PushPlus 好友绑定表，保存系统用户与 PushPlus 好友的后端发送令牌映射，不向前端返回好友令牌。
+- `alert_event`：提醒事件表，保存阈值提醒和股价提醒触发时的去重键、推送标题、推送内容和发送状态。
+- `pushplus_message_log`：PushPlus 推送消息流水表，记录测试推送、阈值提醒和股价提醒实际提交给 PushPlus 的时间、接收用户、接收对象、标题、内容、状态、消息流水号和错误信息，供管理员审计查看。
 - `llm_chat_session`：LLM 问答会话，用于保存投资问答主题和更新时间，按 `user_id` 隔离，`deleted_at` 非空表示会话已逻辑删除。
 - `llm_chat_message`：LLM 问答消息，用于保存用户问题、助手回答、内部查询口径和结果预览，支持后续会话上下文记忆。
-- `llm_call_metric`：LLM 调用耗时指标，按每轮问答唯一 `question_id` 串联路由、SQL、回答和流式首包等阶段；新增 `phase_label`、`phase_description` 解释阶段中文含义，`request_payload_json` 使用 `LONGTEXT` 记录实际发送给 LLM 的请求 JSON 和上下文 messages，不保存鉴权头和 API Key；`response_content` 使用 `LONGTEXT` 记录大模型返回的原始响应内容，流式回答保存拼接后的完整内容。
+- `llm_call_metric`：LLM 调用耗时指标，按每轮问答唯一 `question_id` 串联路由、SQL、回答和流式首包等阶段；新增 `conversation_title` 和 `user_name` 保存对话标题与用户展示名称；`phase_label`、`phase_description` 解释阶段中文含义，`request_payload_json` 使用 `LONGTEXT` 记录实际发送给 LLM 的请求 JSON 和上下文 messages，不保存鉴权头和 API Key；`response_content` 使用 `LONGTEXT` 记录大模型返回的原始响应内容，流式回答保存拼接后的完整内容。
 
 ## 使用建议
 

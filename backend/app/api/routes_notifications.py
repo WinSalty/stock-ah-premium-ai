@@ -20,6 +20,7 @@ from app.schemas.notification import (
     PushplusBindRequest,
     PushplusCallbackRequest,
     PushplusFriendResponse,
+    PushplusMessageLogResponse,
     PushplusQrCodeRequest,
     PushplusQrCodeResponse,
     TestPushRequest,
@@ -131,6 +132,17 @@ def admin_bind_pushplus_friend(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+@router.get("/notifications/pushplus/callback")
+def pushplus_callback_probe() -> dict[str, int | str]:
+    """兼容 PushPlus 保存回调地址时的可达性校验请求。
+
+    创建日期：2026-05-06
+    author: sunshengxian
+    """
+
+    return PUSHPLUS_CALLBACK_SUCCESS
+
+
 @router.post("/notifications/pushplus/callback")
 async def pushplus_callback(
     request: Request,
@@ -170,7 +182,7 @@ async def pushplus_callback(
             payload.friendInfo.friendId,
             str(exc),
         )
-        return {"code": 600, "msg": str(exc)}
+        return PUSHPLUS_CALLBACK_SUCCESS
     return PUSHPLUS_CALLBACK_SUCCESS
 
 
@@ -189,6 +201,24 @@ def list_pushplus_bindings(
     """
 
     return NotificationService(db).list_pushplus_bindings()
+
+
+@router.get(
+    "/notifications/admin/pushplus/messages",
+    response_model=list[PushplusMessageLogResponse],
+)
+def list_pushplus_message_logs(
+    db: DbSession,
+    admin_user: AdminUser,
+    limit: int = Query(default=100, ge=1, le=500),
+) -> list[PushplusMessageLogResponse]:
+    """管理员查询 PushPlus 推送流水。
+
+    创建日期：2026-05-06
+    author: sunshengxian
+    """
+
+    return NotificationService(db).list_pushplus_message_logs(limit)
 
 
 @router.delete("/notifications/pushplus/binding")

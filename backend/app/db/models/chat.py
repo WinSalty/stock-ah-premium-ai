@@ -58,7 +58,9 @@ class LlmCallMetric(TimestampMixin, Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     question_id: Mapped[str] = mapped_column(String(32), nullable=False)
+    conversation_title: Mapped[str | None] = mapped_column(String(128), nullable=True)
     user_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    user_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
     session_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     phase: Mapped[str] = mapped_column(String(64), nullable=False)
     phase_label: Mapped[str | None] = mapped_column(String(64), nullable=True)
