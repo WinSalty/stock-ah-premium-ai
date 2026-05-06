@@ -254,10 +254,10 @@ class RealtimePremiumService:
         }
         if ERROR_QUALITY in qualities or UNAVAILABLE_QUALITY in qualities:
             return UNAVAILABLE_QUALITY
-        if (fx_quote.quality or "").upper() == STALE_QUALITY:
-            return STALE_FX_QUALITY
         if any((quote.quality or "").upper() != REALTIME_QUALITY for quote in (a_quote, hk_quote)):
             return DELAYED_QUALITY
+        if (fx_quote.quality or "").upper() == STALE_QUALITY:
+            return STALE_FX_QUALITY
         if (fx_quote.quality or "").upper() != REALTIME_QUALITY:
             return STALE_FX_QUALITY
         return REALTIME_QUALITY
@@ -315,6 +315,8 @@ class RealtimePremiumService:
         trade_date = self._realtime_data_date(result)
         if trade_date is None:
             return
+        if trade_date != self._local_today():
+            return
         row = self.db.scalar(
             select(OfficialAHComparison).where(
                 OfficialAHComparison.trade_date == trade_date,
@@ -358,9 +360,12 @@ class RealtimePremiumService:
             for quote in (result.a_quote, result.hk_quote)
         ]
         valid_dates = [item for item in quote_dates if item is not None]
-        if not valid_dates:
+        if len(valid_dates) != len(quote_dates) or len(set(valid_dates)) != 1:
             return None
-        return min(valid_dates)
+        return valid_dates[0]
+
+    def _local_today(self) -> date:
+        return datetime.now(LOCAL_TZ).date()
 
     def _quote_data_date(self, quote: RealtimeQuoteItem | None) -> date | None:
         if quote is None or quote.quote_time is None:

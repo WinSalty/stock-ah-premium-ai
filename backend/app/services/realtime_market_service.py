@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Protocol
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import desc, select
 from sqlalchemy.orm import Session
@@ -16,6 +17,9 @@ REALTIME_MARKET_HK = "HK"
 REALTIME_MARKET_FX = "FX"
 HKD_CNY_SYMBOL = "HKD/CNY"
 DEFAULT_QUOTE_QUALITY = "UNAVAILABLE"
+REALTIME_QUOTE_QUALITY = "REALTIME"
+STALE_QUOTE_QUALITY = "STALE"
+LOCAL_TZ = ZoneInfo("Asia/Shanghai")
 
 
 @dataclass(frozen=True)
@@ -112,8 +116,23 @@ class DbRealtimeQuoteProvider:
             currency=snapshot.currency,
             quote_time=snapshot.quote_time,
             source=snapshot.source,
-            quality=snapshot.quality,
+            quality=self._effective_quality(snapshot.quote_time, snapshot.quality),
         )
+
+    def _effective_quality(self, quote_time: datetime | None, quality: str) -> str:
+        if (quality or "").upper() != REALTIME_QUOTE_QUALITY:
+            return quality
+        if quote_time is None or self._quote_date(quote_time) != self._local_today():
+            return STALE_QUOTE_QUALITY
+        return REALTIME_QUOTE_QUALITY
+
+    def _quote_date(self, quote_time: datetime) -> date:
+        if quote_time.tzinfo is None:
+            return quote_time.date()
+        return quote_time.astimezone(LOCAL_TZ).date()
+
+    def _local_today(self) -> date:
+        return datetime.now(LOCAL_TZ).date()
 
 
 class RealtimeMarketDataService:

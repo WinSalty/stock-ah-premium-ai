@@ -216,7 +216,7 @@ GET /api/ah-premiums/realtime
 
 当前不再新增独立实时溢价快照表。实时行情先进入 `realtime_quote_snapshot`，后端用 A 股、H 股和 HKD/CNY 最新有效快照计算 AH/H/A 口径，再写回主展示表 `official_ah_comparison`：
 
-- `trade_date` 使用东八区当前日期，便于总览页和 AH 机会页继续按官方主表读取。
+- `trade_date` 使用 A/H 报价自身的 `quote_time` 推导，且只有 A/H 报价日期一致并等于东八区当天时才允许写回官方主表，避免历史快照被标记为实时。
 - `a_close`、`hk_close` 写入实时最新价。
 - `ah_comparison`、`ah_premium`、`ha_comparison`、`ha_premium` 按官方 AH 比价表口径写入，其中 H/A 继续由两位小数的 `ah_comparison` 反推。
 - `is_realtime` 标记为 `1`，`data_source` 写为 `REALTIME_CALC`，`source_updated_at` 记录实时计算完成时间。
