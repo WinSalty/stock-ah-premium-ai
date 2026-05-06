@@ -73,6 +73,8 @@ class InvestmentKnowledgeService:
                 "ah-premium/ah-premium-cross-market.md",
                 "ah-premium/ah-arbitrage-principle-and-llm-guide.md",
                 "ah-premium/ah-premium-arbitrage-research-2026.md",
+                # A/H 研究材料允许按分类批量扩展，新增 DOCX 后无需逐个改代码登记。
+                "ah-premium/*.docx",
             ),
             max_chunks=9,
         ),

@@ -40,6 +40,9 @@
   - 港股通名单同步改为只保留最新生效日期的一份数据；页面和 API 判断港股通可操作性时统一使用当前最新名单。
   - 官方 AH 比价同步后维护 AH 配对。
   - Tushare 官方 AH 比价历史覆盖不足时，已在 `water-stock` 增加 Baidu 历史补齐跑批：读取用户自选股，拉取 A/H 全量日 K 与 `HKDCNY` 汇率，只要 A 股收盘价、H 股收盘价和同日汇率三类数据齐全就向 `official_ah_comparison` 插入缺失行，不再依赖本地交易日历覆盖范围；已有唯一键记录一律跳过不覆盖。新增 `historical_premium_backfill_record` 记录每个 A/H 股票对补数状态，已完成股票对后续定时任务会在请求 Baidu 前跳过，失败或未记录股票对保留重试。招商银行单票本地测试已补入 `BAIDU_HISTORY_BACKFILL` 历史行，并验证重跑插入 0 条。
+  - 已按东方财富不复权方案新增 `eastmoney_unadjusted_daily_quote`、`waterstock_fx_rate_daily` 和 `historical_ah_unadjusted_backfill_run` 三张表、Alembic 迁移、SQLAlchemy 模型和查询白名单；后端新增东方财富不复权 K 线客户端、A/H 自选不复权日线同步接口 `/api/sync/eastmoney-unadjusted-quotes` 和不复权 AH 追跑接口 `/api/sync/unadjusted-ah-backfill`。追跑会先删除同日同股票对的 `BAIDU_HISTORY_BACKFILL` 行，再插入 `EASTMONEY_UNADJUSTED_BACKFILL`，但不覆盖 `TUSHARE_OFFICIAL`、实时计算或人工来源。
+  - `water-stock` 已新增 HKD/CNY 历史汇率独立写入方法 `syncHkdCnyHistoryToStockAhDatabase(String startDate, String endDate)`，写入 `stock-ah-premium-ai.waterstock_fx_rate_daily` 并按 `currency_pair + rate_date + data_source` 幂等更新；新增 `stock-ah.fx-history.enabled=false` 的低频调度开关，不再由 Java 项目参与不复权 AH 比价计算。
+  - 新增 `resources/sql/04_backfill_ah_trade_calendar_from_cmb.sql`，用招商银行 A/H 已补齐行情日期作为 AH 联合交易日兜底基准，幂等补齐 `a_trade_calendar` 与 `hk_trade_calendar` 缺失开市日期；已在本地和服务器 `stock_ah_ai` 执行，招商银行趋势经联合交易日过滤后可从 2018-09-03 返回。
 - 低权限兜底导入：
   - 支持通过 `POST /api/manual-import/ah-pairs` 导入人工 AH 配对。
   - 支持通过 `POST /api/manual-import/fx-rates` 导入人工汇率。
@@ -89,7 +92,7 @@
   - 已调整回答约束：直接输出专业报告，不输出寒暄、JSON/SQL/底层数据来源和模板化免责句；要求给出评级口径、配置倾向、优先级、阈值、触发条件和反证条件。
   - 新增 LLM 专用投资知识库 `resources/doc/llm-knowledge/`，按 A/H 跨市场价差、A 股选股估值、银行与非银、个股研究、宏观产业推演、组合风险与报告框架分组；问答时按问题和上下文选择性读取 Markdown 与 DOCX 片段。
   - 已将中国神华、格力电器、宁德时代、比亚迪、长江电力和寒武纪 2026 版公司价值投资报告整理到 `llm-knowledge/company-research/value-investing-2026/`，个股深度投资报告分类通过稳定子目录通配读取，按公司名、股票代码和价值投资关键词命中。
-  - 问答页面支持流式响应、Enter 发送和 Shift+Enter 换行；预设提问池已补充中国神华、格力电器、宁德时代、比亚迪、长江电力和寒武纪价值投资报告相关问题。
+  - 问答页面支持流式响应、Enter 发送和 Shift+Enter 换行；预设提问池已补充中国神华、格力电器、宁德时代、比亚迪、长江电力、寒武纪价值投资报告和招商银行 A/H 倒挂套利约束相关问题。
   - 总览页自选明细表格右侧趋势按钮已接入走势图切换，点击后会展示对应 A/H 标的和方向的溢价走势。
   - 问答链路新增快路径：问候类问题本地秒回；报告分析类问题由前置路由决定是否跳过 SQL；LLM 知识库 DOCX/Markdown 解析增加进程内缓存。知识库注入改为在前置路由中给模型轻量目录简介，由模型判断是否需要读取材料以及读取哪些分类，不再对每个问题按关键词默认塞材料。前端发送后展示“理解问题、整理信息、形成框架、组织回答”等用户可感知进度，不暴露内部处理细节。
   - 消息提交后立即清空输入框；数据查询准备失败时降级为无精确数据回答，避免整轮问答直接失败。
@@ -144,6 +147,7 @@
   - 同一股票、同一关注方向、同一天的 AI 阈值推荐会保存到前端本地缓存，再次点击直接显示“之前 AI 推荐信息”，不重复调用 LLM。
   - AI 阈值推荐的会话记录只展示简短问题，内部提示词不写入用户可见的聊天内容。
   - 新增 `llm-knowledge/ah-premium/threshold-recommendation-logic.md`，沉淀 A/H 自选阈值的稳定推荐逻辑，减少相同输入下的建议值漂移。
+  - 新增 `llm-knowledge/ah-premium/cmb-ah-premium-arbitrage-report-2026.docx`，沉淀招商银行 A/H 倒挂、择边配置和融资套利约束材料；A/H 知识分类已支持读取同目录 DOCX 报告。
   - 智能问答页：会话列表、历史加载、逻辑删除、东八区时间显示、纯问题输入、基于投研报告随机展示的预设问题、流式回答和数据摘要表格；页面已重构为投研工作台布局，消息区独立滚动，回答表格和数据摘要不再撑破页面；新增最新消息自动滚动锚点并优化问答间距，生成中状态改用真实加载组件，避免伪进度动效和问题气泡视觉遮盖；已移除前端 Markdown 纠错补丁，改为在 LLM 系统提示词中约束 GFM 标题、表格和块级边界。
   - 智能问答页流式回答期间的自动滚动改为“贴近底部才跟随”，用户手动滚动查看历史内容时不再被持续拉回底部，避免鼠标滚动时内容闪烁。
   - 智能问答页预设问题按钮改为点击后直接发送，仍复用输入框提交的同一套流式问答逻辑。
@@ -162,6 +166,7 @@
   - `resources/doc/phase-1-detailed-development-plan.md`：已同步当前实现口径，包括 `hk_daily` 禁用、官方 AH 比价主表、定时增量、长字段悬浮和东八区时间展示。
   - `resources/doc/ah-premium-review-and-display-design.md`：沉淀 A/H 溢价套现评审结论、官方主口径、自选股优先展示和后续落地优先级。
   - `resources/doc/realtime-premium-and-wechat-push-plan.md`：沉淀实时 AH 溢价行情源、Qwen 联网搜索定位和个人微信推送落地方案；已补充 `realtime_quote_snapshot` 喂数约定和实时读取 API。
+  - `resources/doc/eastmoney-unadjusted-ah-backfill-plan.md`：沉淀东方财富不复权历史 K 线、water-stock 汇率独立表、stock-ah-premium-ai 追跑历史 AH 比价和查询页接入的实施方案。
   - `resources/doc/llm-knowledge/README.md`：沉淀 LLM 投资问答知识库分类、使用原则和新增材料登记方式。
   - `resources/doc/server-deployment-guide.md`：沉淀单机服务器部署记录，覆盖 MySQL 同机直连、无 Nginx 跨端口访问、云安全组/CORS 排障、服务器空库通过应用 Tushare 同步数据、仅初始化管理员账号等首次部署经验。
 - 非真实功能测试资产：

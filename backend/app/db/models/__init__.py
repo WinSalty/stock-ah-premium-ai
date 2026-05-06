@@ -5,7 +5,9 @@ from app.db.models.market import (
     AHStockPair,
     AStockBasic,
     ATradeCalendar,
+    EastmoneyUnadjustedDailyQuote,
     FxRateDaily,
+    HistoricalAhUnadjustedBackfillRun,
     HKDailyQuote,
     HKStockBasic,
     HKTradeCalendar,
@@ -14,6 +16,7 @@ from app.db.models.market import (
     RealtimeQuoteSnapshot,
     StockSelectionFactorSnapshot,
     WatchlistStock,
+    WaterstockFxRateDaily,
 )
 from app.db.models.notification import AlertEvent, PushplusBinding, PushplusMessageLog
 from app.db.models.sync import DataQualityIssue, SyncCheckpoint, SyncRun
@@ -26,7 +29,9 @@ __all__ = [
     "AStockBasic",
     "ATradeCalendar",
     "DataQualityIssue",
+    "EastmoneyUnadjustedDailyQuote",
     "FxRateDaily",
+    "HistoricalAhUnadjustedBackfillRun",
     "HKDailyQuote",
     "HKStockBasic",
     "HKTradeCalendar",
@@ -43,4 +48,5 @@ __all__ = [
     "SyncCheckpoint",
     "SyncRun",
     "WatchlistStock",
+    "WaterstockFxRateDaily",
 ]

@@ -140,6 +140,50 @@ CREATE TABLE IF NOT EXISTS `fx_rate_daily` (
   KEY `idx_fx_pair_date` (`rate_pair`, `rate_date`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='外汇汇率日线表';
 
+CREATE TABLE IF NOT EXISTS `eastmoney_unadjusted_daily_quote` (
+  `id` INT NOT NULL AUTO_INCREMENT COMMENT '自增主键',
+  `market` VARCHAR(8) NOT NULL COMMENT '市场: A、HK',
+  `ts_code` VARCHAR(16) NOT NULL COMMENT '项目标准代码，如 600036.SH、03968.HK',
+  `eastmoney_secid` VARCHAR(32) NOT NULL COMMENT '东方财富 secid，如 1.600036、116.03968',
+  `trade_date` DATE NOT NULL COMMENT '交易日期',
+  `open` DECIMAL(20,6) DEFAULT NULL COMMENT '不复权开盘价',
+  `close` DECIMAL(20,6) NOT NULL COMMENT '不复权收盘价',
+  `high` DECIMAL(20,6) DEFAULT NULL COMMENT '不复权最高价',
+  `low` DECIMAL(20,6) DEFAULT NULL COMMENT '不复权最低价',
+  `volume` DECIMAL(24,4) DEFAULT NULL COMMENT '成交量，按东方财富原始单位保存',
+  `amount` DECIMAL(24,4) DEFAULT NULL COMMENT '成交额，按东方财富原始单位保存',
+  `amplitude` DECIMAL(20,6) DEFAULT NULL COMMENT '振幅',
+  `pct_chg` DECIMAL(20,6) DEFAULT NULL COMMENT '涨跌幅',
+  `change_amount` DECIMAL(20,6) DEFAULT NULL COMMENT '涨跌额',
+  `turnover_rate` DECIMAL(20,6) DEFAULT NULL COMMENT '换手率',
+  `adjust_type` VARCHAR(16) NOT NULL DEFAULT 'NONE' COMMENT '复权类型: NONE 不复权',
+  `data_source` VARCHAR(32) NOT NULL DEFAULT 'EASTMONEY_KLINE' COMMENT '数据来源',
+  `raw_payload_json` TEXT DEFAULT NULL COMMENT '原始单行数据或摘要 JSON',
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '更新时间',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_em_unadj_quote` (`market`, `ts_code`, `trade_date`, `adjust_type`),
+  KEY `idx_em_unadj_quote_date` (`trade_date`),
+  KEY `idx_em_unadj_quote_code_date` (`ts_code`, `trade_date`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='东方财富不复权历史日线表';
+
+CREATE TABLE IF NOT EXISTS `waterstock_fx_rate_daily` (
+  `id` INT NOT NULL AUTO_INCREMENT COMMENT '自增主键',
+  `currency_pair` VARCHAR(16) NOT NULL COMMENT '汇率对，如 HKDCNY',
+  `rate_date` DATE NOT NULL COMMENT '汇率日期',
+  `open` DECIMAL(20,8) DEFAULT NULL COMMENT '开盘汇率',
+  `close` DECIMAL(20,8) NOT NULL COMMENT '收盘汇率',
+  `high` DECIMAL(20,8) DEFAULT NULL COMMENT '最高汇率',
+  `low` DECIMAL(20,8) DEFAULT NULL COMMENT '最低汇率',
+  `data_source` VARCHAR(32) NOT NULL DEFAULT 'WATER_STOCK_BAIDU_FX' COMMENT '汇率来源',
+  `raw_payload_json` TEXT DEFAULT NULL COMMENT '原始响应摘要 JSON',
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '更新时间',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_waterstock_fx_rate` (`currency_pair`, `rate_date`, `data_source`),
+  KEY `idx_waterstock_fx_rate_date` (`rate_date`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='water-stock 历史汇率日线表';
+
 CREATE TABLE IF NOT EXISTS `ah_stock_pair` (
   `id` INT NOT NULL AUTO_INCREMENT COMMENT '自增主键',
   `a_ts_code` VARCHAR(16) NOT NULL COMMENT 'A 股 Tushare 代码',
@@ -204,6 +248,28 @@ CREATE TABLE IF NOT EXISTS `historical_premium_backfill_record` (
   UNIQUE KEY `uk_hist_premium_backfill_pair` (`a_ts_code`, `hk_ts_code`, `data_source`),
   KEY `idx_hist_premium_backfill_status` (`status`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Baidu 历史 AH 比价补数执行记录表';
+
+CREATE TABLE IF NOT EXISTS `historical_ah_unadjusted_backfill_run` (
+  `id` INT NOT NULL AUTO_INCREMENT COMMENT '自增主键',
+  `a_ts_code` VARCHAR(16) NOT NULL COMMENT 'A 股 Tushare 代码',
+  `hk_ts_code` VARCHAR(16) NOT NULL COMMENT 'H 股 Tushare 代码',
+  `data_source` VARCHAR(32) NOT NULL COMMENT '补数来源标记',
+  `status` VARCHAR(16) NOT NULL COMMENT '状态: RUNNING、COMPLETED、FAILED',
+  `candidate_rows` INT NOT NULL DEFAULT 0 COMMENT 'A/H/汇率三方日期交集行数',
+  `inserted_rows` INT NOT NULL DEFAULT 0 COMMENT '写入官方 AH 主表行数',
+  `skipped_existing_rows` INT NOT NULL DEFAULT 0 COMMENT '主表唯一键已存在跳过行数',
+  `skipped_invalid_rows` INT NOT NULL DEFAULT 0 COMMENT '价格或汇率无效跳过行数',
+  `first_trade_date` DATE DEFAULT NULL COMMENT '本轮最早日期',
+  `last_trade_date` DATE DEFAULT NULL COMMENT '本轮最晚日期',
+  `last_error` VARCHAR(512) DEFAULT NULL COMMENT '失败原因摘要',
+  `started_at` DATETIME DEFAULT NULL COMMENT '最近开始时间',
+  `completed_at` DATETIME DEFAULT NULL COMMENT '最近完成时间',
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '更新时间',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_unadj_backfill_pair` (`a_ts_code`, `hk_ts_code`, `data_source`),
+  KEY `idx_unadj_backfill_status` (`status`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='不复权历史 AH 比价补数执行记录表';
 
 CREATE TABLE IF NOT EXISTS `realtime_quote_snapshot` (
   `id` INT NOT NULL AUTO_INCREMENT COMMENT '自增主键',

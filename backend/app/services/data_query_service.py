@@ -13,7 +13,9 @@ from app.db.models.market import (
     AHStockPair,
     AStockBasic,
     ATradeCalendar,
+    EastmoneyUnadjustedDailyQuote,
     FxRateDaily,
+    HistoricalAhUnadjustedBackfillRun,
     HKDailyQuote,
     HKStockBasic,
     HKTradeCalendar,
@@ -21,6 +23,7 @@ from app.db.models.market import (
     OfficialAHComparison,
     StockSelectionFactorSnapshot,
     WatchlistStock,
+    WaterstockFxRateDaily,
 )
 from app.db.models.sync import SyncRun
 from app.schemas.query import DataQueryResponse, QueryColumn, QueryDatasetInfo
@@ -193,6 +196,80 @@ DATA_QUERY_SPECS: dict[str, QueryDatasetSpec] = {
         keyword_fields=("rate_pair", "source", "raw_ts_code"),
         date_field="rate_date",
         default_order=(("rate_date", "desc"), ("rate_pair", "asc")),
+    ),
+    "eastmoney_unadjusted_daily_quote": QueryDatasetSpec(
+        name="eastmoney_unadjusted_daily_quote",
+        label="东方财富不复权日线",
+        description=(
+            "东方财富公开 K 线接口同步的 A/H 不复权历史日线，"
+            "独立于 Tushare 官方日线和 Baidu 前复权补数。"
+        ),
+        model=EastmoneyUnadjustedDailyQuote,
+        columns=(
+            col("trade_date", "交易日", 132),
+            col("market", "市场", 90),
+            col("ts_code", "代码", 130),
+            col("eastmoney_secid", "东方财富secid", 150),
+            col("open", "开盘", 100),
+            col("close", "收盘", 100),
+            col("high", "最高", 100),
+            col("low", "最低", 100),
+            col("volume", "成交量", 130),
+            col("amount", "成交额", 130),
+            col("pct_chg", "涨跌幅", 100),
+            col("adjust_type", "复权口径", 100),
+            col("data_source", "来源", 170),
+            col("raw_payload_json", "原始行", 260),
+        ),
+        keyword_fields=("ts_code", "market", "eastmoney_secid", "data_source", "adjust_type"),
+        date_field="trade_date",
+        default_order=(("trade_date", "desc"), ("ts_code", "asc")),
+    ),
+    "waterstock_fx_rate_daily": QueryDatasetSpec(
+        name="waterstock_fx_rate_daily",
+        label="water-stock 历史汇率",
+        description=(
+            "water-stock 从 Baidu HKD/CNY 日线写入的独立汇率表，"
+            "供不复权历史 AH 比价追跑使用。"
+        ),
+        model=WaterstockFxRateDaily,
+        columns=(
+            col("rate_date", "日期", 132),
+            col("currency_pair", "汇率对", 120),
+            col("open", "开盘", 110),
+            col("close", "收盘", 110),
+            col("high", "最高", 110),
+            col("low", "最低", 110),
+            col("data_source", "来源", 180),
+            col("raw_payload_json", "原始行", 260),
+        ),
+        keyword_fields=("currency_pair", "data_source", "raw_payload_json"),
+        date_field="rate_date",
+        default_order=(("rate_date", "desc"), ("currency_pair", "asc")),
+    ),
+    "historical_ah_unadjusted_backfill_run": QueryDatasetSpec(
+        name="historical_ah_unadjusted_backfill_run",
+        label="不复权 AH 补数记录",
+        description="基于东方财富不复权日线和 water-stock 汇率追跑 AH 比价的股票对级执行记录。",
+        model=HistoricalAhUnadjustedBackfillRun,
+        columns=(
+            col("a_ts_code", "A 股代码", 130),
+            col("hk_ts_code", "H 股代码", 130),
+            col("data_source", "来源", 190),
+            col("status", "状态", 110),
+            col("candidate_rows", "候选行", 100),
+            col("inserted_rows", "写入行", 100),
+            col("skipped_existing_rows", "已存在跳过", 130),
+            col("skipped_invalid_rows", "无效跳过", 110),
+            col("first_trade_date", "最早日期", 132),
+            col("last_trade_date", "最晚日期", 132),
+            col("started_at", "开始时间", 190),
+            col("completed_at", "完成时间", 190),
+            col("last_error", "错误", 260),
+        ),
+        keyword_fields=("a_ts_code", "hk_ts_code", "data_source", "status", "last_error"),
+        date_field="started_at",
+        default_order=(("id", "desc"),),
     ),
     "ah_stock_pair": QueryDatasetSpec(
         name="ah_stock_pair",

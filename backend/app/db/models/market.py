@@ -384,8 +384,110 @@ class HistoricalPremiumBackfillRecord(TimestampMixin, Base):
 
     __tablename__ = "historical_premium_backfill_record"
     __table_args__ = (
-        UniqueConstraint("a_ts_code", "hk_ts_code", "data_source", name="uk_hist_premium_backfill_pair"),
+        UniqueConstraint(
+            "a_ts_code",
+            "hk_ts_code",
+            "data_source",
+            name="uk_hist_premium_backfill_pair",
+        ),
         Index("idx_hist_premium_backfill_status", "status"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    a_ts_code: Mapped[str] = mapped_column(String(16), nullable=False)
+    hk_ts_code: Mapped[str] = mapped_column(String(16), nullable=False)
+    data_source: Mapped[str] = mapped_column(String(32), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    candidate_rows: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    inserted_rows: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    skipped_existing_rows: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    skipped_invalid_rows: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    first_trade_date: Mapped[date | None] = mapped_column(Date)
+    last_trade_date: Mapped[date | None] = mapped_column(Date)
+    last_error: Mapped[str | None] = mapped_column(String(512))
+    started_at: Mapped[datetime | None] = mapped_column(DateTime)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime)
+
+
+class EastmoneyUnadjustedDailyQuote(TimestampMixin, Base):
+    """东方财富不复权历史日线表。
+
+    创建日期：2026-05-06
+    author: sunshengxian
+    """
+
+    __tablename__ = "eastmoney_unadjusted_daily_quote"
+    __table_args__ = (
+        UniqueConstraint(
+            "market",
+            "ts_code",
+            "trade_date",
+            "adjust_type",
+            name="uk_em_unadj_quote",
+        ),
+        Index("idx_em_unadj_quote_date", "trade_date"),
+        Index("idx_em_unadj_quote_code_date", "ts_code", "trade_date"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    market: Mapped[str] = mapped_column(String(8), nullable=False)
+    ts_code: Mapped[str] = mapped_column(String(16), nullable=False)
+    eastmoney_secid: Mapped[str] = mapped_column(String(32), nullable=False)
+    trade_date: Mapped[date] = mapped_column(Date, nullable=False)
+    open: Mapped[Decimal | None] = mapped_column(DECIMAL(20, 6))
+    close: Mapped[Decimal] = mapped_column(DECIMAL(20, 6), nullable=False)
+    high: Mapped[Decimal | None] = mapped_column(DECIMAL(20, 6))
+    low: Mapped[Decimal | None] = mapped_column(DECIMAL(20, 6))
+    volume: Mapped[Decimal | None] = mapped_column(DECIMAL(24, 4))
+    amount: Mapped[Decimal | None] = mapped_column(DECIMAL(24, 4))
+    amplitude: Mapped[Decimal | None] = mapped_column(DECIMAL(20, 6))
+    pct_chg: Mapped[Decimal | None] = mapped_column(DECIMAL(20, 6))
+    change_amount: Mapped[Decimal | None] = mapped_column(DECIMAL(20, 6))
+    turnover_rate: Mapped[Decimal | None] = mapped_column(DECIMAL(20, 6))
+    adjust_type: Mapped[str] = mapped_column(String(16), nullable=False, default="NONE")
+    data_source: Mapped[str] = mapped_column(String(32), nullable=False, default="EASTMONEY_KLINE")
+    raw_payload_json: Mapped[str | None] = mapped_column(Text)
+
+
+class WaterstockFxRateDaily(TimestampMixin, Base):
+    """water-stock 历史汇率日线表。
+
+    创建日期：2026-05-06
+    author: sunshengxian
+    """
+
+    __tablename__ = "waterstock_fx_rate_daily"
+    __table_args__ = (
+        UniqueConstraint("currency_pair", "rate_date", "data_source", name="uk_waterstock_fx_rate"),
+        Index("idx_waterstock_fx_rate_date", "rate_date"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    currency_pair: Mapped[str] = mapped_column(String(16), nullable=False)
+    rate_date: Mapped[date] = mapped_column(Date, nullable=False)
+    open: Mapped[Decimal | None] = mapped_column(DECIMAL(20, 8))
+    close: Mapped[Decimal] = mapped_column(DECIMAL(20, 8), nullable=False)
+    high: Mapped[Decimal | None] = mapped_column(DECIMAL(20, 8))
+    low: Mapped[Decimal | None] = mapped_column(DECIMAL(20, 8))
+    data_source: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        default="WATER_STOCK_BAIDU_FX",
+    )
+    raw_payload_json: Mapped[str | None] = mapped_column(Text)
+
+
+class HistoricalAhUnadjustedBackfillRun(TimestampMixin, Base):
+    """不复权历史 AH 比价补数执行记录表。
+
+    创建日期：2026-05-06
+    author: sunshengxian
+    """
+
+    __tablename__ = "historical_ah_unadjusted_backfill_run"
+    __table_args__ = (
+        UniqueConstraint("a_ts_code", "hk_ts_code", "data_source", name="uk_unadj_backfill_pair"),
+        Index("idx_unadj_backfill_status", "status"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)

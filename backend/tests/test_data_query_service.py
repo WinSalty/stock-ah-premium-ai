@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.db.base import Base
 from app.db.models.market import AStockBasic
-from app.services.data_query_service import DataQueryService
+from app.services.data_query_service import DATA_QUERY_SPECS, DataQueryService
 
 
 def test_data_query_filters_keyword_and_serializes_date() -> None:
@@ -50,3 +50,15 @@ def test_data_query_filters_keyword_and_serializes_date() -> None:
     assert result.total == 1
     assert result.rows[0]["ts_code"] == "000001.SZ"
     assert result.rows[0]["list_date"] == "1991-04-03"
+
+
+def test_data_query_contains_unadjusted_backfill_datasets() -> None:
+    """确认查询白名单包含不复权补数核验所需三张表。
+
+    创建日期：2026-05-06
+    author: sunshengxian
+    """
+
+    assert "eastmoney_unadjusted_daily_quote" in DATA_QUERY_SPECS
+    assert "waterstock_fx_rate_daily" in DATA_QUERY_SPECS
+    assert "historical_ah_unadjusted_backfill_run" in DATA_QUERY_SPECS

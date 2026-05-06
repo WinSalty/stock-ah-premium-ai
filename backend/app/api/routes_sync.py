@@ -10,8 +10,19 @@ from sqlalchemy.orm import Session
 from app.api.deps_auth import require_permission
 from app.db.models.sync import SyncRun
 from app.db.session import get_db
-from app.schemas.sync import DatasetInfo, SyncBatchCreate, SyncRunCreate, SyncRunResponse
+from app.schemas.sync import (
+    DatasetInfo,
+    EastmoneyUnadjustedQuoteSyncCreate,
+    EastmoneyUnadjustedQuoteSyncResponse,
+    SyncBatchCreate,
+    SyncRunCreate,
+    SyncRunResponse,
+    UnadjustedAhBackfillCreate,
+    UnadjustedAhBackfillResponse,
+)
 from app.services.sync_service import SyncService
+from app.services.unadjusted_ah_backfill_service import UnadjustedAhBackfillService
+from app.services.unadjusted_quote_sync_service import UnadjustedQuoteSyncService
 
 router = APIRouter(dependencies=[Depends(require_permission("sync"))])
 DbSession = Annotated[Session, Depends(get_db)]
@@ -74,6 +85,64 @@ def create_stock_selection_factor_sync_batch(payload: SyncBatchCreate, db: DbSes
         return SyncService(db).run_sync("stock_selection_factors", params)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post(
+    "/sync/eastmoney-unadjusted-quotes",
+    response_model=EastmoneyUnadjustedQuoteSyncResponse,
+)
+def sync_eastmoney_unadjusted_quotes(
+    payload: EastmoneyUnadjustedQuoteSyncCreate,
+    db: DbSession,
+) -> dict[str, int]:
+    """同步东方财富 A/H 不复权历史日线。
+
+    创建日期：2026-05-06
+    author: sunshengxian
+    """
+
+    try:
+        result = UnadjustedQuoteSyncService(db).sync_watchlist_quotes(
+            start_date=payload.start_date,
+            end_date=payload.end_date,
+            a_ts_code=payload.a_ts_code,
+            hk_ts_code=payload.hk_ts_code,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"pair_count": result.pair_count, "quote_rows": result.quote_rows}
+
+
+@router.post(
+    "/sync/unadjusted-ah-backfill",
+    response_model=UnadjustedAhBackfillResponse,
+)
+def backfill_unadjusted_ah_premium(
+    payload: UnadjustedAhBackfillCreate,
+    db: DbSession,
+) -> dict[str, int]:
+    """追跑东方财富不复权历史 AH 比价。
+
+    创建日期：2026-05-06
+    author: sunshengxian
+    """
+
+    result = UnadjustedAhBackfillService(db).backfill_watchlist(
+        start_date=payload.start_date,
+        end_date=payload.end_date,
+        a_ts_code=payload.a_ts_code,
+        hk_ts_code=payload.hk_ts_code,
+        force=payload.force,
+    )
+    return {
+        "pair_count": result.pair_count,
+        "skipped_completed_pairs": result.skipped_completed_pairs,
+        "candidate_rows": result.candidate_rows,
+        "inserted_rows": result.inserted_rows,
+        "skipped_existing_rows": result.skipped_existing_rows,
+        "replaced_baidu_rows": result.replaced_baidu_rows,
+        "skipped_invalid_rows": result.skipped_invalid_rows,
+    }
 
 
 @router.get("/sync/runs", response_model=list[SyncRunResponse])

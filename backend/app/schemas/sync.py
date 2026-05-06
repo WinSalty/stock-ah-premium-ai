@@ -65,6 +65,60 @@ class SyncBatchCreate(BaseModel):
     end_date: date | None = None
 
 
+class EastmoneyUnadjustedQuoteSyncCreate(BaseModel):
+    """东方财富不复权日线同步请求。
+
+    创建日期：2026-05-06
+    author: sunshengxian
+    """
+
+    start_date: date
+    end_date: date
+    a_ts_code: str | None = None
+    hk_ts_code: str | None = None
+
+
+class EastmoneyUnadjustedQuoteSyncResponse(BaseModel):
+    """东方财富不复权日线同步响应。
+
+    创建日期：2026-05-06
+    author: sunshengxian
+    """
+
+    pair_count: int
+    quote_rows: int
+
+
+class UnadjustedAhBackfillCreate(BaseModel):
+    """不复权 AH 比价追跑请求。
+
+    创建日期：2026-05-06
+    author: sunshengxian
+    """
+
+    start_date: date | None = None
+    end_date: date | None = None
+    a_ts_code: str | None = None
+    hk_ts_code: str | None = None
+    force: bool = False
+
+
+class UnadjustedAhBackfillResponse(BaseModel):
+    """不复权 AH 比价追跑响应。
+
+    创建日期：2026-05-06
+    author: sunshengxian
+    """
+
+    pair_count: int
+    skipped_completed_pairs: int
+    candidate_rows: int
+    inserted_rows: int
+    skipped_existing_rows: int
+    replaced_baidu_rows: int
+    skipped_invalid_rows: int
+
+
 class SyncRunResponse(OrmModel):
     """同步任务响应。
 
