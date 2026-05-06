@@ -1,6 +1,8 @@
 import { requestJson } from './client';
 import type {
   DatasetInfo,
+  EastmoneyUnadjustedSyncBatchCreate,
+  EastmoneyUnadjustedSyncBatchResponse,
   SyncBatchCreate,
   SyncRun,
   SyncRunCreate,
@@ -33,4 +35,14 @@ export function createAhPremiumSyncBatch(payload: SyncBatchCreate) {
     method: 'POST',
     body: JSON.stringify(payload)
   });
+}
+
+export function createEastmoneyUnadjustedSyncBatch(payload: EastmoneyUnadjustedSyncBatchCreate) {
+  return requestJson<EastmoneyUnadjustedSyncBatchResponse>(
+    '/api/sync/batches/eastmoney-unadjusted',
+    {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    }
+  );
 }

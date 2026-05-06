@@ -23,6 +23,7 @@ import PageHeader from '../components/PageHeader';
 import OverflowCell from '../components/OverflowCell';
 import {
   createAhPremiumSyncBatch,
+  createEastmoneyUnadjustedSyncBatch,
   createSyncRun,
   fetchDatasets,
   fetchSyncRuns
@@ -97,6 +98,19 @@ function SyncPage() {
     },
     onError: (error) => message.error(error instanceof Error ? error.message : '一键同步失败')
   });
+  const eastmoneyUnadjustedMutation = useMutation({
+    mutationFn: createEastmoneyUnadjustedSyncBatch,
+    onSuccess: (result) => {
+      message.success(
+        `东方财富不复权补数完成：待追跑 ${result.pending_pair_count} 对，` +
+          `日线 ${result.quote_rows} 行，写入 ${result.inserted_rows} 行，` +
+          `替换 Baidu ${result.replaced_baidu_rows} 行`
+      );
+      queryClient.invalidateQueries({ queryKey: ['sync-runs'] });
+    },
+    onError: (error) =>
+      message.error(error instanceof Error ? error.message : '东方财富不复权补数失败')
+  });
   const importMutation = useMutation({
     mutationFn: (values: ImportFormValues) => importCsv(values.kind, values.content),
     onSuccess: (response) => {
@@ -126,6 +140,14 @@ function SyncPage() {
       end_date: values.range?.[1]?.format('YYYY-MM-DD')
     };
     batchMutation.mutate(payload);
+  };
+
+  const runEastmoneyUnadjustedSync = () => {
+    const range = batchForm.getFieldValue('range');
+    eastmoneyUnadjustedMutation.mutate({
+      start_date: range?.[0]?.format('YYYY-MM-DD'),
+      end_date: range?.[1]?.format('YYYY-MM-DD')
+    });
   };
 
   const onFilterFinish = (values: RunFilterValues) => {
@@ -184,14 +206,23 @@ function SyncPage() {
                         <DatePicker.RangePicker className="full-width" />
                       </Form.Item>
                       <Form.Item label=" ">
-                        <Button
-                          type="primary"
-                          htmlType="submit"
-                          icon={<Play size={16} />}
-                          loading={batchMutation.isPending}
-                        >
-                          一键同步 AH 所需数据
-                        </Button>
+                        <Space wrap>
+                          <Button
+                            type="primary"
+                            htmlType="submit"
+                            icon={<Play size={16} />}
+                            loading={batchMutation.isPending}
+                          >
+                            一键同步 AH 所需数据
+                          </Button>
+                          <Button
+                            icon={<Play size={16} />}
+                            loading={eastmoneyUnadjustedMutation.isPending}
+                            onClick={runEastmoneyUnadjustedSync}
+                          >
+                            东方财富不复权补数
+                          </Button>
+                        </Space>
                       </Form.Item>
                     </div>
                   </Form>

@@ -314,6 +314,21 @@ class SyncService:
 
         return [self._dataset_info(spec) for spec in DATASET_SPECS.values()] + [
             {
+                "name": "eastmoney_unadjusted_backfill",
+                "label": "东方财富不复权补数",
+                "description": (
+                    "同步关注股票东方财富不复权 A/H 日线，并基于 HKD/CNY 汇率追跑历史 AH 比价。"
+                ),
+                "supports_date_range": True,
+                "supports_incremental": True,
+                "supports_full_sync": True,
+                "default_full_start_date": "2018-01-01",
+                "sync_strategy": (
+                    "只处理 watchlist_stock 启用且未完成不复权追跑的股票对；"
+                    "A/H/汇率三方同日齐全才写入 official_ah_comparison。"
+                ),
+            },
+            {
                 "name": STOCK_SELECTION_FACTOR_DATASET,
                 "label": "A 股选股因子宽表",
                 "description": "联网筛选蓝筹、低估值和红利股候选池，并同步 LLM 选股用核心宽表。",

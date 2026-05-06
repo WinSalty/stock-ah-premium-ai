@@ -45,6 +45,7 @@ class UnadjustedQuoteSyncService:
         end_date: date,
         a_ts_code: str | None = None,
         hk_ts_code: str | None = None,
+        pairs: list[tuple[str, str]] | None = None,
     ) -> UnadjustedQuoteSyncResult:
         """同步用户自选 A/H 股票对的不复权日线。
 
@@ -52,7 +53,7 @@ class UnadjustedQuoteSyncService:
         author: sunshengxian
         """
 
-        pairs = self._list_pairs(a_ts_code, hk_ts_code)
+        pairs = pairs or self._list_pairs(a_ts_code, hk_ts_code)
         row_count = 0
         for a_code, hk_code in pairs:
             # A/H 两侧分别拉取并写入独立表，重跑时按 market、ts_code、

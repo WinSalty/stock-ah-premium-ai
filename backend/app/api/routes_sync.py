@@ -12,17 +12,16 @@ from app.db.models.sync import SyncRun
 from app.db.session import get_db
 from app.schemas.sync import (
     DatasetInfo,
-    EastmoneyUnadjustedQuoteSyncCreate,
-    EastmoneyUnadjustedQuoteSyncResponse,
+    EastmoneyUnadjustedSyncBatchCreate,
+    EastmoneyUnadjustedSyncBatchResponse,
     SyncBatchCreate,
     SyncRunCreate,
     SyncRunResponse,
-    UnadjustedAhBackfillCreate,
-    UnadjustedAhBackfillResponse,
+)
+from app.services.eastmoney_unadjusted_sync_batch_service import (
+    EastmoneyUnadjustedSyncBatchService,
 )
 from app.services.sync_service import SyncService
-from app.services.unadjusted_ah_backfill_service import UnadjustedAhBackfillService
-from app.services.unadjusted_quote_sync_service import UnadjustedQuoteSyncService
 
 router = APIRouter(dependencies=[Depends(require_permission("sync"))])
 DbSession = Annotated[Session, Depends(get_db)]
@@ -88,55 +87,29 @@ def create_stock_selection_factor_sync_batch(payload: SyncBatchCreate, db: DbSes
 
 
 @router.post(
-    "/sync/eastmoney-unadjusted-quotes",
-    response_model=EastmoneyUnadjustedQuoteSyncResponse,
+    "/sync/batches/eastmoney-unadjusted",
+    response_model=EastmoneyUnadjustedSyncBatchResponse,
 )
-def sync_eastmoney_unadjusted_quotes(
-    payload: EastmoneyUnadjustedQuoteSyncCreate,
+def sync_eastmoney_unadjusted_batch(
+    payload: EastmoneyUnadjustedSyncBatchCreate,
     db: DbSession,
-) -> dict[str, int]:
-    """同步东方财富 A/H 不复权历史日线。
+) -> dict[str, Any]:
+    """一键同步关注股票东方财富不复权日线并追跑 AH 比价。
 
     创建日期：2026-05-06
     author: sunshengxian
     """
 
-    try:
-        result = UnadjustedQuoteSyncService(db).sync_watchlist_quotes(
-            start_date=payload.start_date,
-            end_date=payload.end_date,
-            a_ts_code=payload.a_ts_code,
-            hk_ts_code=payload.hk_ts_code,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return {"pair_count": result.pair_count, "quote_rows": result.quote_rows}
-
-
-@router.post(
-    "/sync/unadjusted-ah-backfill",
-    response_model=UnadjustedAhBackfillResponse,
-)
-def backfill_unadjusted_ah_premium(
-    payload: UnadjustedAhBackfillCreate,
-    db: DbSession,
-) -> dict[str, int]:
-    """追跑东方财富不复权历史 AH 比价。
-
-    创建日期：2026-05-06
-    author: sunshengxian
-    """
-
-    result = UnadjustedAhBackfillService(db).backfill_watchlist(
+    result = EastmoneyUnadjustedSyncBatchService(db).sync_pending_watchlist(
         start_date=payload.start_date,
         end_date=payload.end_date,
-        a_ts_code=payload.a_ts_code,
-        hk_ts_code=payload.hk_ts_code,
-        force=payload.force,
     )
     return {
-        "pair_count": result.pair_count,
-        "skipped_completed_pairs": result.skipped_completed_pairs,
+        "start_date": result.start_date,
+        "end_date": result.end_date,
+        "pending_pair_count": result.pending_pair_count,
+        "quote_rows": result.quote_rows,
+        "backfill_pair_count": result.backfill_pair_count,
         "candidate_rows": result.candidate_rows,
         "inserted_rows": result.inserted_rows,
         "skipped_existing_rows": result.skipped_existing_rows,

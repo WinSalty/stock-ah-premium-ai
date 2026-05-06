@@ -224,12 +224,11 @@ is_realtime = 0
 
 ### 运维入口
 
-建议新增管理接口或同步页入口：
+新增同步页调用的一键管理入口：
 
-- `POST /api/sync/eastmoney-unadjusted-quotes`
-- `POST /api/sync/unadjusted-ah-backfill`
+- `POST /api/sync/batches/eastmoney-unadjusted`
 
-初版也可以只做后台服务方法和 CLI/脚本入口，等验证稳定后再加前端按钮。
+该入口内部先同步 `watchlist_stock` 中启用且尚未完成追跑的 A/H 股票对东方财富不复权日线，再基于 A 股日线、H 股日线和 `waterstock_fx_rate_daily` 中同日 HKD/CNY 汇率三方交集追跑 AH 比价；日期默认从 2018-01-01 到当天。
 
 ## `water-stock` 实施内容
 

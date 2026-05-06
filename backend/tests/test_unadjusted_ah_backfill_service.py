@@ -9,11 +9,15 @@ from sqlalchemy.orm import Session
 from app.db.base import Base
 from app.db.models.market import (
     EastmoneyUnadjustedDailyQuote,
+    HistoricalAhUnadjustedBackfillRun,
     OfficialAHComparison,
     WatchlistStock,
     WaterstockFxRateDaily,
 )
-from app.services.unadjusted_ah_backfill_service import UnadjustedAhBackfillService
+from app.services.unadjusted_ah_backfill_service import (
+    UNADJUSTED_BACKFILL_SOURCE,
+    UnadjustedAhBackfillService,
+)
 
 
 def test_unadjusted_backfill_replaces_baidu_without_overwriting_tushare() -> None:
@@ -78,3 +82,103 @@ def test_unadjusted_backfill_replaces_baidu_without_overwriting_tushare() -> Non
         "EASTMONEY_UNADJUSTED_BACKFILL",
         "TUSHARE_OFFICIAL",
     }
+
+
+def test_unadjusted_backfill_requires_a_h_and_fx_same_date() -> None:
+    """确认 A/H/汇率三方同日齐全时才写入官方 AH 主表。
+
+    创建日期：2026-05-06
+    author: sunshengxian
+    """
+
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    with Session(engine) as db:
+        db.add(WatchlistStock(a_ts_code="600036.SH", hk_ts_code="03968.HK", is_active=True))
+        db.add_all(
+            [
+                EastmoneyUnadjustedDailyQuote(
+                    market="A",
+                    ts_code="600036.SH",
+                    eastmoney_secid="1.600036",
+                    trade_date=date(2025, 8, 11),
+                    close=Decimal("40"),
+                    adjust_type="NONE",
+                ),
+                EastmoneyUnadjustedDailyQuote(
+                    market="HK",
+                    ts_code="03968.HK",
+                    eastmoney_secid="116.03968",
+                    trade_date=date(2025, 8, 11),
+                    close=Decimal("30"),
+                    adjust_type="NONE",
+                ),
+                EastmoneyUnadjustedDailyQuote(
+                    market="A",
+                    ts_code="600036.SH",
+                    eastmoney_secid="1.600036",
+                    trade_date=date(2025, 8, 12),
+                    close=Decimal("41"),
+                    adjust_type="NONE",
+                ),
+                EastmoneyUnadjustedDailyQuote(
+                    market="HK",
+                    ts_code="03968.HK",
+                    eastmoney_secid="116.03968",
+                    trade_date=date(2025, 8, 12),
+                    close=Decimal("31"),
+                    adjust_type="NONE",
+                ),
+                WaterstockFxRateDaily(
+                    currency_pair="HKDCNY",
+                    rate_date=date(2025, 8, 11),
+                    close=Decimal("0.91"),
+                ),
+            ]
+        )
+        db.commit()
+
+        result = UnadjustedAhBackfillService(db).backfill_watchlist(force=True)
+        rows = list(db.query(OfficialAHComparison).all())
+
+    assert result.candidate_rows == 1
+    assert result.inserted_rows == 1
+    assert len(rows) == 1
+    assert rows[0].trade_date == date(2025, 8, 11)
+
+
+def test_unadjusted_pending_pairs_skip_completed_watchlist_pair() -> None:
+    """确认合并同步只处理关注表中未完成追跑的股票对。
+
+    创建日期：2026-05-06
+    author: sunshengxian
+    """
+
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    with Session(engine) as db:
+        db.add_all(
+            [
+                WatchlistStock(
+                    a_ts_code="600036.SH",
+                    hk_ts_code="03968.HK",
+                    is_active=True,
+                ),
+                WatchlistStock(
+                    a_ts_code="000001.SZ",
+                    hk_ts_code="00001.HK",
+                    is_active=True,
+                ),
+                HistoricalAhUnadjustedBackfillRun(
+                    a_ts_code="600036.SH",
+                    hk_ts_code="03968.HK",
+                    data_source=UNADJUSTED_BACKFILL_SOURCE,
+                    status="COMPLETED",
+                ),
+            ]
+        )
+        db.commit()
+
+        pairs = UnadjustedAhBackfillService(db).list_pending_watchlist_pairs()
+
+    assert pairs == [("000001.SZ", "00001.HK")]

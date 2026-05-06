@@ -58,6 +58,7 @@ class UnadjustedAhBackfillService:
         a_ts_code: str | None = None,
         hk_ts_code: str | None = None,
         force: bool = False,
+        pairs: list[tuple[str, str]] | None = None,
     ) -> UnadjustedAhBackfillResult:
         """按自选或指定 A/H 股票对追跑不复权 AH 比价。
 
@@ -72,7 +73,7 @@ class UnadjustedAhBackfillService:
         skipped_existing_rows = 0
         replaced_baidu_rows = 0
         skipped_invalid_rows = 0
-        for pair in self._list_pairs(a_ts_code, hk_ts_code):
+        for pair in pairs or self._list_pairs(a_ts_code, hk_ts_code):
             pair_count += 1
             if not force and self._is_completed(pair[0], pair[1]):
                 skipped_completed_pairs += 1
@@ -287,6 +288,16 @@ class UnadjustedAhBackfillService:
             )
         )
         return status == "COMPLETED"
+
+    def list_pending_watchlist_pairs(self) -> list[tuple[str, str]]:
+        """查询启用自选股中尚未完成东方财富不复权追跑的 A/H 股票对。
+
+        创建日期：2026-05-06
+        author: sunshengxian
+        """
+
+        pairs = self._list_pairs(None, None)
+        return [pair for pair in pairs if not self._is_completed(pair[0], pair[1])]
 
     def _list_pairs(
         self,
