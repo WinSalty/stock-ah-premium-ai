@@ -16,6 +16,8 @@ cd /Users/salty/codeProject/ai/coding/stock-ah-premium-ai
 - 前端：`http://127.0.0.1:5173`
 - MySQL：`127.0.0.1:3306`
 
+服务器单机部署时，可继续使用前端 `5173`、后端 `8000`、MySQL 本机 `3306` 的端口划分；公网部署、无 Nginx 反代和云防火墙排障见：[单机服务器部署记录](./server-deployment-guide.md)。
+
 ## 2. 环境要求
 
 - Python：3.11+，本机已验证 `/opt/homebrew/bin/python3.13`。
@@ -414,6 +416,29 @@ curl http://127.0.0.1:8000/api/health
 ```
 
 确认前端由 Vite 启动，开发代理会把 `/api` 转发到后端。
+
+### 服务器登录页提示 CORS 或请求后端失败
+
+无 Nginx 反代、前端访问 `http://<server-ip>:5173` 时，浏览器会直接请求 `http://<server-ip>:8000/api/...`。因此除了后端 `APP_CORS_ORIGINS` 包含 `http://<server-ip>:5173` 外，云服务器安全组也必须放行 TCP `8000`。只放行 `5173` 会导致首页能打开，但登录接口失败，浏览器控制台可能显示为 CORS 错误。
+
+先在服务器本机确认服务监听和 CORS：
+
+```bash
+ssh ubuntu@<server-ip> 'systemctl is-active stock-ah-backend stock-ah-frontend mysql'
+ssh ubuntu@<server-ip> 'ss -ltnp | grep -E ":(8000|5173)"'
+ssh ubuntu@<server-ip> 'curl -i -s -X OPTIONS http://127.0.0.1:8000/api/auth/login \
+  -H "Origin: http://<server-ip>:5173" \
+  -H "Access-Control-Request-Method: POST" \
+  -H "Access-Control-Request-Headers: content-type"'
+```
+
+再从本地网络直连后端公网端口：
+
+```bash
+curl --noproxy '*' --max-time 8 -i http://<server-ip>:8000/api/health
+```
+
+如果服务器本机正常、本地直连 `8000` 超时，优先处理云安全组或云防火墙。MySQL `3306` 不需要对公网开放，后端同机直连即可。完整部署记录见：[单机服务器部署记录](./server-deployment-guide.md)。
 
 ### LLM 问答返回未配置
 

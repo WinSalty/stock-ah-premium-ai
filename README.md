@@ -12,6 +12,7 @@
 - A/H 溢价套现评审与展示设计：[ah-premium-review-and-display-design.md](./resources/doc/ah-premium-review-and-display-design.md)
 - 开发进度记录：[development-progress.md](./resources/doc/development-progress.md)
 - 项目启动手册：[startup-guide.md](./resources/doc/startup-guide.md)
+- 单机服务器部署记录：[server-deployment-guide.md](./resources/doc/server-deployment-guide.md)
 - 数据库表结构说明：[database-schema.md](./resources/doc/database-schema.md)
 - 数据库初始化 SQL：[00_create_database.sql](./resources/sql/00_create_database.sql)
 - LLM 只读视图 SQL：[01_readonly_views.sql](./resources/sql/01_readonly_views.sql)
@@ -38,6 +39,7 @@
 ## 本地启动
 
 完整启动、配置、验证和排错说明见：[项目启动手册](./resources/doc/startup-guide.md)。
+单机服务器部署、云安全组、无 Nginx 跨端口访问和服务器端 Tushare 重新同步说明见：[单机服务器部署记录](./resources/doc/server-deployment-guide.md)。
 
 快速启动顺序如下。
 

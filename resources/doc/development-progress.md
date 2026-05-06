@@ -1,6 +1,6 @@
 # 开发进度记录
 
-更新日期：2026-05-05
+更新日期：2026-05-06
 
 ## 当前状态
 
@@ -158,6 +158,7 @@
   - `resources/doc/ah-premium-review-and-display-design.md`：沉淀 A/H 溢价套现评审结论、官方主口径、自选股优先展示和后续落地优先级。
   - `resources/doc/realtime-premium-and-wechat-push-plan.md`：沉淀实时 AH 溢价行情源、Qwen 联网搜索定位和个人微信推送落地方案；已补充 `realtime_quote_snapshot` 喂数约定和实时读取 API。
   - `resources/doc/llm-knowledge/README.md`：沉淀 LLM 投资问答知识库分类、使用原则和新增材料登记方式。
+  - `resources/doc/server-deployment-guide.md`：沉淀单机服务器部署记录，覆盖 MySQL 同机直连、无 Nginx 跨端口访问、云安全组/CORS 排障、服务器空库通过应用 Tushare 同步数据、仅初始化管理员账号等首次部署经验。
 - 非真实功能测试资产：
   - 后端公式单元测试。
   - SQL Guard 单元测试。
