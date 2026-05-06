@@ -319,10 +319,11 @@ function UserAdminPage({ currentUser, onUserUpdated }: UserAdminPageProps) {
           </Button>
         </div>
         <Table<PushplusMessageLog>
+          className="pushplus-message-table"
           rowKey="id"
           loading={pushplusMessages.isLoading}
           dataSource={pushplusMessages.data || []}
-          scroll={{ x: 1160 }}
+          scroll={{ x: 1680 }}
           pagination={{ pageSize: 10 }}
           columns={[
             {
@@ -366,17 +367,37 @@ function UserAdminPage({ currentUser, onUserUpdated }: UserAdminPageProps) {
             {
               title: '内容',
               dataIndex: 'message_content',
-              ellipsis: true,
-              render: (value: string) => (
-                <Tooltip
-                  overlayClassName="pushplus-message-tooltip"
-                  title={<span className="pushplus-message-tooltip-content">{pushplusMessageText(value)}</span>}
-                >
-                  <Typography.Text className="pushplus-message-preview">
-                    {pushplusMessagePreview(value)}
-                  </Typography.Text>
-                </Tooltip>
-              )
+              width: 520,
+              render: (value: string, record) => {
+                const text = pushplusMessageText(value);
+                return (
+                  <div className="pushplus-message-cell">
+                    <Tooltip
+                      overlayClassName="pushplus-message-tooltip"
+                      title={<span className="pushplus-message-tooltip-content">{text}</span>}
+                    >
+                      <Typography.Text className="pushplus-message-preview">
+                        {pushplusMessagePreview(value)}
+                      </Typography.Text>
+                    </Tooltip>
+                    <Button
+                      type="link"
+                      size="small"
+                      className="pushplus-message-detail-button"
+                      onClick={() => {
+                        Modal.info({
+                          title: record.message_title || '推送内容',
+                          width: 760,
+                          okText: '关闭',
+                          content: <pre className="pushplus-message-modal-content">{text || '-'}</pre>
+                        });
+                      }}
+                    >
+                      查看详情
+                    </Button>
+                  </div>
+                );
+              }
             },
             {
               title: '状态',

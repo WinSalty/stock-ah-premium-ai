@@ -726,14 +726,27 @@ body {
   min-width: 220px;
 }
 
+.pushplus-message-table .ant-table-cell {
+  vertical-align: top;
+}
+
+.pushplus-message-cell {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
 .pushplus-message-preview {
-  display: block;
+  display: -webkit-box;
   overflow: hidden;
   max-width: 100%;
-  line-height: 1.45;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  color: #172033;
+  line-height: 1.55;
+  white-space: normal;
   word-spacing: 0;
+  word-break: break-word;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
 .pushplus-message-tooltip {
@@ -750,6 +763,28 @@ body {
   white-space: pre-wrap;
   word-break: break-word;
   line-height: 1.55;
+}
+
+.pushplus-message-detail-button {
+  width: fit-content;
+  height: auto;
+  padding: 0;
+  line-height: 1.4;
+}
+
+.pushplus-message-modal-content {
+  max-height: min(62vh, 560px);
+  overflow: auto;
+  margin: 0;
+  padding: 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #f8fafc;
+  color: #172033;
+  font: inherit;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .pushplus-binding-row {
