@@ -157,6 +157,84 @@ def test_realtime_premium_service_does_not_persist_stale_snapshot_date() -> None
     assert realtime_rows == []
 
 
+def test_realtime_premium_service_keeps_official_row_after_sync() -> None:
+    """确认官方 AH 比价已落库后，实时接口不再覆盖当天官方结果。
+
+    创建日期：2026-05-06
+    author: sunshengxian
+    """
+
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    quote_time = datetime.combine(date.today(), datetime.min.time())
+    with Session(engine) as db:
+        db.add(
+            OfficialAHComparison(
+                trade_date=quote_time.date(),
+                a_ts_code="600036.SH",
+                hk_ts_code="03968.HK",
+                a_name="招商银行",
+                hk_name="招商银行",
+                a_close=Decimal("37.50"),
+                hk_close=Decimal("47.20"),
+                ah_comparison=Decimal("0.91000000"),
+                ah_premium=Decimal("-9.00000000"),
+                ha_comparison=Decimal("1.09890110"),
+                ha_premium=Decimal("9.89011000"),
+                is_realtime=False,
+                data_source="TUSHARE_OFFICIAL",
+            )
+        )
+        db.add_all(
+            [
+                RealtimeQuoteSnapshot(
+                    market="A",
+                    symbol="600036.SH",
+                    last_price=Decimal("40.00"),
+                    currency="CNY",
+                    quote_time=quote_time,
+                    source="MANUAL",
+                    quality="REALTIME",
+                ),
+                RealtimeQuoteSnapshot(
+                    market="HK",
+                    symbol="03968.HK",
+                    last_price=Decimal("32.00"),
+                    currency="HKD",
+                    quote_time=quote_time,
+                    source="MANUAL",
+                    quality="REALTIME",
+                ),
+                RealtimeQuoteSnapshot(
+                    market="FX",
+                    symbol="HKD/CNY",
+                    last_price=Decimal("0.92"),
+                    currency="CNY",
+                    quote_time=quote_time,
+                    source="MANUAL_FX",
+                    quality="REALTIME",
+                ),
+            ]
+        )
+        db.commit()
+
+        item = RealtimePremiumService(db).calculate_pair(
+            a_ts_code="600036.SH",
+            hk_ts_code="03968.HK",
+            a_name="招商银行",
+            hk_name="招商银行",
+        )
+        official_row = db.query(OfficialAHComparison).one()
+
+    assert item.quote_quality == "REALTIME"
+    assert item.ah_ratio == Decimal("1.35869565")
+    assert official_row.a_close == Decimal("37.500000")
+    assert official_row.hk_close == Decimal("47.200000")
+    assert official_row.ah_comparison == Decimal("0.91000000")
+    assert official_row.is_realtime is False
+    assert official_row.data_source == "TUSHARE_OFFICIAL"
+
+
 def test_realtime_market_provider_marks_stale_snapshot_quality() -> None:
     """确认旧日期快照即使入库标记 REALTIME，读取时也降级为 STALE。
 

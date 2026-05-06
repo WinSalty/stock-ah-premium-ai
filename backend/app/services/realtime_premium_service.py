@@ -324,6 +324,8 @@ class RealtimePremiumService:
                 OfficialAHComparison.hk_ts_code == result.hk_ts_code,
             )
         )
+        if row is not None and not row.is_realtime:
+            return
         if row is None:
             row = OfficialAHComparison(
                 trade_date=trade_date,
