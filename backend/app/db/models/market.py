@@ -409,30 +409,30 @@ class HistoricalPremiumBackfillRecord(TimestampMixin, Base):
     completed_at: Mapped[datetime | None] = mapped_column(DateTime)
 
 
-class EastmoneyUnadjustedDailyQuote(TimestampMixin, Base):
-    """东方财富不复权历史日线表。
+class TencentUnadjustedDailyQuote(TimestampMixin, Base):
+    """腾讯不复权历史日线表。
 
     创建日期：2026-05-06
     author: sunshengxian
     """
 
-    __tablename__ = "eastmoney_unadjusted_daily_quote"
+    __tablename__ = "tencent_unadjusted_daily_quote"
     __table_args__ = (
         UniqueConstraint(
             "market",
             "ts_code",
             "trade_date",
             "adjust_type",
-            name="uk_em_unadj_quote",
+            name="uk_tencent_unadj_quote",
         ),
-        Index("idx_em_unadj_quote_date", "trade_date"),
-        Index("idx_em_unadj_quote_code_date", "ts_code", "trade_date"),
+        Index("idx_tencent_unadj_quote_date", "trade_date"),
+        Index("idx_tencent_unadj_quote_code_date", "ts_code", "trade_date"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     market: Mapped[str] = mapped_column(String(8), nullable=False)
     ts_code: Mapped[str] = mapped_column(String(16), nullable=False)
-    eastmoney_secid: Mapped[str] = mapped_column(String(32), nullable=False)
+    tencent_symbol: Mapped[str] = mapped_column(String(32), nullable=False)
     trade_date: Mapped[date] = mapped_column(Date, nullable=False)
     open: Mapped[Decimal | None] = mapped_column(DECIMAL(20, 6))
     close: Mapped[Decimal] = mapped_column(DECIMAL(20, 6), nullable=False)
@@ -445,7 +445,7 @@ class EastmoneyUnadjustedDailyQuote(TimestampMixin, Base):
     change_amount: Mapped[Decimal | None] = mapped_column(DECIMAL(20, 6))
     turnover_rate: Mapped[Decimal | None] = mapped_column(DECIMAL(20, 6))
     adjust_type: Mapped[str] = mapped_column(String(16), nullable=False, default="NONE")
-    data_source: Mapped[str] = mapped_column(String(32), nullable=False, default="EASTMONEY_KLINE")
+    data_source: Mapped[str] = mapped_column(String(32), nullable=False, default="TENCENT_KLINE")
     raw_payload_json: Mapped[str | None] = mapped_column(Text)
 
 

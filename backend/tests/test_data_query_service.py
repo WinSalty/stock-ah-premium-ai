@@ -59,6 +59,6 @@ def test_data_query_contains_unadjusted_backfill_datasets() -> None:
     author: sunshengxian
     """
 
-    assert "eastmoney_unadjusted_daily_quote" in DATA_QUERY_SPECS
+    assert "tencent_unadjusted_daily_quote" in DATA_QUERY_SPECS
     assert "waterstock_fx_rate_daily" in DATA_QUERY_SPECS
     assert "historical_ah_unadjusted_backfill_run" in DATA_QUERY_SPECS

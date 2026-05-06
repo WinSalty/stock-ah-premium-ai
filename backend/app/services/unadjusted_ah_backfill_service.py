@@ -10,15 +10,15 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session, aliased
 
 from app.db.models.market import (
-    EastmoneyUnadjustedDailyQuote,
     HistoricalAhUnadjustedBackfillRun,
     OfficialAHComparison,
+    TencentUnadjustedDailyQuote,
     WatchlistStock,
     WaterstockFxRateDaily,
 )
 from app.services.decimal_utils import quantize_decimal
 
-UNADJUSTED_BACKFILL_SOURCE = "EASTMONEY_UNADJUSTED_BACKFILL"
+UNADJUSTED_BACKFILL_SOURCE = "TENCENT_UNADJUSTED_BACKFILL"
 BAIDU_BACKFILL_SOURCE = "BAIDU_HISTORY_BACKFILL"
 HKD_CNY_PAIR = "HKDCNY"
 WATERSTOCK_FX_SOURCE = "WATER_STOCK_BAIDU_FX"
@@ -42,7 +42,7 @@ class UnadjustedAhBackfillResult:
 
 
 class UnadjustedAhBackfillService:
-    """东方财富不复权历史 AH 比价追跑服务。
+    """腾讯不复权历史 AH 比价追跑服务。
 
     创建日期：2026-05-06
     author: sunshengxian
@@ -144,8 +144,8 @@ class UnadjustedAhBackfillService:
         end_date: date | None,
     ) -> list[dict[str, object]]:
         # 不依赖交易日历，只取 A 股不复权日线、H 股不复权日线和 HKD/CNY 汇率三方日期交集。
-        a_quote = aliased(EastmoneyUnadjustedDailyQuote)
-        hk_quote = aliased(EastmoneyUnadjustedDailyQuote)
+        a_quote = aliased(TencentUnadjustedDailyQuote)
+        hk_quote = aliased(TencentUnadjustedDailyQuote)
         fx = WaterstockFxRateDaily
         statement = (
             select(
@@ -231,7 +231,7 @@ class UnadjustedAhBackfillService:
     def _insert_snapshots_if_missing(self, snapshots: list[dict[str, object]]) -> tuple[int, int]:
         if not snapshots:
             return 0, 0
-        # Baidu 前复权补数是本次替换对象：先按同日同股票对删除 Baidu 行，再插入东方财富不复权行。
+        # Baidu 前复权补数是本次替换对象：先按同日同股票对删除 Baidu 行，再插入腾讯不复权行。
         # Tushare 官方、实时计算或人工行不删除，仍由主表唯一键和 insert ignore
         # 保护，避免覆盖可信来源。
         replaced_baidu_rows = 0
@@ -290,7 +290,7 @@ class UnadjustedAhBackfillService:
         return status == "COMPLETED"
 
     def list_pending_watchlist_pairs(self) -> list[tuple[str, str]]:
-        """查询启用自选股中尚未完成东方财富不复权追跑的 A/H 股票对。
+        """查询启用自选股中尚未完成腾讯不复权追跑的 A/H 股票对。
 
         创建日期：2026-05-06
         author: sunshengxian

@@ -11,39 +11,39 @@ depends_on = None
 
 
 def upgrade() -> None:
-    # 东方财富不复权日线独立存储，避免历史补数口径混入 Tushare 官方日线或 Baidu 前复权数据。
+    # 腾讯不复权日线独立存储，避免历史补数口径混入 Tushare 官方日线或 Baidu 前复权数据。
     op.create_table(
-        "eastmoney_unadjusted_daily_quote",
+        "tencent_unadjusted_daily_quote",
         sa.Column("id", sa.Integer(), autoincrement=True, nullable=False, comment="自增主键"),
         sa.Column("market", sa.String(length=8), nullable=False, comment="市场: A、HK"),
         sa.Column("ts_code", sa.String(length=16), nullable=False, comment="项目标准代码，如 600036.SH、03968.HK"),
-        sa.Column("eastmoney_secid", sa.String(length=32), nullable=False, comment="东方财富 secid，如 1.600036、116.03968"),
+        sa.Column("tencent_symbol", sa.String(length=32), nullable=False, comment="腾讯 symbol，如 sh600036、hk03968"),
         sa.Column("trade_date", sa.Date(), nullable=False, comment="交易日期"),
         sa.Column("open", sa.DECIMAL(20, 6), nullable=True, comment="不复权开盘价"),
         sa.Column("close", sa.DECIMAL(20, 6), nullable=False, comment="不复权收盘价"),
         sa.Column("high", sa.DECIMAL(20, 6), nullable=True, comment="不复权最高价"),
         sa.Column("low", sa.DECIMAL(20, 6), nullable=True, comment="不复权最低价"),
-        sa.Column("volume", sa.DECIMAL(24, 4), nullable=True, comment="成交量，按东方财富原始单位保存"),
-        sa.Column("amount", sa.DECIMAL(24, 4), nullable=True, comment="成交额，按东方财富原始单位保存"),
+        sa.Column("volume", sa.DECIMAL(24, 4), nullable=True, comment="成交量，按腾讯原始单位保存"),
+        sa.Column("amount", sa.DECIMAL(24, 4), nullable=True, comment="成交额，按腾讯原始单位保存"),
         sa.Column("amplitude", sa.DECIMAL(20, 6), nullable=True, comment="振幅"),
         sa.Column("pct_chg", sa.DECIMAL(20, 6), nullable=True, comment="涨跌幅"),
         sa.Column("change_amount", sa.DECIMAL(20, 6), nullable=True, comment="涨跌额"),
         sa.Column("turnover_rate", sa.DECIMAL(20, 6), nullable=True, comment="换手率"),
         sa.Column("adjust_type", sa.String(length=16), nullable=False, server_default="NONE", comment="复权类型: NONE 不复权"),
-        sa.Column("data_source", sa.String(length=32), nullable=False, server_default="EASTMONEY_KLINE", comment="数据来源"),
+        sa.Column("data_source", sa.String(length=32), nullable=False, server_default="TENCENT_KLINE", comment="数据来源"),
         sa.Column("raw_payload_json", sa.Text(), nullable=True, comment="原始单行数据或摘要 JSON"),
         sa.Column("created_at", sa.DateTime(), server_default=sa.text("CURRENT_TIMESTAMP"), nullable=False, comment="创建时间"),
         sa.Column("updated_at", sa.DateTime(), server_default=sa.text("CURRENT_TIMESTAMP"), nullable=False, comment="更新时间"),
         sa.PrimaryKeyConstraint("id"),
-        sa.UniqueConstraint("market", "ts_code", "trade_date", "adjust_type", name="uk_em_unadj_quote"),
+        sa.UniqueConstraint("market", "ts_code", "trade_date", "adjust_type", name="uk_tencent_unadj_quote"),
         mysql_charset="utf8mb4",
         mysql_collate="utf8mb4_unicode_ci",
-        mysql_comment="东方财富不复权历史日线表",
+        mysql_comment="腾讯不复权历史日线表",
     )
-    op.create_index("idx_em_unadj_quote_date", "eastmoney_unadjusted_daily_quote", ["trade_date"])
+    op.create_index("idx_tencent_unadj_quote_date", "tencent_unadjusted_daily_quote", ["trade_date"])
     op.create_index(
-        "idx_em_unadj_quote_code_date",
-        "eastmoney_unadjusted_daily_quote",
+        "idx_tencent_unadj_quote_code_date",
+        "tencent_unadjusted_daily_quote",
         ["ts_code", "trade_date"],
     )
 
@@ -106,6 +106,6 @@ def downgrade() -> None:
     op.drop_table("historical_ah_unadjusted_backfill_run")
     op.drop_index("idx_waterstock_fx_rate_date", table_name="waterstock_fx_rate_daily")
     op.drop_table("waterstock_fx_rate_daily")
-    op.drop_index("idx_em_unadj_quote_code_date", table_name="eastmoney_unadjusted_daily_quote")
-    op.drop_index("idx_em_unadj_quote_date", table_name="eastmoney_unadjusted_daily_quote")
-    op.drop_table("eastmoney_unadjusted_daily_quote")
+    op.drop_index("idx_tencent_unadj_quote_code_date", table_name="tencent_unadjusted_daily_quote")
+    op.drop_index("idx_tencent_unadj_quote_date", table_name="tencent_unadjusted_daily_quote")
+    op.drop_table("tencent_unadjusted_daily_quote")

@@ -8,9 +8,9 @@ from sqlalchemy.orm import Session
 
 from app.db.base import Base
 from app.db.models.market import (
-    EastmoneyUnadjustedDailyQuote,
     HistoricalAhUnadjustedBackfillRun,
     OfficialAHComparison,
+    TencentUnadjustedDailyQuote,
     WatchlistStock,
     WaterstockFxRateDaily,
 )
@@ -35,18 +35,18 @@ def test_unadjusted_backfill_replaces_baidu_without_overwriting_tushare() -> Non
         )
         db.add_all(
             [
-                EastmoneyUnadjustedDailyQuote(
+                TencentUnadjustedDailyQuote(
                     market="A",
                     ts_code="600036.SH",
-                    eastmoney_secid="1.600036",
+                    tencent_symbol="sh600036",
                     trade_date=date(2025, 8, 11),
                     close=Decimal("40"),
                     adjust_type="NONE",
                 ),
-                EastmoneyUnadjustedDailyQuote(
+                TencentUnadjustedDailyQuote(
                     market="HK",
                     ts_code="03968.HK",
-                    eastmoney_secid="116.03968",
+                    tencent_symbol="hk03968",
                     trade_date=date(2025, 8, 11),
                     close=Decimal("30"),
                     adjust_type="NONE",
@@ -79,7 +79,7 @@ def test_unadjusted_backfill_replaces_baidu_without_overwriting_tushare() -> Non
     assert result.inserted_rows == 1
     assert len(rows) == 2
     assert {row.data_source for row in rows} == {
-        "EASTMONEY_UNADJUSTED_BACKFILL",
+        "TENCENT_UNADJUSTED_BACKFILL",
         "TUSHARE_OFFICIAL",
     }
 
@@ -97,34 +97,34 @@ def test_unadjusted_backfill_requires_a_h_and_fx_same_date() -> None:
         db.add(WatchlistStock(a_ts_code="600036.SH", hk_ts_code="03968.HK", is_active=True))
         db.add_all(
             [
-                EastmoneyUnadjustedDailyQuote(
+                TencentUnadjustedDailyQuote(
                     market="A",
                     ts_code="600036.SH",
-                    eastmoney_secid="1.600036",
+                    tencent_symbol="sh600036",
                     trade_date=date(2025, 8, 11),
                     close=Decimal("40"),
                     adjust_type="NONE",
                 ),
-                EastmoneyUnadjustedDailyQuote(
+                TencentUnadjustedDailyQuote(
                     market="HK",
                     ts_code="03968.HK",
-                    eastmoney_secid="116.03968",
+                    tencent_symbol="hk03968",
                     trade_date=date(2025, 8, 11),
                     close=Decimal("30"),
                     adjust_type="NONE",
                 ),
-                EastmoneyUnadjustedDailyQuote(
+                TencentUnadjustedDailyQuote(
                     market="A",
                     ts_code="600036.SH",
-                    eastmoney_secid="1.600036",
+                    tencent_symbol="sh600036",
                     trade_date=date(2025, 8, 12),
                     close=Decimal("41"),
                     adjust_type="NONE",
                 ),
-                EastmoneyUnadjustedDailyQuote(
+                TencentUnadjustedDailyQuote(
                     market="HK",
                     ts_code="03968.HK",
-                    eastmoney_secid="116.03968",
+                    tencent_symbol="hk03968",
                     trade_date=date(2025, 8, 12),
                     close=Decimal("31"),
                     adjust_type="NONE",

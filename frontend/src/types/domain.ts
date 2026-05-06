@@ -159,12 +159,12 @@ export interface SyncBatchCreate {
   end_date?: string;
 }
 
-export interface EastmoneyUnadjustedSyncBatchCreate {
+export interface TencentUnadjustedSyncBatchCreate {
   start_date?: string;
   end_date?: string;
 }
 
-export interface EastmoneyUnadjustedSyncBatchResponse {
+export interface TencentUnadjustedSyncBatchResponse {
   start_date: string;
   end_date: string;
   pending_pair_count: number;

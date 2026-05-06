@@ -13,7 +13,6 @@ from app.db.models.market import (
     AHStockPair,
     AStockBasic,
     ATradeCalendar,
-    EastmoneyUnadjustedDailyQuote,
     FxRateDaily,
     HistoricalAhUnadjustedBackfillRun,
     HKDailyQuote,
@@ -22,6 +21,7 @@ from app.db.models.market import (
     HsgtConstituent,
     OfficialAHComparison,
     StockSelectionFactorSnapshot,
+    TencentUnadjustedDailyQuote,
     WatchlistStock,
     WaterstockFxRateDaily,
 )
@@ -197,19 +197,19 @@ DATA_QUERY_SPECS: dict[str, QueryDatasetSpec] = {
         date_field="rate_date",
         default_order=(("rate_date", "desc"), ("rate_pair", "asc")),
     ),
-    "eastmoney_unadjusted_daily_quote": QueryDatasetSpec(
-        name="eastmoney_unadjusted_daily_quote",
-        label="东方财富不复权日线",
+    "tencent_unadjusted_daily_quote": QueryDatasetSpec(
+        name="tencent_unadjusted_daily_quote",
+        label="腾讯不复权日线",
         description=(
-            "东方财富公开 K 线接口同步的 A/H 不复权历史日线，"
+            "腾讯公开 K 线接口同步的 A/H 不复权历史日线，"
             "独立于 Tushare 官方日线和 Baidu 前复权补数。"
         ),
-        model=EastmoneyUnadjustedDailyQuote,
+        model=TencentUnadjustedDailyQuote,
         columns=(
             col("trade_date", "交易日", 132),
             col("market", "市场", 90),
             col("ts_code", "代码", 130),
-            col("eastmoney_secid", "东方财富secid", 150),
+            col("tencent_symbol", "腾讯symbol", 150),
             col("open", "开盘", 100),
             col("close", "收盘", 100),
             col("high", "最高", 100),
@@ -221,7 +221,7 @@ DATA_QUERY_SPECS: dict[str, QueryDatasetSpec] = {
             col("data_source", "来源", 170),
             col("raw_payload_json", "原始行", 260),
         ),
-        keyword_fields=("ts_code", "market", "eastmoney_secid", "data_source", "adjust_type"),
+        keyword_fields=("ts_code", "market", "tencent_symbol", "data_source", "adjust_type"),
         date_field="trade_date",
         default_order=(("trade_date", "desc"), ("ts_code", "asc")),
     ),
@@ -250,7 +250,7 @@ DATA_QUERY_SPECS: dict[str, QueryDatasetSpec] = {
     "historical_ah_unadjusted_backfill_run": QueryDatasetSpec(
         name="historical_ah_unadjusted_backfill_run",
         label="不复权 AH 补数记录",
-        description="基于东方财富不复权日线和 water-stock 汇率追跑 AH 比价的股票对级执行记录。",
+        description="基于腾讯不复权日线和 water-stock 汇率追跑 AH 比价的股票对级执行记录。",
         model=HistoricalAhUnadjustedBackfillRun,
         columns=(
             col("a_ts_code", "A 股代码", 130),

@@ -23,7 +23,7 @@
 - `hk_trade_calendar`：港股交易日历。
 - `a_daily_quote`：A 股日线行情。
 - `hk_daily_quote`：港股日线行情，当前 token 无权限时仅保留结构。
-- `eastmoney_unadjusted_daily_quote`：东方财富公开 K 线接口同步的 A/H 不复权历史日线，用于替代不准确的 Baidu 前复权历史补数口径。
+- `tencent_unadjusted_daily_quote`：腾讯公开 K 线接口同步的 A/H 不复权历史日线，用于替代不准确的 Baidu 前复权历史补数口径。
 - `waterstock_fx_rate_daily`：`water-stock` 写入的 HKD/CNY 历史汇率独立表，供不复权历史 AH 比价追跑读取。
 
 A/H 溢价与可交易性：
@@ -32,7 +32,7 @@ A/H 溢价与可交易性：
 - `fx_rate_daily`：外汇汇率日线。
 - `ah_stock_pair`：AH 股票配对。
 - `official_ah_comparison`：Tushare 官方 AH 比价快照，当前主展示口径。
-- `historical_ah_unadjusted_backfill_run`：东方财富不复权历史 AH 比价补数执行记录；追跑时允许删除并替换 `BAIDU_HISTORY_BACKFILL` 行，但不覆盖 `TUSHARE_OFFICIAL` 行。
+- `historical_ah_unadjusted_backfill_run`：腾讯不复权历史 AH 比价补数执行记录；追跑时允许删除并替换 `BAIDU_HISTORY_BACKFILL` 行，但不覆盖 `TUSHARE_OFFICIAL` 行。
 - `realtime_quote_snapshot`：实时行情快照表，作为 `RealtimeQuoteProvider` 的首个落地数据源；外部任务写入 A 股、港股和 HKD/CNY 报价，本项目按最新有效快照计算实时 AH/H/A 溢价。
 - `watchlist_stock`：用户自选 AH 股票，按 `user_id` 隔离。
 

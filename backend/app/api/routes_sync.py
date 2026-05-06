@@ -12,16 +12,16 @@ from app.db.models.sync import SyncRun
 from app.db.session import get_db
 from app.schemas.sync import (
     DatasetInfo,
-    EastmoneyUnadjustedSyncBatchCreate,
-    EastmoneyUnadjustedSyncBatchResponse,
     SyncBatchCreate,
     SyncRunCreate,
     SyncRunResponse,
-)
-from app.services.eastmoney_unadjusted_sync_batch_service import (
-    EastmoneyUnadjustedSyncBatchService,
+    TencentUnadjustedSyncBatchCreate,
+    TencentUnadjustedSyncBatchResponse,
 )
 from app.services.sync_service import SyncService
+from app.services.tencent_unadjusted_sync_batch_service import (
+    TencentUnadjustedSyncBatchService,
+)
 
 router = APIRouter(dependencies=[Depends(require_permission("sync"))])
 DbSession = Annotated[Session, Depends(get_db)]
@@ -87,20 +87,20 @@ def create_stock_selection_factor_sync_batch(payload: SyncBatchCreate, db: DbSes
 
 
 @router.post(
-    "/sync/batches/eastmoney-unadjusted",
-    response_model=EastmoneyUnadjustedSyncBatchResponse,
+    "/sync/batches/tencent-unadjusted",
+    response_model=TencentUnadjustedSyncBatchResponse,
 )
-def sync_eastmoney_unadjusted_batch(
-    payload: EastmoneyUnadjustedSyncBatchCreate,
+def sync_tencent_unadjusted_batch(
+    payload: TencentUnadjustedSyncBatchCreate,
     db: DbSession,
 ) -> dict[str, Any]:
-    """一键同步关注股票东方财富不复权日线并追跑 AH 比价。
+    """一键同步关注股票腾讯不复权日线并追跑 AH 比价。
 
     创建日期：2026-05-06
     author: sunshengxian
     """
 
-    result = EastmoneyUnadjustedSyncBatchService(db).sync_pending_watchlist(
+    result = TencentUnadjustedSyncBatchService(db).sync_pending_watchlist(
         start_date=payload.start_date,
         end_date=payload.end_date,
     )

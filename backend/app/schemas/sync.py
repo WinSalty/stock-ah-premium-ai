@@ -65,8 +65,8 @@ class SyncBatchCreate(BaseModel):
     end_date: date | None = None
 
 
-class EastmoneyUnadjustedSyncBatchCreate(BaseModel):
-    """东方财富不复权补数一键同步请求。
+class TencentUnadjustedSyncBatchCreate(BaseModel):
+    """腾讯不复权补数一键同步请求。
 
     创建日期：2026-05-06
     author: sunshengxian
@@ -76,8 +76,8 @@ class EastmoneyUnadjustedSyncBatchCreate(BaseModel):
     end_date: date | None = None
 
 
-class EastmoneyUnadjustedSyncBatchResponse(BaseModel):
-    """东方财富不复权补数一键同步响应。
+class TencentUnadjustedSyncBatchResponse(BaseModel):
+    """腾讯不复权补数一键同步响应。
 
     创建日期：2026-05-06
     author: sunshengxian

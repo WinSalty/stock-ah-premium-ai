@@ -140,32 +140,32 @@ CREATE TABLE IF NOT EXISTS `fx_rate_daily` (
   KEY `idx_fx_pair_date` (`rate_pair`, `rate_date`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='外汇汇率日线表';
 
-CREATE TABLE IF NOT EXISTS `eastmoney_unadjusted_daily_quote` (
+CREATE TABLE IF NOT EXISTS `tencent_unadjusted_daily_quote` (
   `id` INT NOT NULL AUTO_INCREMENT COMMENT '自增主键',
   `market` VARCHAR(8) NOT NULL COMMENT '市场: A、HK',
   `ts_code` VARCHAR(16) NOT NULL COMMENT '项目标准代码，如 600036.SH、03968.HK',
-  `eastmoney_secid` VARCHAR(32) NOT NULL COMMENT '东方财富 secid，如 1.600036、116.03968',
+  `tencent_symbol` VARCHAR(32) NOT NULL COMMENT '腾讯 symbol，如 sh600036、hk03968',
   `trade_date` DATE NOT NULL COMMENT '交易日期',
   `open` DECIMAL(20,6) DEFAULT NULL COMMENT '不复权开盘价',
   `close` DECIMAL(20,6) NOT NULL COMMENT '不复权收盘价',
   `high` DECIMAL(20,6) DEFAULT NULL COMMENT '不复权最高价',
   `low` DECIMAL(20,6) DEFAULT NULL COMMENT '不复权最低价',
-  `volume` DECIMAL(24,4) DEFAULT NULL COMMENT '成交量，按东方财富原始单位保存',
-  `amount` DECIMAL(24,4) DEFAULT NULL COMMENT '成交额，按东方财富原始单位保存',
+  `volume` DECIMAL(24,4) DEFAULT NULL COMMENT '成交量，按腾讯原始单位保存',
+  `amount` DECIMAL(24,4) DEFAULT NULL COMMENT '成交额，按腾讯原始单位保存',
   `amplitude` DECIMAL(20,6) DEFAULT NULL COMMENT '振幅',
   `pct_chg` DECIMAL(20,6) DEFAULT NULL COMMENT '涨跌幅',
   `change_amount` DECIMAL(20,6) DEFAULT NULL COMMENT '涨跌额',
   `turnover_rate` DECIMAL(20,6) DEFAULT NULL COMMENT '换手率',
   `adjust_type` VARCHAR(16) NOT NULL DEFAULT 'NONE' COMMENT '复权类型: NONE 不复权',
-  `data_source` VARCHAR(32) NOT NULL DEFAULT 'EASTMONEY_KLINE' COMMENT '数据来源',
+  `data_source` VARCHAR(32) NOT NULL DEFAULT 'TENCENT_KLINE' COMMENT '数据来源',
   `raw_payload_json` TEXT DEFAULT NULL COMMENT '原始单行数据或摘要 JSON',
   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
   `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '更新时间',
   PRIMARY KEY (`id`),
-  UNIQUE KEY `uk_em_unadj_quote` (`market`, `ts_code`, `trade_date`, `adjust_type`),
-  KEY `idx_em_unadj_quote_date` (`trade_date`),
-  KEY `idx_em_unadj_quote_code_date` (`ts_code`, `trade_date`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='东方财富不复权历史日线表';
+  UNIQUE KEY `uk_tencent_unadj_quote` (`market`, `ts_code`, `trade_date`, `adjust_type`),
+  KEY `idx_tencent_unadj_quote_date` (`trade_date`),
+  KEY `idx_tencent_unadj_quote_code_date` (`ts_code`, `trade_date`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='腾讯不复权历史日线表';
 
 CREATE TABLE IF NOT EXISTS `waterstock_fx_rate_daily` (
   `id` INT NOT NULL AUTO_INCREMENT COMMENT '自增主键',

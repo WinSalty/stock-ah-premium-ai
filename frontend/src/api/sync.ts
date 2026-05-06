@@ -1,8 +1,8 @@
 import { requestJson } from './client';
 import type {
   DatasetInfo,
-  EastmoneyUnadjustedSyncBatchCreate,
-  EastmoneyUnadjustedSyncBatchResponse,
+  TencentUnadjustedSyncBatchCreate,
+  TencentUnadjustedSyncBatchResponse,
   SyncBatchCreate,
   SyncRun,
   SyncRunCreate,
@@ -37,9 +37,9 @@ export function createAhPremiumSyncBatch(payload: SyncBatchCreate) {
   });
 }
 
-export function createEastmoneyUnadjustedSyncBatch(payload: EastmoneyUnadjustedSyncBatchCreate) {
-  return requestJson<EastmoneyUnadjustedSyncBatchResponse>(
-    '/api/sync/batches/eastmoney-unadjusted',
+export function createTencentUnadjustedSyncBatch(payload: TencentUnadjustedSyncBatchCreate) {
+  return requestJson<TencentUnadjustedSyncBatchResponse>(
+    '/api/sync/batches/tencent-unadjusted',
     {
       method: 'POST',
       body: JSON.stringify(payload)

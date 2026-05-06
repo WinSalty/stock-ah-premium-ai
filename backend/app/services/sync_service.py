@@ -314,10 +314,10 @@ class SyncService:
 
         return [self._dataset_info(spec) for spec in DATASET_SPECS.values()] + [
             {
-                "name": "eastmoney_unadjusted_backfill",
-                "label": "东方财富不复权补数",
+                "name": "tencent_unadjusted_backfill",
+                "label": "腾讯不复权补数",
                 "description": (
-                    "同步关注股票东方财富不复权 A/H 日线，并基于 HKD/CNY 汇率追跑历史 AH 比价。"
+                    "同步关注股票腾讯不复权 A/H 日线，并基于 HKD/CNY 汇率追跑历史 AH 比价。"
                 ),
                 "supports_date_range": True,
                 "supports_incremental": True,

@@ -16,12 +16,12 @@ from app.services.unadjusted_quote_sync_service import (
     UnadjustedQuoteSyncService,
 )
 
-EASTMONEY_UNADJUSTED_DEFAULT_START_DATE = date(2018, 1, 1)
+TENCENT_UNADJUSTED_DEFAULT_START_DATE = date(2018, 1, 1)
 
 
 @dataclass(frozen=True)
-class EastmoneyUnadjustedSyncBatchResult:
-    """东方财富不复权日线同步与 AH 追跑合并结果。
+class TencentUnadjustedSyncBatchResult:
+    """腾讯不复权日线同步与 AH 追跑合并结果。
 
     创建日期：2026-05-06
     author: sunshengxian
@@ -39,8 +39,8 @@ class EastmoneyUnadjustedSyncBatchResult:
     skipped_invalid_rows: int
 
 
-class EastmoneyUnadjustedSyncBatchService:
-    """东方财富不复权日线同步与 AH 比价追跑编排服务。
+class TencentUnadjustedSyncBatchService:
+    """腾讯不复权日线同步与 AH 比价追跑编排服务。
 
     创建日期：2026-05-06
     author: sunshengxian
@@ -53,14 +53,14 @@ class EastmoneyUnadjustedSyncBatchService:
         self,
         start_date: date | None = None,
         end_date: date | None = None,
-    ) -> EastmoneyUnadjustedSyncBatchResult:
+    ) -> TencentUnadjustedSyncBatchResult:
         """同步被关注且尚未完成追跑的股票对，并立即计算 AH 比价。
 
         创建日期：2026-05-06
         author: sunshengxian
         """
 
-        resolved_start_date = start_date or EASTMONEY_UNADJUSTED_DEFAULT_START_DATE
+        resolved_start_date = start_date or TENCENT_UNADJUSTED_DEFAULT_START_DATE
         resolved_end_date = end_date or date.today()
         run = self._create_run(resolved_start_date, resolved_end_date)
         try:
@@ -83,7 +83,7 @@ class EastmoneyUnadjustedSyncBatchService:
         self,
         resolved_start_date: date,
         resolved_end_date: date,
-    ) -> EastmoneyUnadjustedSyncBatchResult:
+    ) -> TencentUnadjustedSyncBatchResult:
         # 只处理 watchlist_stock 启用且追跑记录未 COMPLETED 的股票对，避免重复同步已完成标的。
         backfill_service = UnadjustedAhBackfillService(self.db)
         pending_pairs = backfill_service.list_pending_watchlist_pairs()
@@ -113,7 +113,7 @@ class EastmoneyUnadjustedSyncBatchService:
     def _create_run(self, start_date: date, end_date: date) -> SyncRun:
         # 合并补数不是 Tushare 数据集同步，但仍写 sync_run，方便同步页查看执行窗口和失败原因。
         run = SyncRun(
-            dataset="eastmoney_unadjusted_backfill",
+            dataset="tencent_unadjusted_backfill",
             params_json=json.dumps(
                 {"start_date": start_date, "end_date": end_date},
                 ensure_ascii=False,
@@ -131,8 +131,8 @@ class EastmoneyUnadjustedSyncBatchService:
         self,
         start_date: date,
         end_date: date,
-    ) -> EastmoneyUnadjustedSyncBatchResult:
-        return EastmoneyUnadjustedSyncBatchResult(
+    ) -> TencentUnadjustedSyncBatchResult:
+        return TencentUnadjustedSyncBatchResult(
             start_date=start_date,
             end_date=end_date,
             pending_pair_count=0,
@@ -152,8 +152,8 @@ class EastmoneyUnadjustedSyncBatchService:
         quote_result: UnadjustedQuoteSyncResult,
         backfill_result: UnadjustedAhBackfillResult,
         pending_pair_count: int,
-    ) -> EastmoneyUnadjustedSyncBatchResult:
-        return EastmoneyUnadjustedSyncBatchResult(
+    ) -> TencentUnadjustedSyncBatchResult:
+        return TencentUnadjustedSyncBatchResult(
             start_date=start_date,
             end_date=end_date,
             pending_pair_count=pending_pair_count,

@@ -2,21 +2,18 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date
-from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.db.models.market import EastmoneyUnadjustedDailyQuote, WatchlistStock
-from app.services.eastmoney_kline_service import EastmoneyKlineService
+from app.db.models.market import TencentUnadjustedDailyQuote, WatchlistStock
 from app.services.repository import UpsertRepository
-
-TENCENT_HK_FALLBACK_SOURCE_MARKER = "TENCENT_HK_KLINE"
+from app.services.tencent_kline_service import TencentKlineService
 
 
 @dataclass(frozen=True)
 class UnadjustedQuoteSyncResult:
-    """东方财富不复权日线同步结果。
+    """腾讯不复权日线同步结果。
 
     创建日期：2026-05-06
     author: sunshengxian
@@ -27,7 +24,7 @@ class UnadjustedQuoteSyncResult:
 
 
 class UnadjustedQuoteSyncService:
-    """东方财富不复权日线同步服务。
+    """腾讯不复权日线同步服务。
 
     创建日期：2026-05-06
     author: sunshengxian
@@ -36,10 +33,10 @@ class UnadjustedQuoteSyncService:
     def __init__(
         self,
         db: Session,
-        client: EastmoneyKlineService | None = None,
+        client: TencentKlineService | None = None,
     ) -> None:
         self.db = db
-        self.client = client or EastmoneyKlineService()
+        self.client = client or TencentKlineService()
         self.repository = UpsertRepository(db)
 
     def sync_watchlist_quotes(
@@ -63,31 +60,21 @@ class UnadjustedQuoteSyncService:
             # trade_date、adjust_type upsert。
             a_rows = self.client.fetch_unadjusted_daily(a_code, start_date, end_date)
             hk_rows = self.client.fetch_unadjusted_daily(hk_code, start_date, end_date)
-            # 港股历史 K 线在东方财富公开端偶发断连时会使用腾讯未复权日线降级；
-            # 写库时按 raw_payload_json 中的来源标记区分，便于后续审计具体行的数据出处。
+            # 腾讯日线是当前不复权补数主行情源；写入独立表时只按股票、日期和复权类型幂等覆盖，
+            # 不混入 Tushare 官方日线，也不复用 Baidu 前复权补数表。
             row_count += self.repository.upsert_many(
-                EastmoneyUnadjustedDailyQuote,
-                [self._to_model_row(item) for item in [*a_rows, *hk_rows]],
+                TencentUnadjustedDailyQuote,
+                [item.to_model_row() for item in [*a_rows, *hk_rows]],
             )
             self.db.commit()
         return UnadjustedQuoteSyncResult(pair_count=len(pairs), quote_rows=row_count)
-
-    def _to_model_row(self, item) -> dict[str, Any]:
-        # 同步表唯一键不包含来源字段，重跑时仍按股票、日期和复权类型幂等覆盖；
-        # data_source 只表达本次落库所用行情源，方便排查东方财富港股端点不可用的日期范围。
-        data_source = (
-            "TENCENT_HK_KLINE"
-            if TENCENT_HK_FALLBACK_SOURCE_MARKER in item.raw_payload_json
-            else "EASTMONEY_KLINE"
-        )
-        return item.to_model_row(data_source=data_source)
 
     def _list_pairs(
         self,
         a_ts_code: str | None,
         hk_ts_code: str | None,
     ) -> list[tuple[str, str]]:
-        # 默认只同步用户自选且启用的股票对，避免东方财富公开端点被全市场扫描式请求压垮。
+        # 默认只同步用户自选且启用的股票对，避免腾讯公开端点被全市场扫描式请求压垮。
         statement = select(WatchlistStock.a_ts_code, WatchlistStock.hk_ts_code).where(
             WatchlistStock.is_active.is_(True)
         )
