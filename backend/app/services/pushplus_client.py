@@ -109,7 +109,10 @@ class PushplusClient:
                     id=row_id,
                     friend_id=friend_id,
                     token=token,
-                    nick_name=self._optional_str(row.get("nickName")),
+                    nick_name=self._first_optional_str(
+                        row,
+                        ("nickName", "nickname", "nick_name", "name"),
+                    ),
                     remark=self._optional_str(row.get("remark")),
                     is_follow=int(row.get("isFollow") or 0) == 1,
                     create_time=self._optional_str(row.get("createTime")),
@@ -202,3 +205,10 @@ class PushplusClient:
             return None
         normalized = str(value).strip()
         return normalized or None
+
+    def _first_optional_str(self, row: dict[str, Any], keys: tuple[str, ...]) -> str | None:
+        for key in keys:
+            value = self._optional_str(row.get(key))
+            if value:
+                return value
+        return None

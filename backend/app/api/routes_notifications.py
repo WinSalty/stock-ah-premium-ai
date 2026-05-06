@@ -34,6 +34,7 @@ AdminUser = Annotated[AppUser, Depends(require_permission("users"))]
 logger = logging.getLogger(__name__)
 PUSHPLUS_CALLBACK_SUCCESS = {"code": 200, "msg": "success"}
 PUSHPLUS_CALLBACK_INVALID_PAYLOAD = {"code": 600, "msg": "invalid callback payload"}
+PUSHPLUS_NICK_NAME_FIELDS = ("nickName", "nickname", "nick_name", "name")
 
 
 @router.get("/notifications/pushplus/binding", response_model=PushplusBindingResponse)
@@ -163,6 +164,9 @@ async def pushplus_callback(
     event = str(payload_data.get("event") or "").strip()
     if event != "add_friend":
         return PUSHPLUS_CALLBACK_SUCCESS
+    friend_info = payload_data.get("friendInfo")
+    if not isinstance(friend_info, dict):
+        return PUSHPLUS_CALLBACK_INVALID_PAYLOAD
     try:
         payload = PushplusCallbackRequest.model_validate(payload_data)
     except ValidationError as exc:
@@ -173,7 +177,7 @@ async def pushplus_callback(
             payload.qrCode,
             payload.friendInfo.friendId,
             payload.friendInfo.token,
-            payload.friendInfo.nickName,
+            _pushplus_callback_nick_name(friend_info),
             payload.friendInfo.isFollow == 1,
         )
     except NotificationError as exc:
@@ -184,6 +188,23 @@ async def pushplus_callback(
         )
         return PUSHPLUS_CALLBACK_SUCCESS
     return PUSHPLUS_CALLBACK_SUCCESS
+
+
+def _pushplus_callback_nick_name(friend_info: dict[str, object]) -> str | None:
+    """兼容 PushPlus 回调中可能出现的不同昵称字段名。
+
+    创建日期：2026-05-06
+    author: sunshengxian
+    """
+
+    for field in PUSHPLUS_NICK_NAME_FIELDS:
+        value = friend_info.get(field)
+        if value is None:
+            continue
+        normalized = str(value).strip()
+        if normalized:
+            return normalized
+    return None
 
 
 @router.get(

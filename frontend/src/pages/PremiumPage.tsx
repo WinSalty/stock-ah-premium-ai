@@ -41,6 +41,7 @@ import {
   setCachedThresholdRecommendation
 } from '../utils/thresholdRecommendationCache';
 import { THRESHOLD_RECOMMENDATION_PROGRESS_STEPS } from '../constants/llmProgress';
+import { PUSHPLUS_BIND_SUCCESS_NOTICE } from '../constants/pushplus';
 
 const AH_COLOR = '#2563eb';
 const HA_COLOR = '#0f766e';
@@ -656,7 +657,7 @@ function PremiumPage({ currentUser }: PremiumPageProps) {
                 showIcon
                 type="warning"
                 message="设置提醒前需要绑定 PushPlus 好友"
-                description="当前账号还没有绑定微信推送。请扫码完成绑定后再保存提醒。"
+                description={`当前账号还没有绑定微信推送。${PUSHPLUS_BIND_SUCCESS_NOTICE}`}
               />
               <Space align="start" className="pushplus-alert-bind-actions">
                 <Button

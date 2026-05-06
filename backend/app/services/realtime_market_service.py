@@ -63,8 +63,9 @@ class DbRealtimeQuoteProvider:
     author: sunshengxian
     """
 
-    def __init__(self, db: Session) -> None:
+    def __init__(self, db: Session, local_today: date | None = None) -> None:
         self.db = db
+        self.local_today = local_today
 
     def get_a_quote(self, ts_code: str) -> RealtimeQuote | None:
         """读取 A 股最新快照。
@@ -132,6 +133,8 @@ class DbRealtimeQuoteProvider:
         return quote_time.astimezone(LOCAL_TZ).date()
 
     def _local_today(self) -> date:
+        if self.local_today is not None:
+            return self.local_today
         return datetime.now(LOCAL_TZ).date()
 
 
@@ -146,14 +149,18 @@ class RealtimeMarketDataService:
         self.provider = provider
 
     @classmethod
-    def from_db(cls, db: Session) -> RealtimeMarketDataService:
+    def from_db(
+        cls,
+        db: Session,
+        local_today: date | None = None,
+    ) -> RealtimeMarketDataService:
         """构建读取实时行情表的服务实例。
 
         创建日期：2026-05-05
         author: sunshengxian
         """
 
-        return cls(DbRealtimeQuoteProvider(db))
+        return cls(DbRealtimeQuoteProvider(db, local_today))
 
     def get_pair_quotes(
         self,

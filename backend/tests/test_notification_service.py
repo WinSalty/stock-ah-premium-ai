@@ -251,6 +251,36 @@ def test_pushplus_client_personal_message_omits_friend_token(monkeypatch) -> Non
     assert "to" not in captured["json"]
 
 
+def test_pushplus_client_list_friends_accepts_alternate_nickname_field(monkeypatch) -> None:
+    """确认 PushPlus 好友列表可兼容不同昵称字段名。
+
+    创建日期：2026-05-06
+    author: sunshengxian
+    """
+
+    client = PushplusClient(Settings(pushplus_token="test-token", pushplus_token_file=None))
+    monkeypatch.setattr(client, "_get_access_key", lambda: "access-key")
+
+    def fake_request(method: str, path: str, **kwargs: object) -> dict[str, object]:
+        return {
+            "list": [
+                {
+                    "id": 1,
+                    "friendId": 9001,
+                    "token": "friend-token-9001",
+                    "nickname": "字段昵称",
+                    "isFollow": 1,
+                }
+            ]
+        }
+
+    monkeypatch.setattr(client, "_request", fake_request)
+
+    friends = client.list_friends()
+
+    assert friends[0].nick_name == "字段昵称"
+
+
 def test_test_push_wraps_content_as_html() -> None:
     """确认测试推送会包装为 HTML 内容。
 
@@ -516,6 +546,55 @@ def test_pushplus_callback_binds_user_from_qr_content() -> None:
     assert binding.is_bound is True
     assert binding.friend_id == 2001
     assert binding.friend_nick_name == "扫码用户"
+
+
+def test_pushplus_callback_fills_friend_name_from_friend_list() -> None:
+    """确认回调未携带昵称时可从 PushPlus 好友列表补齐备注或昵称。
+
+    创建日期：2026-05-06
+    author: sunshengxian
+    """
+
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    with Session(engine) as db:
+        user = AppUser(
+            username="callback-friend-list",
+            password_hash="hash",
+            role="USER",
+            is_active=True,
+        )
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+        service = NotificationService(
+            db,
+            pushplus_client=FakePushplusClient(
+                friends=[
+                    PushplusFriend(
+                        id=9,
+                        friend_id=2009,
+                        token="callback-token-2009",
+                        nick_name="列表昵称",
+                        remark="列表备注",
+                        is_follow=True,
+                        create_time=None,
+                    )
+                ]
+            ),
+        )
+
+        binding = service.bind_pushplus_callback(
+            service._binding_ticket_for_user(user.id),
+            friend_id=2009,
+            friend_token="callback-token-2009",
+            nick_name=None,
+            is_follow=False,
+        )
+
+    assert binding.friend_nick_name == "列表昵称"
+    assert binding.friend_remark == "列表备注"
+    assert binding.is_follow is True
 
 
 def test_pushplus_callback_rejects_invalid_qr_signature() -> None:
@@ -791,6 +870,54 @@ def test_pushplus_callback_endpoint_binds_user_from_add_friend_payload() -> None
     assert stored is not None
     assert stored.friend_id == 9527
     assert stored.friend_token == "friend-token-9527"
+
+
+def test_pushplus_callback_endpoint_accepts_alternate_nickname_field() -> None:
+    """确认公网回调可兼容 PushPlus 不同昵称字段名。
+
+    创建日期：2026-05-06
+    author: sunshengxian
+    """
+
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    with Session(engine) as db:
+        user = AppUser(
+            username="callback-nickname-user",
+            password_hash="hash",
+            role="USER",
+            is_active=True,
+        )
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+        ticket = NotificationService(db)._binding_ticket_for_user(user.id)
+
+    client = build_notification_test_client(engine)
+    response = client.post(
+        "/api/notifications/pushplus/callback",
+        json={
+            "event": "add_friend",
+            "qrCode": ticket,
+            "friendInfo": {
+                "friendId": 9528,
+                "token": "friend-token-9528",
+                "nickname": "兼容昵称",
+                "isFollow": 1,
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"code": 200, "msg": "success"}
+    with Session(engine) as db:
+        stored = db.scalar(select(PushplusBinding).where(PushplusBinding.user_id == user.id))
+    assert stored is not None
+    assert stored.friend_nick_name == "兼容昵称"
 
 
 def test_pushplus_callback_endpoint_ignores_invalid_qrcode_probe() -> None:

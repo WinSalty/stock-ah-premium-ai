@@ -49,6 +49,7 @@ import {
 } from '../utils/thresholdRecommendationCache';
 import { OVERVIEW_SNIPPETS } from '../constants/overviewSnippets';
 import { THRESHOLD_RECOMMENDATION_PROGRESS_STEPS } from '../constants/llmProgress';
+import { PUSHPLUS_BIND_SUCCESS_NOTICE } from '../constants/pushplus';
 
 const DEFAULT_PAIR_KEY = '600036.SH|03968.HK';
 const DEFAULT_VISIBLE_MONTHS = 3;
@@ -1412,7 +1413,7 @@ function OverviewPage({ currentUser }: OverviewPageProps) {
                 showIcon
                 type="warning"
                 message="设置提醒前需要绑定 PushPlus 好友"
-                description="当前账号还没有绑定微信推送。请扫码完成绑定后再保存提醒。"
+                description={`当前账号还没有绑定微信推送。${PUSHPLUS_BIND_SUCCESS_NOTICE}`}
               />
               <Space align="start" className="pushplus-alert-bind-actions">
                 <Button

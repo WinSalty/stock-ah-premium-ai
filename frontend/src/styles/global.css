@@ -707,6 +707,11 @@ body {
   border-radius: 8px;
 }
 
+.pushplus-bind-notice {
+  border-color: #f59e0b;
+  background: #fffbeb;
+}
+
 .pushplus-friend-control {
   width: 100%;
 }

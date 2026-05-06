@@ -272,6 +272,7 @@ class NotificationService:
         if binding is not None and binding.is_active:
             raise NotificationError("当前用户已绑定 PushPlus，不支持重复绑定")
         self._ensure_friend_not_bound(friend_id, friend_token, user_id)
+        friend = self._find_friend_or_none(friend_id)
         now = self._now_naive()
         if binding is None:
             binding = PushplusBinding(
@@ -283,9 +284,11 @@ class NotificationService:
             self.db.add(binding)
         binding.friend_id = friend_id
         binding.friend_token = friend_token
-        binding.friend_nick_name = self._normalize_optional_text(nick_name)
-        binding.friend_remark = None
-        binding.is_follow = is_follow
+        binding.friend_nick_name = self._normalize_optional_text(nick_name) or (
+            friend.nick_name if friend else None
+        )
+        binding.friend_remark = friend.remark if friend else None
+        binding.is_follow = friend.is_follow if friend else is_follow
         binding.is_active = True
         binding.bound_at = now
         self.db.commit()
@@ -338,6 +341,14 @@ class NotificationService:
             statement = statement.where(WatchlistStock.user_id == user_id)
         watchlist_items = list(self.db.scalars(statement).all())
         events: list[AlertEvent] = []
+        self.realtime_market_data_service = RealtimeMarketDataService.from_db(
+            self.db,
+            local_scan_time.date(),
+        )
+        self.realtime_premium_service = RealtimePremiumService(
+            self.db,
+            market_data_service=self.realtime_market_data_service,
+        )
         for item in watchlist_items:
             if not item.push_enabled:
                 continue
@@ -876,6 +887,12 @@ class NotificationService:
             if friend.friend_id == friend_id:
                 return friend
         raise NotificationError("未找到对应 PushPlus 好友，请扫码后刷新好友列表")
+
+    def _find_friend_or_none(self, friend_id: int) -> PushplusFriend | None:
+        try:
+            return self._find_friend(friend_id)
+        except NotificationError:
+            return None
 
     def can_send_pushplus_to_user(self, user_id: int) -> bool:
         """判断指定用户是否具备 PushPlus 推送通道。
