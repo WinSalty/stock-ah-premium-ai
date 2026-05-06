@@ -13,7 +13,7 @@ from app.services.realtime_market_service import RealtimeMarketDataService
 from app.services.realtime_premium_service import RealtimePremiumService
 
 
-def test_realtime_premium_service_calculates_from_quote_snapshot_table() -> None:
+def test_realtime_premium_service_calculates_from_quote_snapshot_table(monkeypatch) -> None:
     """确认实时溢价服务从实时行情快照表读取并计算 AH/H/A。
 
     创建日期：2026-05-05
@@ -23,6 +23,11 @@ def test_realtime_premium_service_calculates_from_quote_snapshot_table() -> None
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(engine)
     quote_time = datetime.combine(date.today(), datetime.min.time())
+    monkeypatch.setattr(
+        RealtimePremiumService,
+        "_is_ah_overlap_realtime_session",
+        lambda self: True,
+    )
     with Session(engine) as db:
         db.add(AppUser(id=1, username="tester", password_hash="hash", role="ADMIN"))
         watchlist = WatchlistStock(
@@ -157,7 +162,69 @@ def test_realtime_premium_service_does_not_persist_stale_snapshot_date() -> None
     assert realtime_rows == []
 
 
-def test_realtime_premium_service_keeps_official_row_after_sync() -> None:
+def test_realtime_premium_service_skips_persist_outside_trading_session(monkeypatch) -> None:
+    """确认非 A/H 重叠交易时段不把实时计算结果写回官方主表。
+
+    创建日期：2026-05-06
+    author: sunshengxian
+    """
+
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    quote_time = datetime.combine(date.today(), datetime.min.time())
+    monkeypatch.setattr(
+        RealtimePremiumService,
+        "_is_ah_overlap_realtime_session",
+        lambda self: False,
+    )
+    with Session(engine) as db:
+        db.add_all(
+            [
+                RealtimeQuoteSnapshot(
+                    market="A",
+                    symbol="600036.SH",
+                    last_price=Decimal("40.00"),
+                    currency="CNY",
+                    quote_time=quote_time,
+                    source="MANUAL",
+                    quality="REALTIME",
+                ),
+                RealtimeQuoteSnapshot(
+                    market="HK",
+                    symbol="03968.HK",
+                    last_price=Decimal("32.00"),
+                    currency="HKD",
+                    quote_time=quote_time,
+                    source="MANUAL",
+                    quality="REALTIME",
+                ),
+                RealtimeQuoteSnapshot(
+                    market="FX",
+                    symbol="HKD/CNY",
+                    last_price=Decimal("0.92"),
+                    currency="CNY",
+                    quote_time=quote_time,
+                    source="MANUAL_FX",
+                    quality="REALTIME",
+                ),
+            ]
+        )
+        db.commit()
+
+        item = RealtimePremiumService(db).calculate_pair(
+            a_ts_code="600036.SH",
+            hk_ts_code="03968.HK",
+            a_name="招商银行",
+            hk_name="招商银行",
+        )
+        realtime_rows = db.query(OfficialAHComparison).all()
+
+    assert item.quote_quality == "REALTIME"
+    assert item.ah_ratio == Decimal("1.35869565")
+    assert realtime_rows == []
+
+
+def test_realtime_premium_service_keeps_official_row_after_sync(monkeypatch) -> None:
     """确认官方 AH 比价已落库后，实时接口不再覆盖当天官方结果。
 
     创建日期：2026-05-06
@@ -167,6 +234,11 @@ def test_realtime_premium_service_keeps_official_row_after_sync() -> None:
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(engine)
     quote_time = datetime.combine(date.today(), datetime.min.time())
+    monkeypatch.setattr(
+        RealtimePremiumService,
+        "_is_ah_overlap_realtime_session",
+        lambda self: True,
+    )
     with Session(engine) as db:
         db.add(
             OfficialAHComparison(

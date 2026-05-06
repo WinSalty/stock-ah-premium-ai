@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, time
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 
@@ -30,6 +30,10 @@ STALE_QUALITY = "STALE"
 ERROR_QUALITY = "ERROR"
 OFFICIAL_AH_COMPARISON_SCALE = "0.01"
 LOCAL_TZ = ZoneInfo("Asia/Shanghai")
+A_H_OVERLAP_REALTIME_SESSIONS = (
+    (time(9, 30), time(12, 0)),
+    (time(13, 0), time(16, 0)),
+)
 
 
 class RealtimePremiumService:
@@ -317,6 +321,8 @@ class RealtimePremiumService:
             return
         if trade_date != self._local_today():
             return
+        if not self._is_ah_overlap_realtime_session():
+            return
         row = self.db.scalar(
             select(OfficialAHComparison).where(
                 OfficialAHComparison.trade_date == trade_date,
@@ -368,6 +374,10 @@ class RealtimePremiumService:
 
     def _local_today(self) -> date:
         return datetime.now(LOCAL_TZ).date()
+
+    def _is_ah_overlap_realtime_session(self) -> bool:
+        current_time = datetime.now(LOCAL_TZ).time()
+        return any(start <= current_time <= end for start, end in A_H_OVERLAP_REALTIME_SESSIONS)
 
     def _quote_data_date(self, quote: RealtimeQuoteItem | None) -> date | None:
         if quote is None or quote.quote_time is None:

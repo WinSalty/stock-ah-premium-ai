@@ -56,6 +56,10 @@ const DEFAULT_VISIBLE_MONTHS = 3;
 const MIN_VISIBLE_POINTS = 20;
 const TRACKPAD_WHEEL_UNIT = 80;
 const WATCHLIST_REALTIME_REFRESH_MS = 1000;
+const AH_REALTIME_MORNING_START_MINUTES = 9 * 60 + 30;
+const AH_REALTIME_MORNING_END_MINUTES = 12 * 60;
+const AH_REALTIME_AFTERNOON_START_MINUTES = 13 * 60;
+const AH_REALTIME_AFTERNOON_END_MINUTES = 16 * 60;
 const AH_COLOR = '#e11d48';
 const HA_COLOR = '#0891b2';
 const MEDIAN60_COLOR = '#475569';
@@ -252,11 +256,10 @@ function isTradingRefreshWindow(now = new Date()) {
     return false;
   }
   const minutes = now.getHours() * 60 + now.getMinutes();
-  const morningStart = 9 * 60 + 30;
-  const morningEnd = 12 * 60;
-  const afternoonStart = 13 * 60;
-  const afternoonEnd = 16 * 60;
-  return (minutes >= morningStart && minutes <= morningEnd) || (minutes >= afternoonStart && minutes <= afternoonEnd);
+  return (
+    (minutes >= AH_REALTIME_MORNING_START_MINUTES && minutes <= AH_REALTIME_MORNING_END_MINUTES) ||
+    (minutes >= AH_REALTIME_AFTERNOON_START_MINUTES && minutes <= AH_REALTIME_AFTERNOON_END_MINUTES)
+  );
 }
 
 function statusTag(status?: string | null) {
@@ -427,6 +430,7 @@ function OverviewPage({ currentUser }: OverviewPageProps) {
   const queryClient = useQueryClient();
   const pairs = useQuery({ queryKey: ['premium-pairs'], queryFn: () => fetchPremiumPairs() });
   const watchlist = useQuery({ queryKey: ['watchlist'], queryFn: () => fetchWatchlist() });
+  const shouldFetchRealtimeWatchlist = Boolean(watchlist.data?.length) && isTradingRefreshWindow();
   const pushplusBinding = useQuery({
     queryKey: ['pushplus-binding'],
     queryFn: fetchPushplusBinding
@@ -441,7 +445,7 @@ function OverviewPage({ currentUser }: OverviewPageProps) {
   const realtimeWatchlist = useQuery({
     queryKey: ['persist-realtime-watchlist-opportunities'],
     queryFn: () => fetchRealtimePremiums({ only_watchlist: true, page_size: 200 }),
-    enabled: Boolean(watchlist.data?.length),
+    enabled: shouldFetchRealtimeWatchlist,
     refetchInterval: () =>
       document.visibilityState === 'visible' && isTradingRefreshWindow()
         ? WATCHLIST_REALTIME_REFRESH_MS
@@ -467,7 +471,7 @@ function OverviewPage({ currentUser }: OverviewPageProps) {
   const watchlistAutoRefresh = useQuery({
     queryKey: ['watchlist-auto-refresh'],
     queryFn: () => fetchWatchlist(),
-    enabled: Boolean(watchlist.data?.length),
+    enabled: shouldFetchRealtimeWatchlist,
     refetchInterval: () =>
       document.visibilityState === 'visible' && isTradingRefreshWindow()
         ? WATCHLIST_REALTIME_REFRESH_MS
