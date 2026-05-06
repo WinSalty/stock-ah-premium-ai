@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import logging
 from datetime import date
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from app.api.deps_auth import CurrentUser, require_permission
@@ -28,6 +30,9 @@ from app.services.notification_service import NotificationError, NotificationSer
 router = APIRouter()
 DbSession = Annotated[Session, Depends(get_db)]
 AdminUser = Annotated[AppUser, Depends(require_permission("users"))]
+logger = logging.getLogger(__name__)
+PUSHPLUS_CALLBACK_SUCCESS = {"code": 200, "msg": "success"}
+PUSHPLUS_CALLBACK_INVALID_PAYLOAD = {"code": 600, "msg": "invalid callback payload"}
 
 
 @router.get("/notifications/pushplus/binding", response_model=PushplusBindingResponse)
@@ -127,18 +132,30 @@ def admin_bind_pushplus_friend(
 
 
 @router.post("/notifications/pushplus/callback")
-def pushplus_callback(
-    payload: PushplusCallbackRequest,
+async def pushplus_callback(
+    request: Request,
     db: DbSession,
-) -> dict[str, bool]:
+) -> dict[str, int | str]:
     """接收 PushPlus 新增好友回调并按绑定票据自动完成系统用户绑定。
 
     创建日期：2026-05-05
     author: sunshengxian
     """
 
-    if payload.event != "add_friend" or payload.friendInfo is None:
-        return {"ok": True}
+    try:
+        payload_data = await request.json()
+    except ValueError:
+        return PUSHPLUS_CALLBACK_SUCCESS
+    if not isinstance(payload_data, dict):
+        return PUSHPLUS_CALLBACK_SUCCESS
+    event = str(payload_data.get("event") or "").strip()
+    if event != "add_friend":
+        return PUSHPLUS_CALLBACK_SUCCESS
+    try:
+        payload = PushplusCallbackRequest.model_validate(payload_data)
+    except ValidationError as exc:
+        logger.error("PushPlus 回调请求体无效 errors=%s", exc.errors())
+        return PUSHPLUS_CALLBACK_INVALID_PAYLOAD
     try:
         NotificationService(db).bind_pushplus_callback(
             payload.qrCode,
@@ -148,8 +165,13 @@ def pushplus_callback(
             payload.friendInfo.isFollow == 1,
         )
     except NotificationError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return {"ok": True}
+        logger.error(
+            "PushPlus 新增好友回调绑定失败 friend_id=%s error=%s",
+            payload.friendInfo.friendId,
+            str(exc),
+        )
+        return {"code": 600, "msg": str(exc)}
+    return PUSHPLUS_CALLBACK_SUCCESS
 
 
 @router.get(

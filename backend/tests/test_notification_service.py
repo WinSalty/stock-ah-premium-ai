@@ -4,9 +4,14 @@ from datetime import UTC, date, datetime
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
+from sqlalchemy.pool import StaticPool
 
+from app.api.routes_notifications import router as notifications_router
+from app.db.session import get_db
 from app.core.config import Settings
 from app.db.base import Base
 from app.db.models.auth import AppUser
@@ -150,6 +155,24 @@ def add_realtime_quotes(
             ),
         ]
     )
+
+
+def build_notification_test_client(engine) -> TestClient:
+    """构建通知路由测试客户端。
+
+    创建日期：2026-05-06
+    author: sunshengxian
+    """
+
+    app = FastAPI()
+    app.include_router(notifications_router, prefix="/api")
+
+    def override_get_db():
+        with Session(engine) as db:
+            yield db
+
+    app.dependency_overrides[get_db] = override_get_db
+    return TestClient(app)
 
 
 def test_pushplus_credentials_can_share_one_file(tmp_path) -> None:
@@ -636,6 +659,71 @@ def test_pushplus_callback_rejects_friend_bound_to_other_user() -> None:
             error_message = ""
 
     assert "已绑定其他用户" in error_message
+
+
+def test_pushplus_callback_endpoint_accepts_validation_probe() -> None:
+    """确认 PushPlus 回调地址校验请求可返回标准成功响应。
+
+    创建日期：2026-05-06
+    author: sunshengxian
+    """
+
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    client = build_notification_test_client(engine)
+
+    response = client.post("/api/notifications/pushplus/callback", json={})
+
+    assert response.status_code == 200
+    assert response.json() == {"code": 200, "msg": "success"}
+
+
+def test_pushplus_callback_endpoint_binds_user_from_add_friend_payload() -> None:
+    """确认 PushPlus 真实回调可通过公网接口完成用户绑定。
+
+    创建日期：2026-05-06
+    author: sunshengxian
+    """
+
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    with Session(engine) as db:
+        user = AppUser(username="callback-api-user", password_hash="hash", role="USER", is_active=True)
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+        ticket = NotificationService(db)._binding_ticket_for_user(user.id)
+
+    client = build_notification_test_client(engine)
+    response = client.post(
+        "/api/notifications/pushplus/callback",
+        json={
+            "event": "add_friend",
+            "qrCode": ticket,
+            "friendInfo": {
+                "friendId": 9527,
+                "token": "friend-token-9527",
+                "nickName": "公网扫码用户",
+                "isFollow": 1,
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"code": 200, "msg": "success"}
+    with Session(engine) as db:
+        stored = db.scalar(select(PushplusBinding).where(PushplusBinding.user_id == user.id))
+    assert stored is not None
+    assert stored.friend_id == 9527
+    assert stored.friend_token == "friend-token-9527"
 
 
 def test_watchlist_alert_requires_pushplus_binding() -> None:
