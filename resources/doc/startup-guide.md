@@ -313,7 +313,7 @@ curl -X POST http://127.0.0.1:8000/api/manual-import/ah-pairs/csv \
 
 `hk_daily` 当前 token 无法请求，已禁用接口同步，一键同步不会再尝试该接口。若后续有可用权限，再重新启用。
 
-若 Tushare 官方 `stk_ah_comparison` 历史覆盖不足，可使用 `water-stock` 的 Baidu 全量日 K 补齐自选股缺失比价。补齐任务读取 `watchlist_stock`，分别拉取 A 股、H 股和 `HKDCNY` 汇率历史数据；只要 A 股收盘价、H 股收盘价和同日汇率三类数据在同一日期都存在，就向 `official_ah_comparison` 插入一行，不再依赖本地交易日历覆盖范围。写入使用 `insert ignore`，同一 `trade_date + a_ts_code + hk_ts_code` 已存在时直接跳过，重跑不会覆盖 Tushare 官方行或实时计算行。
+若 Tushare 官方 `stk_ah_comparison` 历史覆盖不足，可使用 `water-stock` 的 Baidu 全量日 K 补齐自选股缺失比价。补齐任务读取 `watchlist_stock`，分别拉取 A 股、H 股和 `HKDCNY` 汇率历史数据；只要 A 股收盘价、H 股收盘价和同日汇率三类数据在同一日期都存在，就向 `official_ah_comparison` 插入一行，不再依赖本地交易日历覆盖范围。写入使用 `insert ignore`，同一 `trade_date + a_ts_code + hk_ts_code` 已存在时直接跳过，重跑不会覆盖 Tushare 官方行或实时计算行。`historical_premium_backfill_record` 记录每个 A/H 股票对的补数状态，已完成的股票对后续定时任务会在请求 Baidu 前跳过；失败或未记录的股票对仍会在下次重试。
 
 招商银行单票测试可在 `water-stock` 启动参数中设置：
 

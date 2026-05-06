@@ -373,3 +373,32 @@ class OfficialAHComparison(TimestampMixin, Base):
     is_realtime: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     data_source: Mapped[str] = mapped_column(String(32), nullable=False, default="TUSHARE_OFFICIAL")
     source_updated_at: Mapped[datetime | None] = mapped_column(DateTime)
+
+
+class HistoricalPremiumBackfillRecord(TimestampMixin, Base):
+    """Baidu 历史 AH 比价补数执行记录表。
+
+    创建日期：2026-05-06
+    author: sunshengxian
+    """
+
+    __tablename__ = "historical_premium_backfill_record"
+    __table_args__ = (
+        UniqueConstraint("a_ts_code", "hk_ts_code", "data_source", name="uk_hist_premium_backfill_pair"),
+        Index("idx_hist_premium_backfill_status", "status"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    a_ts_code: Mapped[str] = mapped_column(String(16), nullable=False)
+    hk_ts_code: Mapped[str] = mapped_column(String(16), nullable=False)
+    data_source: Mapped[str] = mapped_column(String(32), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    candidate_rows: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    inserted_rows: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    skipped_existing_rows: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    skipped_invalid_rows: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    first_trade_date: Mapped[date | None] = mapped_column(Date)
+    last_trade_date: Mapped[date | None] = mapped_column(Date)
+    last_error: Mapped[str | None] = mapped_column(String(512))
+    started_at: Mapped[datetime | None] = mapped_column(DateTime)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime)

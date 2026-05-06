@@ -183,6 +183,28 @@ CREATE TABLE IF NOT EXISTS `official_ah_comparison` (
   KEY `idx_official_ah_trade_date` (`trade_date`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Tushare 官方 AH 比价快照表，当前主展示口径';
 
+CREATE TABLE IF NOT EXISTS `historical_premium_backfill_record` (
+  `id` INT NOT NULL AUTO_INCREMENT COMMENT '自增主键',
+  `a_ts_code` VARCHAR(16) NOT NULL COMMENT 'A 股 Tushare 代码',
+  `hk_ts_code` VARCHAR(16) NOT NULL COMMENT 'H 股 Tushare 代码',
+  `data_source` VARCHAR(32) NOT NULL COMMENT '补数来源标记',
+  `status` VARCHAR(16) NOT NULL COMMENT '补数状态: RUNNING、COMPLETED、FAILED',
+  `candidate_rows` INT NOT NULL DEFAULT 0 COMMENT '三方数据交集候选行数',
+  `inserted_rows` INT NOT NULL DEFAULT 0 COMMENT '实际新增行数',
+  `skipped_existing_rows` INT NOT NULL DEFAULT 0 COMMENT '唯一键已存在跳过行数',
+  `skipped_invalid_rows` INT NOT NULL DEFAULT 0 COMMENT '价格或汇率无效跳过行数',
+  `first_trade_date` DATE DEFAULT NULL COMMENT '本轮候选最早交易日期',
+  `last_trade_date` DATE DEFAULT NULL COMMENT '本轮候选最晚交易日期',
+  `last_error` VARCHAR(512) DEFAULT NULL COMMENT '失败原因摘要',
+  `started_at` DATETIME DEFAULT NULL COMMENT '最近一次开始时间',
+  `completed_at` DATETIME DEFAULT NULL COMMENT '最近一次成功完成时间',
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '记录创建时间',
+  `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '记录更新时间',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_hist_premium_backfill_pair` (`a_ts_code`, `hk_ts_code`, `data_source`),
+  KEY `idx_hist_premium_backfill_status` (`status`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Baidu 历史 AH 比价补数执行记录表';
+
 CREATE TABLE IF NOT EXISTS `realtime_quote_snapshot` (
   `id` INT NOT NULL AUTO_INCREMENT COMMENT '自增主键',
   `market` VARCHAR(8) NOT NULL COMMENT '报价市场：A、HK、FX',
