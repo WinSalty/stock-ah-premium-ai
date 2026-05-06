@@ -166,6 +166,7 @@ CREATE TABLE IF NOT EXISTS historical_ah_unadjusted_backfill_run (
 - 解析 `klines` 为结构化对象。
 - 设置合理超时、低频请求间隔和错误日志。
 - 原始单行数据保存到 `raw_payload_json`，避免后续字段口径争议时无法追溯。
+- 运行验证发现东方财富港股历史 K 线公开端点会在部分网络环境下直接断连；客户端保留东方财富为主路径，港股失败时按自然年分段调用腾讯港股未复权日线接口降级，写入行的 `data_source` 标记为 `TENCENT_HK_KLINE`，避免长周期数据被单次条数上限截断并方便审计来源。
 
 ### 不复权日线同步服务
 

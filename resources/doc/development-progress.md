@@ -40,7 +40,7 @@
   - 港股通名单同步改为只保留最新生效日期的一份数据；页面和 API 判断港股通可操作性时统一使用当前最新名单。
   - 官方 AH 比价同步后维护 AH 配对。
   - Tushare 官方 AH 比价历史覆盖不足时，已在 `water-stock` 增加 Baidu 历史补齐跑批：读取用户自选股，拉取 A/H 全量日 K 与 `HKDCNY` 汇率，只要 A 股收盘价、H 股收盘价和同日汇率三类数据齐全就向 `official_ah_comparison` 插入缺失行，不再依赖本地交易日历覆盖范围；已有唯一键记录一律跳过不覆盖。新增 `historical_premium_backfill_record` 记录每个 A/H 股票对补数状态，已完成股票对后续定时任务会在请求 Baidu 前跳过，失败或未记录股票对保留重试。招商银行单票本地测试已补入 `BAIDU_HISTORY_BACKFILL` 历史行，并验证重跑插入 0 条。
-  - 已按东方财富不复权方案新增 `eastmoney_unadjusted_daily_quote`、`waterstock_fx_rate_daily` 和 `historical_ah_unadjusted_backfill_run` 三张表、Alembic 迁移、SQLAlchemy 模型和查询白名单；后端新增东方财富不复权 K 线客户端，以及同步页调用的一键接口 `/api/sync/batches/eastmoney-unadjusted`，内部先同步被关注且未完成追跑的 A/H 不复权日线，再追跑不复权 AH 比价。追跑会先删除同日同股票对的 `BAIDU_HISTORY_BACKFILL` 行，再插入 `EASTMONEY_UNADJUSTED_BACKFILL`，但不覆盖 `TUSHARE_OFFICIAL`、实时计算或人工来源。
+  - 已按东方财富不复权方案新增 `eastmoney_unadjusted_daily_quote`、`waterstock_fx_rate_daily` 和 `historical_ah_unadjusted_backfill_run` 三张表、Alembic 迁移、SQLAlchemy 模型和查询白名单；后端新增东方财富不复权 K 线客户端，以及同步页调用的一键接口 `/api/sync/batches/eastmoney-unadjusted`，内部先同步被关注且未完成追跑的 A/H 不复权日线，再追跑不复权 AH 比价。追跑会先删除同日同股票对的 `BAIDU_HISTORY_BACKFILL` 行，再插入 `EASTMONEY_UNADJUSTED_BACKFILL`，但不覆盖 `TUSHARE_OFFICIAL`、实时计算或人工来源。东方财富港股历史 K 线公开端点在当前网络环境下会直接断连，客户端已增加腾讯港股未复权日线降级路径，按自然年分段拉取并将落库行情源标记为 `TENCENT_HK_KLINE`。
   - `water-stock` 已新增 HKD/CNY 历史汇率独立写入方法 `syncHkdCnyHistoryToStockAhDatabase(String startDate, String endDate)`，写入 `stock-ah-premium-ai.waterstock_fx_rate_daily` 并按 `currency_pair + rate_date + data_source` 幂等更新；新增 `stock-ah.fx-history.enabled=false` 的低频调度开关，不再由 Java 项目参与不复权 AH 比价计算。
   - 新增 `resources/sql/04_backfill_ah_trade_calendar_from_cmb.sql`，用招商银行 A/H 已补齐行情日期作为 AH 联合交易日兜底基准，幂等补齐 `a_trade_calendar` 与 `hk_trade_calendar` 缺失开市日期；已在本地和服务器 `stock_ah_ai` 执行，招商银行趋势经联合交易日过滤后可从 2018-09-03 返回。
 - 低权限兜底导入：
@@ -218,6 +218,7 @@
 - LLM 耗时字段说明补充后，`npm run build` 通过。
 - 智能问答流式滚动修复后，`npm run build` 通过。
 - 智能问答预设问题直接发送改造后，`npm run build` 通过。
+- 东方财富港股不复权日线降级到腾讯未复权日线后，`pytest tests/test_eastmoney_kline_service.py` 通过，针对变更文件的 `ruff check` 通过。
 - 智能问答 Markdown 表格约束优化后，`ruff check app/services/llm_service.py` 和 `pytest tests/test_llm_service.py -q` 通过。
 - LLM 耗时参数弹窗格式化优化后，`npm run build` 通过。
 - LLM 耗时响应内容字段和页面响应弹窗补充后，后端指标测试、服务测试和前端构建通过。
