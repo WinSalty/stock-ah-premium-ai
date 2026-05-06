@@ -364,8 +364,10 @@ class SyncService:
             self.db.refresh(run)
             return run
         except Exception as exc:
+            self.db.rollback()
+            run = self.db.merge(run)
             run.status = "FAILED"
-            run.error_message = str(exc)
+            run.error_message = self._format_error_message(exc)
             run.finished_at = datetime.now(UTC).replace(tzinfo=None)
             self.db.commit()
             self.db.refresh(run)
@@ -435,6 +437,12 @@ class SyncService:
             self._prune_hsgt_to_latest_date()
         self.db.commit()
         return row_count
+
+    def _format_error_message(self, exc: Exception) -> str:
+        message = str(exc)
+        if len(message) <= 4000:
+            return message
+        return f"{message[:4000]}... [truncated]"
 
     def _build_params(self, spec: DatasetSpec, params: dict[str, Any]) -> dict[str, Any]:
         api_params = dict(spec.default_params or {})

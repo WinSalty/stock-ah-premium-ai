@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any
 
+from sqlalchemy import func
 from sqlalchemy.dialects.mysql import insert as mysql_insert
 from sqlalchemy.orm import Session
 
@@ -32,7 +33,9 @@ class UpsertRepository:
         update_columns = {
             column.name: statement.inserted[column.name]
             for column in model.__table__.columns
-            if not column.primary_key and column.name != "created_at"
+            if not column.primary_key and column.name not in {"created_at", "updated_at"}
         }
+        if "updated_at" in model.__table__.columns:
+            update_columns["updated_at"] = func.now()
         self.db.execute(statement.on_duplicate_key_update(**update_columns))
         return len(rows)
