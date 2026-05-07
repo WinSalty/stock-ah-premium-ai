@@ -329,13 +329,41 @@ DATA_ONLY_KEYWORDS = (
     "分红数据",
     "现金流数据",
 )
+DATA_ONLY_SUBJECT_KEYWORDS = (
+    "数据",
+    "明细",
+    "表格",
+    "列表",
+    "财报",
+    "财务",
+    "利润表",
+    "资产负债表",
+    "现金流量表",
+    "估值",
+    "行情",
+    "分红",
+    "业绩预告",
+)
+DATA_ONLY_REQUEST_KEYWORDS = (
+    "给我",
+    "查",
+    "查询",
+    "看",
+    "看看",
+    "列",
+    "列出",
+    "返回",
+    "展示",
+    "提供",
+    "拿",
+    "调",
+)
 DATA_ANALYSIS_KEYWORDS = (
     "分析",
     "怎么看",
     "对比",
     "比较",
     "建议",
-    "投资",
     "报告",
     "价值",
     "逻辑",
@@ -346,6 +374,152 @@ DATA_ANALYSIS_KEYWORDS = (
     "配置",
     "判断",
 )
+DATA_FIELD_LABELS = {
+    "trade_date": "交易日",
+    "factor_date": "因子日",
+    "latest_trade_date": "最新交易日",
+    "end_date": "报告期",
+    "ann_date": "公告日",
+    "latest_report_period": "最新报告期",
+    "latest_dividend_period": "最新分红期",
+    "latest_cash_div_tax": "最新税前分红",
+    "latest_dividend_proc": "最新分红进度",
+    "latest_forecast_ann_date": "最新预告日",
+    "latest_forecast_type": "预告类型",
+    "latest_forecast_summary": "预告摘要",
+    "a_ts_code": "A股代码",
+    "hk_ts_code": "H股代码",
+    "ts_code": "股票代码",
+    "symbol": "证券简称代码",
+    "a_name": "A股名称",
+    "hk_name": "H股名称",
+    "name": "名称",
+    "display_name": "标的",
+    "industry": "行业",
+    "area": "地区",
+    "market": "市场",
+    "ah_ratio": "A/H比价",
+    "ah_premium_pct": "A/H溢价%",
+    "ha_ratio": "H/A比价",
+    "ha_premium_pct": "H/A溢价%",
+    "metric_premium_pct": "观察溢价%",
+    "target_premium_pct": "目标阈值%",
+    "distance_to_target_pct": "距阈值%",
+    "premium_percentile_60": "60日分位",
+    "is_hk_connect": "港股通",
+    "connect_channels": "通道",
+    "preferred_direction": "关注方向",
+    "opportunity_status": "状态",
+    "selection_tags": "标签",
+    "selection_score": "评分",
+    "selection_reason": "入选理由",
+    "close": "收盘价",
+    "pct_chg": "涨跌幅%",
+    "turnover_rate": "换手率%",
+    "pe": "PE",
+    "pe_ttm": "PE TTM",
+    "pb": "PB",
+    "ps_ttm": "PS TTM",
+    "dividend_yield_ttm": "股息率",
+    "total_mv": "总市值",
+    "circ_mv": "流通市值",
+    "eps": "每股收益",
+    "roe": "ROE",
+    "roe_waa": "加权ROE",
+    "roe_dt": "扣非ROE",
+    "roa": "ROA",
+    "grossprofit_margin": "毛利率",
+    "netprofit_margin": "净利率",
+    "sales_gpr": "销售毛利率",
+    "profit_to_gr": "利润/营收",
+    "debt_to_assets": "资产负债率",
+    "calculated_debt_to_assets": "计算资产负债率",
+    "assets_to_eqt": "权益乘数",
+    "current_ratio": "流动比率",
+    "quick_ratio": "速动比率",
+    "revenue_yoy": "营收同比%",
+    "q_sales_yoy": "单季营收同比%",
+    "netprofit_yoy": "净利同比%",
+    "q_netprofit_yoy": "单季净利同比%",
+    "ocf_to_revenue": "经营现金/营收",
+    "ocfps": "每股经营现金流",
+    "bps": "每股净资产",
+    "profit_dedt": "扣非净利润",
+    "total_revenue": "营业总收入",
+    "revenue": "营业收入",
+    "total_cogs": "营业总成本",
+    "oper_cost": "营业成本",
+    "biz_tax_surchg": "税金及附加",
+    "sell_exp": "销售费用",
+    "admin_exp": "管理费用",
+    "fin_exp": "财务费用",
+    "rd_exp": "研发费用",
+    "assets_impair_loss": "资产减值损失",
+    "credit_impa_loss": "信用减值损失",
+    "oth_income": "其他收益",
+    "asset_disp_income": "资产处置收益",
+    "operate_profit": "营业利润",
+    "non_oper_income": "营业外收入",
+    "non_oper_exp": "营业外支出",
+    "total_profit": "利润总额",
+    "income_tax": "所得税",
+    "n_income": "净利润",
+    "n_income_attr_p": "归母净利润",
+    "minority_gain": "少数股东损益",
+    "invest_income": "投资收益",
+    "fv_value_chg_gain": "公允价值变动收益",
+    "ebit": "EBIT",
+    "ebitda": "EBITDA",
+    "cashflow_net_profit": "现金流净利润",
+    "cashflow_finan_exp": "现金流财务费用",
+    "c_fr_sale_sg": "销售收现",
+    "c_paid_goods_s": "采购付现",
+    "c_paid_to_for_empl": "支付职工现金",
+    "c_paid_for_taxes": "支付税费",
+    "n_cashflow_act": "经营现金流净额",
+    "c_recp_return_invest": "收回投资现金",
+    "n_recp_disp_fiolta": "处置长期资产现金",
+    "c_pay_acq_const_fiolta": "购建长期资产现金",
+    "n_cashflow_inv_act": "投资现金流净额",
+    "c_recp_borrow": "取得借款现金",
+    "c_prepay_amt_borr": "偿还债务现金",
+    "c_pay_dist_dpcp_int_exp": "分红付息现金",
+    "n_cash_flows_fnc_act": "筹资现金流净额",
+    "n_incr_cash_cash_equ": "现金等价物增加额",
+    "c_cash_equ_end_period": "期末现金等价物",
+    "money_cap": "货币资金",
+    "trad_asset": "交易性金融资产",
+    "lt_eqt_invest": "长期股权投资",
+    "invest_real_estate": "投资性房地产",
+    "notes_receiv": "应收票据",
+    "accounts_receiv": "应收账款",
+    "oth_receiv": "其他应收款",
+    "inventories": "存货",
+    "fix_assets": "固定资产",
+    "cip": "在建工程",
+    "intan_assets": "无形资产",
+    "goodwill": "商誉",
+    "total_cur_assets": "流动资产合计",
+    "total_nca": "非流动资产合计",
+    "total_assets": "资产总计",
+    "st_borr": "短期借款",
+    "notes_payable": "应付票据",
+    "acct_payable": "应付账款",
+    "contract_liab": "合同负债",
+    "lt_borr": "长期借款",
+    "bond_payable": "应付债券",
+    "total_cur_liab": "流动负债合计",
+    "total_ncl": "非流动负债合计",
+    "total_liab": "负债合计",
+    "total_hldr_eqy_inc_min_int": "所有者权益合计",
+    "total_hldr_eqy_exc_min_int": "归母权益合计",
+    "cap_rese": "资本公积",
+    "surplus_rese": "盈余公积",
+    "undistr_porfit": "未分配利润",
+    "return_20d": "20日涨跌幅",
+    "return_60d": "60日涨跌幅",
+    "return_120d": "120日涨跌幅",
+}
 
 
 @dataclass(frozen=True)
@@ -982,7 +1156,10 @@ class LlmService:
         normalized = question.lower().replace(" ", "")
         has_data_only = any(keyword in normalized for keyword in DATA_ONLY_KEYWORDS)
         has_analysis = any(keyword in normalized for keyword in DATA_ANALYSIS_KEYWORDS)
-        return has_data_only and not has_analysis
+        # “给我近三年招商银行财报数据”这类表达没有显式写“只要数据”，但业务意图仍是先查数。
+        has_data_request = any(keyword in normalized for keyword in DATA_ONLY_REQUEST_KEYWORDS)
+        has_data_subject = any(keyword in normalized for keyword in DATA_ONLY_SUBJECT_KEYWORDS)
+        return (has_data_only or (has_data_request and has_data_subject)) and not has_analysis
 
     def _data_only_answer(
         self,
@@ -996,7 +1173,12 @@ class LlmService:
         author: sunshengxian
         """
 
-        normalized_rows = rows[:20] or self._rows_from_market_data_context(market_data_context)
+        context_rows = self._rows_from_market_data_context(market_data_context, question)
+        normalized_rows = (
+            context_rows
+            if context_rows and self._prefer_context_rows_for_data_question(question)
+            else rows[:20]
+        ) or context_rows
         lines = ["## 数据结果", ""]
         if normalized_rows:
             lines.append(self._markdown_table(normalized_rows[:20]))
@@ -1016,6 +1198,7 @@ class LlmService:
     def _rows_from_market_data_context(
         self,
         market_data_context: dict[str, Any] | None,
+        question: str = "",
     ) -> list[dict[str, Any]]:
         """从按需补数上下文提取最适合问数展示的摘要行。
 
@@ -1036,18 +1219,48 @@ class LlmService:
                     continue
                 item_context = item.get("context")
                 if isinstance(item_context, dict):
-                    extracted.extend(self._preferred_context_rows(item_context))
+                    extracted.extend(self._preferred_context_rows(item_context, question))
             return extracted
-        return self._preferred_context_rows(context_payload)
+        return self._preferred_context_rows(context_payload, question)
 
-    def _preferred_context_rows(self, context_payload: dict[str, Any]) -> list[dict[str, Any]]:
+    def _prefer_context_rows_for_data_question(self, question: str) -> bool:
+        """判断问数回答是否优先展示 Tushare 按需补数上下文。
+
+        创建日期：2026-05-07
+        author: sunshengxian
+        """
+
+        normalized = question.lower().replace(" ", "")
+        data_context_keywords = (
+            "财报",
+            "财务",
+            "利润表",
+            "资产负债表",
+            "现金流量表",
+            "估值",
+            "行情",
+            "分红",
+        )
+        return any(keyword in normalized for keyword in data_context_keywords)
+
+    def _preferred_context_rows(
+        self,
+        context_payload: dict[str, Any],
+        question: str = "",
+    ) -> list[dict[str, Any]]:
         """按财务、估值、最新摘要的优先级选择问数展示行。
 
         创建日期：2026-05-07
         author: sunshengxian
         """
 
-        for key in ("financial_periods", "valuation_trend", "latest"):
+        normalized = question.lower().replace(" ", "")
+        preferred_keys = (
+            ("valuation_trend", "latest", "financial_periods")
+            if any(keyword in normalized for keyword in ("估值", "行情", "股价", "收盘", "pe", "pb"))
+            else ("financial_periods", "valuation_trend", "latest")
+        )
+        for key in preferred_keys:
             rows = context_payload.get(key)
             if isinstance(rows, list) and rows:
                 return [row for row in rows if isinstance(row, dict)]
@@ -1061,7 +1274,8 @@ class LlmService:
         """
 
         columns = self._table_columns(rows)
-        header = "| " + " | ".join(columns) + " |"
+        header_labels = [DATA_FIELD_LABELS.get(column, column) for column in columns]
+        header = "| " + " | ".join(header_labels) + " |"
         separator = "| " + " | ".join("---" for _column in columns) + " |"
         body = [
             "| "

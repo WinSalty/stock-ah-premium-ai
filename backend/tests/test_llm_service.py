@@ -849,9 +849,54 @@ def test_data_only_answer_returns_table_without_analysis_prompt() -> None:
         None,
     )
 
-    assert "| ts_code | name | end_date | n_income_attr_p | profit_dedt |" in answer
+    assert "| 股票代码 | 名称 | 报告期 | 归母净利润 | 扣非净利润 |" in answer
     assert "需要分析时直接告诉我" in answer
     assert "核心结论" not in answer
+
+
+def test_financial_data_question_is_data_only_without_explicit_only_keyword() -> None:
+    """确认用户直接索要财报数据时进入问数模式，不再误生成投资报告。
+
+    创建日期：2026-05-07
+    author: sunshengxian
+    """
+
+    service = LlmService(
+        Mock(),
+        settings=Settings(llm_api_key="test-key", llm_api_key_file=None, llm_model="test-model"),
+    )
+
+    assert service._is_data_only_question("给我近三年招商银行的财报数据") is True
+    assert service._is_data_only_question("给我近三年招商银行投资收益数据") is True
+    assert service._is_data_only_question("分析招商银行近三年的财报数据") is False
+
+
+def test_data_only_answer_prefers_tushare_context_for_financial_question() -> None:
+    """确认财报问数优先展示按需补数上下文中的最新 Tushare 报告期。
+
+    创建日期：2026-05-07
+    author: sunshengxian
+    """
+
+    service = LlmService(
+        Mock(),
+        settings=Settings(llm_api_key="test-key", llm_api_key_file=None, llm_model="test-model"),
+    )
+
+    answer = service._data_only_answer(
+        "给我近三年招商银行的财报数据",
+        [{"ts_code": "600036.SH", "name": "招商银行", "end_date": "2024-12-31"}],
+        {
+            "context": {
+                "financial_periods": [
+                    {"ts_code": "600036.SH", "name": "招商银行", "end_date": "2026-03-31"}
+                ]
+            }
+        },
+    )
+
+    assert "2026-03-31" in answer
+    assert "2024-12-31" not in answer
 
 
 def test_stock_report_instruction_requires_profit_quality_checks() -> None:

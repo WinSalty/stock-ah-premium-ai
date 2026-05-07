@@ -124,11 +124,12 @@ interface MetricFilters {
 function LlmMetricsPage() {
   const [draftFilters, setDraftFilters] = useState<MetricFilters>({});
   const [filters, setFilters] = useState<MetricFilters>({});
+  const [queryVersion, setQueryVersion] = useState(0);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(30);
   const [viewer, setViewer] = useState<MetricViewerState>(null);
   const metrics = useQuery({
-    queryKey: ['llm-metrics', filters, page, pageSize],
+    queryKey: ['llm-metrics', filters, page, pageSize, queryVersion],
     queryFn: () =>
       fetchLlmMetrics({
         page,
@@ -271,14 +272,17 @@ function LlmMetricsPage() {
   );
 
   const applyFilters = () => {
-    setFilters(draftFilters);
+    // 查询按钮代表一次显式提交：即使筛选条件和页码未变化，也要刷新指标排查最新链路。
+    setFilters({ ...draftFilters });
     setPage(1);
+    setQueryVersion((version) => version + 1);
   };
 
   const resetFilters = () => {
     setDraftFilters({});
     setFilters({});
     setPage(1);
+    setQueryVersion((version) => version + 1);
   };
 
   return (
