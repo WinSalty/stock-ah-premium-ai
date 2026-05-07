@@ -84,7 +84,7 @@ class MarketDataDemand:
 | --- | --- | --- | --- | --- |
 | `stock_identity` | “这家公司代码是什么”“平安是哪只” | 本地 `a_stock_basic`、`ah_stock_pair` | 本地候选解析和 LLM 语义消歧 | 是 |
 | `quote_valuation` | “现在贵不贵”“股价趋势如何” | `daily`、`daily_basic` | 单股或 5 只以内对比，最近 120 交易日 | 是 |
-| `financial_statement` | “最新财报质量如何” | `income`、`balancesheet`、`cashflow`、`fina_indicator` | 单股或 5 只以内对比，底层最近 8 年，上下文最近 12 期 | 是 |
+| `financial_statement` | “最新财报质量如何” | `income`、`balancesheet`、`cashflow`、`fina_indicator` | 单股或 5 只以内对比，底层最近 8 年，上下文最近 24 期 | 是 |
 | `business_profile` | “主营业务靠什么赚钱”“收入结构稳不稳” | `fina_mainbz`、`fina_audit`、`express` | 单股或 5 只以内对比，主营/审计最近 8 年，快报最近 5 年 | 是 |
 | `dividend_forecast` | “分红稳定吗”“业绩预告怎样” | `dividend`、`forecast` | 单股或 5 只以内对比，分红最近 8 年，预告最近 5 年 | 是 |
 | `capital_flow_light` | “资金在流入还是流出” | `moneyflow` | 单股最近 20 个上下文交易日，底层最近 60 个自然日 | 谨慎 |
@@ -112,7 +112,7 @@ class MarketDataDemand:
   "is_answerable": true,
   "needs_sql": true,
   "use_knowledge": true,
-  "knowledge_categories": ["company_research"],
+  "knowledge_categories": ["ah_premium"],
   "data_demands": [
     {
       "intent": "stock_research",

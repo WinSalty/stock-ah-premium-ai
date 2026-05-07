@@ -136,10 +136,10 @@ Tushare 15000 积分在这里是接口权限门槛，不是按次扣费制；
 用户询问“你好”“你是谁”“你能做什么”“你可以帮我什么”等问候、角色身份和能力介绍问题也属于允许范围。
 违法违规交易、索要敏感信息和账号越权操作不属于范围。
 如果问题需要当前/最近/自选/阈值/列表/排名/筛选/股票代码/精确数值，通常需要查询结构化数据。
-如果问题偏投研框架、报告结论、反证条件、行业逻辑、阈值方法或组合风险表达，
-可以读取知识库；如果是单只上市公司研究，应优先使用结构化补数。
-只有知识库目录中存在同一公司、同一股票代码或明确场景匹配材料时，才选择对应知识分类；
-不要为了“个股深度研究”泛化选择其他公司的报告。
+如果问题偏 A/H 价差、选股框架、金融行业、宏观产业、阈值方法或组合风险表达，
+可以读取知识库；如果是单只上市公司研究，应优先使用结构化补数，不再依赖本地个股分析报告。
+只有知识库目录中存在明确场景匹配材料时，才选择对应知识分类；
+不要为了“个股深度研究”泛化选择知识库材料。
 只返回 JSON，不要输出解释。格式：
 {"is_answerable":true或false,"needs_sql":true或false,"use_knowledge":true或false,"knowledge_categories":["分类key"],"data_demands":[{"market":"A","ts_code":"600036.SH","packages":["quote_valuation","financial_statement","business_profile","dividend_forecast","shareholder_governance","capital_flow_light"],"intent":"stock_research"}],"reason":"一句话原因"}
 """
@@ -398,6 +398,8 @@ DATA_FIELD_LABELS = {
     "latest_forecast_ann_date": "最新预告日",
     "latest_forecast_type": "预告类型",
     "latest_forecast_summary": "预告摘要",
+    "latest_net_mf_amount": "最新主力净流入",
+    "latest_big_order_net_amount": "最新大单净流入",
     "a_ts_code": "A股代码",
     "hk_ts_code": "H股代码",
     "ts_code": "股票代码",
@@ -409,6 +411,64 @@ DATA_FIELD_LABELS = {
     "industry": "行业",
     "area": "地区",
     "market": "市场",
+    "user_id": "用户ID",
+    "watchlist_id": "自选ID",
+    "holding_market": "持有市场",
+    "sort_order": "排序",
+    "note": "备注",
+    "is_realtime": "实时数据",
+    "data_source": "数据来源",
+    "source_updated_at": "来源更新时间",
+    "updated_at": "更新时间",
+    "started_at": "开始时间",
+    "finished_at": "完成时间",
+    "status": "状态",
+    "cache_hit": "命中缓存",
+    "row_count": "行数",
+    "error_message": "错误信息",
+    "intent": "意图",
+    "market_scope": "市场范围",
+    "symbols_json": "股票列表",
+    "data_packages_json": "数据包",
+    "period_policy": "周期策略",
+    "business_type": "主营类型",
+    "bz_item": "主营项目",
+    "bz_sales": "主营收入",
+    "bz_profit": "主营利润",
+    "bz_cost": "主营成本",
+    "gross_margin": "主营毛利率",
+    "revenue_share_pct": "收入占比%",
+    "curr_type": "币种",
+    "latest_audit_result": "最新审计意见",
+    "latest_audit_agency": "最新审计机构",
+    "latest_express_revenue": "最新快报收入",
+    "latest_express_n_income": "最新快报净利润",
+    "latest_express_yoy_sales": "快报营收同比%",
+    "latest_express_yoy_dedu_np": "快报扣非同比%",
+    "latest_express_summary": "快报摘要",
+    "section_type": "股东分组",
+    "sort_date": "排序日期",
+    "ranking": "排名",
+    "holder_scope": "股东范围",
+    "holder_name": "股东名称",
+    "hold_amount": "持股数量",
+    "hold_ratio": "持股比例%",
+    "hold_float_ratio": "流通股占比%",
+    "hold_change": "持股变动",
+    "holder_type": "股东类型",
+    "holder_num": "股东户数",
+    "latest_holder_num": "最新股东户数",
+    "pledge_count": "质押笔数",
+    "pledge_ratio": "质押比例%",
+    "latest_pledge_ratio": "最新质押比例%",
+    "total_pledge": "质押总量",
+    "net_mf_amount": "主力净流入",
+    "big_order_net_amount": "大单净流入",
+    "extra_big_order_net_amount": "超大单净流入",
+    "buy_lg_amount": "大单买入额",
+    "sell_lg_amount": "大单卖出额",
+    "buy_elg_amount": "超大单买入额",
+    "sell_elg_amount": "超大单卖出额",
     "ah_ratio": "A/H比价",
     "ah_premium_pct": "A/H溢价%",
     "ha_ratio": "H/A比价",
@@ -424,6 +484,10 @@ DATA_FIELD_LABELS = {
     "selection_tags": "标签",
     "selection_score": "评分",
     "selection_reason": "入选理由",
+    "a_close": "A股收盘价",
+    "hk_close": "H股收盘价",
+    "a_pct_chg": "A股涨跌幅%",
+    "hk_pct_chg": "H股涨跌幅%",
     "close": "收盘价",
     "pct_chg": "涨跌幅%",
     "turnover_rate": "换手率%",
@@ -2513,7 +2577,11 @@ class LlmService:
         categories = payload.get("knowledge_categories")
         if not isinstance(categories, list):
             categories = []
-        category_keys = tuple(item for item in categories if isinstance(item, str))
+        # 只接受当前知识库登记的分类，避免旧路由继续请求已下线的个股报告分类。
+        allowed_category_keys = {category.key for category in self.knowledge_service.categories}
+        category_keys = tuple(
+            item for item in categories if isinstance(item, str) and item in allowed_category_keys
+        )
         demands = self._data_demands_from_payload(payload.get("data_demands"))
         return QuestionRoute(
             is_answerable=payload.get("is_answerable") is True,
@@ -2921,10 +2989,17 @@ class LlmService:
         if any(context.get(key) for key in ("start_date", "end_date", "ts_code", "only_watchlist")):
             return True
         normalized = question.lower().replace(" ", "")
+        # 中文问题里股票代码常和公司名、描述词直接相邻，不能依赖 Unicode \b 边界，
+        # 否则“寒武纪688256怎么看”会被误判为纯报告问题而跳过结构化补数。
+        if re.search(
+            r"(?<![A-Za-z0-9])\d{6}\.(sh|sz|bj)(?![A-Za-z0-9])"
+            r"|(?<!\d)\d{6}(?!\d)"
+            r"|(?<![A-Za-z0-9])\d{5}\.hk(?![A-Za-z0-9])",
+            normalized,
+        ):
+            return True
         if self._is_report_analysis_question(normalized):
             return False
-        if re.search(r"\b\d{6}\.(sh|sz)\b|\b\d{5}\.hk\b", normalized):
-            return True
         return any(keyword in normalized for keyword in DATA_INTENT_KEYWORDS)
 
     def _is_report_analysis_question(self, normalized_question: str) -> bool:

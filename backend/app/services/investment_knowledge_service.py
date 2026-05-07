@@ -125,129 +125,6 @@ class InvestmentKnowledgeService:
             max_chunks=5,
         ),
         InvestmentKnowledgeCategory(
-            key="company_wuliangye",
-            title="五粮液深度投资报告",
-            summary="五粮液、高端白酒、渠道库存、批价、现金流、分红和信任修复研究。",
-            keywords=(
-                "五粮液",
-                "000858",
-                "白酒",
-                "高端白酒",
-                "消费",
-                "食品饮料",
-            ),
-            documents=("company-research/五粮液股票投资报告_2026.docx",),
-            max_chunks=3,
-        ),
-        InvestmentKnowledgeCategory(
-            key="company_gree",
-            title="格力电器深度价值投资报告",
-            summary="格力电器、白电、空调、高股息、成熟制造业现金流和与美的对比。",
-            keywords=(
-                "格力",
-                "格力电器",
-                "000651",
-                "家电",
-                "白电",
-                "空调",
-                "高股息",
-            ),
-            documents=("company-research/value-investing-2026/gree_deep_value_report_2026.docx",),
-            max_chunks=3,
-        ),
-        InvestmentKnowledgeCategory(
-            key="company_china_shenhua",
-            title="中国神华深度价值投资报告",
-            summary="中国神华、煤炭、电力、铁路港口一体化、红利资产和 H 股折价研究。",
-            keywords=(
-                "中国神华",
-                "601088",
-                "01088",
-                "煤炭",
-                "综合能源",
-                "红利资产",
-            ),
-            documents=(
-                "company-research/value-investing-2026/中国神华深度价值投资分析报告_完整版_2026版.docx",
-            ),
-            max_chunks=3,
-        ),
-        InvestmentKnowledgeCategory(
-            key="company_catl",
-            title="宁德时代深度价值投资报告",
-            summary="宁德时代、动力电池、储能、全球电池龙头和成长估值再评估。",
-            keywords=(
-                "宁德时代",
-                "300750",
-                "动力电池",
-                "储能",
-                "电池龙头",
-            ),
-            documents=("company-research/value-investing-2026/宁德时代深度价值投资分析报告_2026版.docx",),
-            max_chunks=3,
-        ),
-        InvestmentKnowledgeCategory(
-            key="company_byd",
-            title="比亚迪深度价值投资报告",
-            summary="比亚迪、新能源汽车、整车、动力电池、垂直一体化和全球化研究。",
-            keywords=(
-                "比亚迪",
-                "002594",
-                "新能源汽车",
-                "整车",
-                "垂直一体化",
-            ),
-            documents=("company-research/value-investing-2026/比亚迪深度价值投资分析报告_2026版.docx",),
-            max_chunks=3,
-        ),
-        InvestmentKnowledgeCategory(
-            key="company_yangtze_power",
-            title="长江电力深度价值投资报告",
-            summary="长江电力、水电、现金流、公用事业属性、分红和防御配置研究。",
-            keywords=(
-                "长江电力",
-                "600900",
-                "水电",
-                "公用事业",
-                "防御配置",
-            ),
-            documents=("company-research/value-investing-2026/长江电力深度价值投资分析报告_2026版.docx",),
-            max_chunks=3,
-        ),
-        InvestmentKnowledgeCategory(
-            key="company_cambricon",
-            title="寒武纪深度价值投资报告",
-            summary="寒武纪、国产 AI 芯片、算力、成长股估值兑现和高估值风险研究。",
-            keywords=(
-                "寒武纪",
-                "688256",
-                "ai芯片",
-                "AI芯片",
-                "国产算力",
-                "算力",
-            ),
-            documents=("company-research/value-investing-2026/寒武纪深度价值投资分析报告_2026版.docx",),
-            max_chunks=3,
-        ),
-        InvestmentKnowledgeCategory(
-            key="company_research",
-            title="个股深度投资报告",
-            summary=(
-                "兼容旧路由的个股报告聚合分类；只有问题中的公司名或股票代码"
-                "精确命中材料时才读取对应报告。"
-            ),
-            keywords=(
-                "个股",
-                "公司研究",
-                "公司价值",
-                "价值投资",
-                "股票投资报告",
-                "深度报告",
-            ),
-            documents=("company-research/*.docx", "company-research/value-investing-2026/*.docx"),
-            max_chunks=8,
-        ),
-        InvestmentKnowledgeCategory(
             key="macro_industry",
             title="宏观产业与地产金融推演",
             summary="日本经验、地产金融、人口、地方财政、资产负债表和中国未来产业推演。",
@@ -415,76 +292,14 @@ class InvestmentKnowledgeService:
         question: str | None,
         context: dict[str, object] | None,
     ) -> list[str]:
-        """按公司名和股票代码过滤具体个股报告，避免无关报告污染上下文。
+        """保留分类文档列表，个股研究报告已退出知识库依赖。
 
         创建日期：2026-05-07
         author: sunshengxian
         """
 
-        if category.key != "company_research":
-            return documents
-        signals = self._company_research_signals(question, context)
-        if not signals:
-            return []
-        matched_documents = [
-            document
-            for document in documents
-            if any(signal in self._normalize(document) for signal in signals)
-        ]
-        if matched_documents:
-            return matched_documents
-        # 文件名不总是覆盖完整股票名，兜底读取标题做一次精确匹配；未命中时返回空，不塞其他公司报告。
-        result: list[str] = []
-        for document in documents:
-            path = self.doc_root / document
-            content = self._cached_document_text(str(path)) if path.exists() else ""
-            title_signal = self._normalize(f"{document}\n{content[:500]}")
-            if any(signal in title_signal for signal in signals):
-                result.append(document)
-        return result
-
-    def _company_research_signals(
-        self,
-        question: str | None,
-        context: dict[str, object] | None,
-    ) -> tuple[str, ...]:
-        """提取具体公司研究可用的匹配信号。
-
-        创建日期：2026-05-07
-        author: sunshengxian
-        """
-
-        raw_values = [question or ""]
-        if context:
-            for key in (
-                "ts_code",
-                "a_ts_code",
-                "stock_code",
-                "symbol",
-                "stock_name",
-                "name",
-                "company_name",
-            ):
-                value = context.get(key)
-                if isinstance(value, str):
-                    raw_values.append(value)
-        signal_text = self._normalize("\n".join(raw_values))
-        aliases = {
-            "五粮液": ("五粮液", "000858"),
-            "格力": ("格力", "格力电器", "000651"),
-            "格力电器": ("格力", "格力电器", "000651"),
-            "中国神华": ("中国神华", "601088", "01088"),
-            "宁德时代": ("宁德时代", "300750"),
-            "比亚迪": ("比亚迪", "002594"),
-            "长江电力": ("长江电力", "600900"),
-            "寒武纪": ("寒武纪", "688256"),
-        }
-        matched: list[str] = []
-        for keys in aliases.values():
-            normalized_keys = tuple(self._normalize(key) for key in keys)
-            if any(key in signal_text for key in normalized_keys):
-                matched.extend(normalized_keys)
-        return tuple(dict.fromkeys(matched))
+        _ = (category, question, context)
+        return documents
 
     def _resolve_category_documents(self, category: InvestmentKnowledgeCategory) -> list[str]:
         """展开分类中的文档路径和目录通配符。

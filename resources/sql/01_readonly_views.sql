@@ -355,11 +355,10 @@ SELECT
     ELSE ROUND(mb.bz_profit * 100 / mb.bz_sales, 8)
   END AS gross_margin,
   CASE
-    WHEN SUM(mb.bz_sales) OVER (PARTITION BY mb.ts_code, mb.end_date, mb.business_type) IS NULL
-      OR SUM(mb.bz_sales) OVER (PARTITION BY mb.ts_code, mb.end_date, mb.business_type) = 0 THEN NULL
+    WHEN mb_total.total_sales IS NULL OR mb_total.total_sales = 0 THEN NULL
     ELSE ROUND(
       mb.bz_sales * 100
-      / SUM(mb.bz_sales) OVER (PARTITION BY mb.ts_code, mb.end_date, mb.business_type),
+      / mb_total.total_sales,
       8
     )
   END AS revenue_share_pct,
@@ -374,6 +373,18 @@ SELECT
 FROM a_main_business_composition mb
 LEFT JOIN a_stock_basic b
   ON b.ts_code = mb.ts_code
+LEFT JOIN (
+  SELECT
+    ts_code,
+    end_date,
+    business_type,
+    SUM(bz_sales) AS total_sales
+  FROM a_main_business_composition
+  GROUP BY ts_code, end_date, business_type
+) mb_total
+  ON mb_total.ts_code = mb.ts_code
+ AND mb_total.end_date = mb.end_date
+ AND mb_total.business_type = mb.business_type
 LEFT JOIN a_financial_audit fa
   ON fa.ts_code = mb.ts_code
  AND fa.ann_date = (
@@ -395,9 +406,24 @@ SELECT
   b.name,
   'TOP10_HOLDER' AS section_type,
   h.end_date AS sort_date,
-  ROW_NUMBER() OVER (
-    PARTITION BY h.ts_code, h.end_date, h.holder_scope
-    ORDER BY h.hold_ratio DESC, h.hold_amount DESC
+  (
+    SELECT COUNT(*) + 1
+    FROM a_top10_holder h2
+    WHERE h2.ts_code = h.ts_code
+      AND h2.end_date = h.end_date
+      AND h2.holder_scope = h.holder_scope
+      AND (
+        COALESCE(h2.hold_ratio, -999999999) > COALESCE(h.hold_ratio, -999999999)
+        OR (
+          COALESCE(h2.hold_ratio, -999999999) = COALESCE(h.hold_ratio, -999999999)
+          AND COALESCE(h2.hold_amount, -999999999) > COALESCE(h.hold_amount, -999999999)
+        )
+        OR (
+          COALESCE(h2.hold_ratio, -999999999) = COALESCE(h.hold_ratio, -999999999)
+          AND COALESCE(h2.hold_amount, -999999999) = COALESCE(h.hold_amount, -999999999)
+          AND h2.holder_name < h.holder_name
+        )
+      )
   ) AS ranking,
   h.holder_scope,
   h.holder_name,

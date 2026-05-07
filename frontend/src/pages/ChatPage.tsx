@@ -51,6 +51,8 @@ const CHAT_TABLE_LABELS: Record<string, string> = {
   latest_forecast_ann_date: '最新预告日',
   latest_forecast_type: '预告类型',
   latest_forecast_summary: '预告摘要',
+  latest_net_mf_amount: '最新主力净流入',
+  latest_big_order_net_amount: '最新大单净流入',
   a_ts_code: 'A 股代码',
   hk_ts_code: 'H 股代码',
   ts_code: '股票代码',
@@ -62,6 +64,64 @@ const CHAT_TABLE_LABELS: Record<string, string> = {
   industry: '行业',
   area: '地区',
   market: '市场',
+  user_id: '用户 ID',
+  watchlist_id: '自选 ID',
+  holding_market: '持有市场',
+  sort_order: '排序',
+  note: '备注',
+  is_realtime: '实时数据',
+  data_source: '数据来源',
+  source_updated_at: '来源更新时间',
+  updated_at: '更新时间',
+  started_at: '开始时间',
+  finished_at: '完成时间',
+  status: '状态',
+  cache_hit: '命中缓存',
+  row_count: '行数',
+  error_message: '错误信息',
+  intent: '意图',
+  market_scope: '市场范围',
+  symbols_json: '股票列表',
+  data_packages_json: '数据包',
+  period_policy: '周期策略',
+  business_type: '主营类型',
+  bz_item: '主营项目',
+  bz_sales: '主营收入',
+  bz_profit: '主营利润',
+  bz_cost: '主营成本',
+  gross_margin: '主营毛利率',
+  revenue_share_pct: '收入占比%',
+  curr_type: '币种',
+  latest_audit_result: '最新审计意见',
+  latest_audit_agency: '最新审计机构',
+  latest_express_revenue: '最新快报收入',
+  latest_express_n_income: '最新快报净利润',
+  latest_express_yoy_sales: '快报营收同比%',
+  latest_express_yoy_dedu_np: '快报扣非同比%',
+  latest_express_summary: '快报摘要',
+  section_type: '股东分组',
+  sort_date: '排序日期',
+  ranking: '排名',
+  holder_scope: '股东范围',
+  holder_name: '股东名称',
+  hold_amount: '持股数量',
+  hold_ratio: '持股比例%',
+  hold_float_ratio: '流通股占比%',
+  hold_change: '持股变动',
+  holder_type: '股东类型',
+  holder_num: '股东户数',
+  latest_holder_num: '最新股东户数',
+  pledge_count: '质押笔数',
+  pledge_ratio: '质押比例%',
+  latest_pledge_ratio: '最新质押比例%',
+  total_pledge: '质押总量',
+  net_mf_amount: '主力净流入',
+  big_order_net_amount: '大单净流入',
+  extra_big_order_net_amount: '超大单净流入',
+  buy_lg_amount: '大单买入额',
+  sell_lg_amount: '大单卖出额',
+  buy_elg_amount: '超大单买入额',
+  sell_elg_amount: '超大单卖出额',
   ah_premium_pct: 'A/H 溢价%',
   ha_premium_pct: 'H/A 溢价%',
   ah_ratio: 'A/H 比价',
@@ -77,6 +137,10 @@ const CHAT_TABLE_LABELS: Record<string, string> = {
   selection_tags: '标签',
   selection_score: '评分',
   selection_reason: '入选理由',
+  a_close: 'A 股收盘价',
+  hk_close: 'H 股收盘价',
+  a_pct_chg: 'A 股涨跌幅%',
+  hk_pct_chg: 'H 股涨跌幅%',
   close: '收盘价',
   pct_chg: '涨跌幅%',
   turnover_rate: '换手率%',
@@ -200,6 +264,16 @@ const CHAT_SUMMARY_COLUMN_PRIORITY = [
   'ann_date',
   'latest_report_period',
   'industry',
+  'a_close',
+  'hk_close',
+  'a_pct_chg',
+  'hk_pct_chg',
+  'business_type',
+  'bz_item',
+  'holder_name',
+  'net_mf_amount',
+  'big_order_net_amount',
+  'latest_net_mf_amount',
   'selection_tags',
   'selection_score',
   'close',
@@ -241,6 +315,16 @@ const CHAT_SUMMARY_COLUMN_WIDTHS: Record<string, number> = {
   ann_date: 112,
   latest_report_period: 112,
   industry: 116,
+  a_close: 104,
+  hk_close: 104,
+  a_pct_chg: 104,
+  hk_pct_chg: 104,
+  business_type: 112,
+  bz_item: 160,
+  holder_name: 180,
+  net_mf_amount: 120,
+  big_order_net_amount: 120,
+  latest_net_mf_amount: 132,
   selection_tags: 180,
   selection_score: 88,
   close: 92,
@@ -264,6 +348,9 @@ const CHAT_SUMMARY_COLUMN_WIDTHS: Record<string, number> = {
   premium_percentile_60: 96,
   opportunity_status: 96,
   connect_channels: 120,
+  data_source: 120,
+  source_updated_at: 160,
+  updated_at: 160,
   selection_reason: 260
 };
 
@@ -286,40 +373,39 @@ const CHAT_MODEL_OPTIONS: { label: string; value: ChatModel }[] = [
   { label: 'Qwen 3.6 Flash', value: 'qwen3.6-flash' }
 ];
 
-const REPORT_BASED_PRESET_QUESTIONS = [
-  '五粮液当前更应按修复股还是价值股定价？请给出评级口径、核心假设和跟踪指标',
-  '五粮液 2026 年投资报告里最需要验证的三个风险是什么？',
-  '中国神华 2026 版价值投资报告的核心买点和反证条件是什么？',
-  '格力电器当前更像高股息价值股还是经营修复股？请给出跟踪指标',
-  '宁德时代 300750 的长期投资价值主要取决于哪些行业变量？',
-  '比亚迪 002594 在新能源汽车竞争加剧下，估值安全边际应怎么看？',
-  '长江电力 600900 适合作为防御底仓吗？请比较股息、现金流和估值风险',
-  '寒武纪 688256 的深度价值投资逻辑里，最关键的验证点和风险是什么？',
-  '招商银行现在还适合作为长期核心银行持仓吗？请和宁波银行、江苏银行做对比',
-  '招商银行 H 股反超 A 股后，AH 溢价更适合作为择边信号还是套利信号？',
-  '如果招商银行 H 股相对 A 股维持溢价，长期配置应优先买 A 股还是 H 股？',
-  '招商银行 AH 价差融资套利的主要成本、制度约束和风险缓冲应怎么评估？',
-  '银行与非银长期投资中，哪些资产更适合防御底仓，哪些更适合弹性配置？',
-  '日本地产金融调整对中国银行、地产链和高股息资产配置有什么启示？',
-  '参考日本经验，中国房地产出清阶段哪些行业可能更受益，哪些行业需要回避？',
-  '如果地产长期出清，A 股长期投资应优先关注哪些现金流资产？',
-  'A/H 溢价候选里，哪些标的更像跨市场替代机会而不是套利机会？',
-  '请给出 A/H 价差策略的保守、中性、进取三种配置框架',
-  '低估值、高股息、ROE 稳定的 A 股候选，如何结合银行和红利资产筛选？',
-  '五粮液、贵州茅台和高股息央企分别适合什么风险偏好的组合？',
-  '在宏观低收益环境下，银行、白酒、公用事业和高端制造应如何分层配置？'
+const STRUCTURED_ANALYSIS_PRESET_QUESTIONS = [
+  '帮我分析一下招商银行，重点看估值、财务质量、分红和 A/H 价差',
+  '帮我分析一下金螳螂，重点看主营业务、现金流和股东质押风险',
+  '帮我分析一下中国神华，重点看红利稳定性、现金流和估值安全边际',
+  '帮我分析一下格力电器，重点看主营结构、分红能力和长期竞争力',
+  '帮我分析一下宁德时代，重点看增长质量、毛利率和资金流是否配合',
+  '帮我分析一下比亚迪，重点看利润质量、竞争压力和估值反证条件',
+  '帮我分析一下长江电力，重点看现金流、防御属性和分红可持续性',
+  '帮我分析一下寒武纪，重点看收入兑现、股东结构和估值风险',
+  '招商银行和平安银行谁的财务质量更稳？请给出关键指标和反证条件',
+  '我关注的股票里，哪些 A/H 价差更像择边机会而不是套利机会？',
+  '当前适合用高股息策略还是成长股策略？请结合估值和现金流给框架',
+  '请找出一只股票做完整个股分析报告，覆盖财务、主营、股东和资金流',
+  '近几年财务数据里，哪些指标最能说明一家公司的利润质量？',
+  '如果一家公司短期资金流入但扣非和现金流不好，应该怎么判断？',
+  '股东户数下降、质押比例上升同时出现时，对个股分析意味着什么？',
+  '主营业务收入集中度过高时，估值应该打折还是看行业壁垒？',
+  'A/H 溢价达到目标阈值后，执行换仓前最应该复核哪些条件？',
+  '请给我一个保守型股票组合的筛选框架，重点控制回撤和现金流风险',
+  '财报问数模式下，给我展示招商银行最近 24 期财务摘要数据',
+  '帮我生成一份股票复盘清单，用于每周跟踪持仓的估值、资金流和反证条件'
 ];
 
 function randomPresetQuestions(previous: string[] = []) {
   for (let attempt = 0; attempt < 6; attempt += 1) {
-    const nextQuestions = [...REPORT_BASED_PRESET_QUESTIONS]
+    const nextQuestions = [...STRUCTURED_ANALYSIS_PRESET_QUESTIONS]
       .sort(() => Math.random() - 0.5)
       .slice(0, PRESET_QUESTION_COUNT);
     if (nextQuestions.some((item, index) => item !== previous[index])) {
       return nextQuestions;
     }
   }
-  return [...REPORT_BASED_PRESET_QUESTIONS].slice(0, PRESET_QUESTION_COUNT);
+  return [...STRUCTURED_ANALYSIS_PRESET_QUESTIONS].slice(0, PRESET_QUESTION_COUNT);
 }
 
 /**
@@ -664,7 +750,7 @@ function ChatPage() {
         answer: turn.response?.answer || ''
       }))
     );
-    message.success('Word 文档已生成');
+    message.success('Word 文档已下载');
   };
 
   return (

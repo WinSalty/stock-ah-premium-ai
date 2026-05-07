@@ -384,7 +384,7 @@ class MarketDataOrchestrator:
             "financial_periods": self._query_view(
                 (
                     "select * from v_stock_financial_period_summary "
-                    "where ts_code = :ts_code order by end_date desc limit 12"
+                    "where ts_code = :ts_code order by end_date desc limit 24"
                 ),
                 ts_code,
             ),

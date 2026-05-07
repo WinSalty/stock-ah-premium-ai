@@ -177,7 +177,7 @@ def test_clear_investment_question_uses_unified_deepseek_router(monkeypatch) -> 
         captured["phase"] = trace.phase if trace else None
         return (
             '{"is_answerable":true,"needs_sql":false,"use_knowledge":true,'
-            '"knowledge_categories":["company_research"],"reason":"需要公司投研框架"}'
+            '"knowledge_categories":["ah_premium"],"reason":"需要 A/H 价差框架"}'
         )
 
     monkeypatch.setattr(service, "_chat_completion", fake_chat_completion)
@@ -187,7 +187,7 @@ def test_clear_investment_question_uses_unified_deepseek_router(monkeypatch) -> 
     assert route.is_answerable is True
     assert route.should_query_data is False
     assert route.use_knowledge is True
-    assert route.knowledge_category_keys == ("company_research",)
+    assert route.knowledge_category_keys == ("ah_premium",)
     assert captured["model"] == "deepseek-v4-flash"
     assert captured["phase"] == "question_router"
     assert "knowledge_catalog" in str(captured["prompt"])
@@ -210,7 +210,7 @@ def test_route_from_payload_accepts_market_data_demands() -> None:
             "is_answerable": True,
             "needs_sql": False,
             "use_knowledge": True,
-            "knowledge_categories": ["company_research"],
+            "knowledge_categories": ["ah_premium", "unknown_legacy_category"],
             "data_demands": [
                 {
                     "market": "A",
@@ -236,6 +236,7 @@ def test_route_from_payload_accepts_market_data_demands() -> None:
         "shareholder_governance",
         "capital_flow_light",
     )
+    assert route.knowledge_category_keys == ("ah_premium",)
 
 
 def test_route_from_payload_accepts_up_to_five_market_data_demands() -> None:
@@ -293,8 +294,8 @@ def test_answer_prompt_includes_market_data_context_and_report_instruction() -> 
     assert "资金流只用于解释短期交易情绪" in prompt
 
 
-def test_report_analysis_question_skips_data_query() -> None:
-    """确认报告分析类问题优先走知识材料，不触发 SQL 生成。
+def test_report_analysis_question_prefers_structured_stock_data() -> None:
+    """确认个股报告问题退出本地报告依赖后会优先查询结构化数据。
 
     创建日期：2026-05-05
     author: sunshengxian
@@ -305,9 +306,9 @@ def test_report_analysis_question_skips_data_query() -> None:
         settings=Settings(llm_api_key="test-key", llm_api_key_file=None, llm_model="test-model"),
     )
 
-    question = "寒武纪深度价值投资报告的核心买点和反证条件是什么？"
+    question = "寒武纪 688256 深度价值投资怎么看？"
 
-    assert service._should_query_data(question, {}) is False
+    assert service._should_query_data(question, {}) is True
 
 
 def test_llm_trace_id_is_unique_for_each_question_turn() -> None:
@@ -344,94 +345,25 @@ def test_investment_knowledge_selects_stock_factor_category() -> None:
 
 
 def test_investment_knowledge_reads_docx_reports(tmp_path: Path) -> None:
-    """确认 LLM 知识服务可以读取分类目录中的 docx 投研报告。
+    """确认 LLM 知识服务仍可读取非个股分类中的 docx 材料。
 
     创建日期：2026-05-04
     author: sunshengxian
     """
 
-    report_path = tmp_path / "company-research" / "五粮液股票投资报告_2026.docx"
+    report_path = tmp_path / "ah-premium" / "cmb-ah-premium-arbitrage-report-2026.docx"
     _write_minimal_docx(
         report_path,
         paragraphs=(
-            "五粮液（000858.SZ）股票投资报告",
-            "投资结论：公司处于信任修复期，需要跟踪批价、库存和现金流。",
+            "招商银行 A/H 倒挂与融资套利约束",
+            "核心结论：价差只能作为择边信号，需要同时检查港股通、融资成本和汇率。",
         ),
     )
 
-    selection = InvestmentKnowledgeService(doc_root=tmp_path).select("五粮液当前投资价值如何")
+    selection = InvestmentKnowledgeService(doc_root=tmp_path).select("招商银行 AH 价差怎么做择边？")
 
-    assert "五粮液深度投资报告" in selection.categories
-    assert any("信任修复期" in chunk["content"] for chunk in selection.chunks)
-
-
-def test_investment_knowledge_selects_company_value_reports() -> None:
-    """确认新增公司价值投资报告会进入个股深度投资知识分类。
-
-    创建日期：2026-05-05
-    author: sunshengxian
-    """
-
-    selection = InvestmentKnowledgeService().select("寒武纪 688256 深度价值投资怎么看")
-
-    assert "寒武纪深度价值投资报告" in selection.categories
-    assert any(
-        "寒武纪" in chunk["title"] or "寒武纪" in chunk["content"]
-        for chunk in selection.chunks
-    )
-
-
-def test_investment_knowledge_expands_company_report_globs(tmp_path: Path) -> None:
-    """确认公司研究分类可从稳定子目录通配读取报告。
-
-    创建日期：2026-05-05
-    author: sunshengxian
-    """
-
-    report_path = tmp_path / "company-research" / "value-investing-2026" / "寒武纪报告.docx"
-    _write_minimal_docx(
-        report_path,
-        paragraphs=(
-            "寒武纪（688256.SH）深度价值投资分析报告",
-            "核心验证点：收入放量、毛利率和客户结构改善。",
-        ),
-    )
-
-    selection = InvestmentKnowledgeService(doc_root=tmp_path).select("寒武纪价值投资怎么看")
-
-    assert "寒武纪深度价值投资报告" in selection.categories
-    assert any("核心验证点" in chunk["content"] for chunk in selection.chunks)
-
-
-def test_company_research_legacy_key_filters_unrelated_reports() -> None:
-    """确认旧 company_research 分类不会给无专属报告公司塞其他个股报告。
-
-    创建日期：2026-05-07
-    author: sunshengxian
-    """
-
-    selection = InvestmentKnowledgeService().select_by_keys(
-        ["company_research"],
-        question="拉卡拉这家公司怎么样？分析业务模式和投资价值",
-    )
-
-    assert "个股深度投资报告" in selection.categories
-    assert selection.chunks == []
-
-
-def test_company_research_legacy_key_keeps_exact_company_report() -> None:
-    """确认旧 company_research 分类在命中同公司时仍保留专业报告材料。
-
-    创建日期：2026-05-07
-    author: sunshengxian
-    """
-
-    selection = InvestmentKnowledgeService().select_by_keys(
-        ["company_research"],
-        question="寒武纪 688256 投资价值怎么看",
-    )
-
-    assert any("寒武纪" in chunk["title"] for chunk in selection.chunks)
+    assert "A/H 溢价与跨市场价差" in selection.categories
+    assert any("择边信号" in chunk["content"] for chunk in selection.chunks)
 
 
 def test_default_sql_uses_watchlist_and_correct_ha_discount_direction() -> None:
