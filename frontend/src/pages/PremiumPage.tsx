@@ -24,7 +24,7 @@ import dayjs from 'dayjs';
 import LlmProgressNote from '../components/LlmProgressNote';
 import PageHeader from '../components/PageHeader';
 import PremiumTable from '../components/PremiumTable';
-import { createChatSession, sendChatMessage } from '../api/chat';
+import { createChatSession, sendChatMessageStream } from '../api/chat';
 import { fetchPremiumTrend, fetchPremiums } from '../api/market';
 import { createPushplusQrCode, fetchPushplusBinding } from '../api/notifications';
 import { createWatchlistItem, deleteWatchlistItem, updateWatchlistItem } from '../api/watchlist';
@@ -33,6 +33,7 @@ import type {
   PremiumDirection,
   PremiumItem,
   PriceAlertOperator,
+  ThresholdRecommendationContext,
   UserInfo
 } from '../types/domain';
 import type { PremiumQueryParams } from '../api/market';
@@ -82,7 +83,7 @@ interface WatchlistModalState {
   item: PremiumItem;
 }
 
-function numberValue(value?: string | null) {
+function numberValue(value?: string | number | null) {
   if (value === null || value === undefined || value === '') {
     return null;
   }
@@ -158,6 +159,32 @@ function buildModalThresholdDisplayQuestion(item: PremiumItem, values: Watchlist
   const direction = values.preferred_direction || item.metric_direction || 'HA';
   const directionLabel = direction === 'AH' ? 'A/H' : 'H/A';
   return `为${values.display_name || item.a_name || item.hk_name || item.a_ts_code}推荐 ${directionLabel} 目标阈值`;
+}
+
+function buildModalThresholdContext(
+  item: PremiumItem,
+  values: WatchlistFormValues
+): ThresholdRecommendationContext {
+  const direction = values.preferred_direction || item.metric_direction || 'HA';
+  const metricPremium = direction === 'AH' ? item.ah_premium_pct : item.ha_premium_pct;
+  // 只把弹窗当前字段和页面行情传给后端，后端可直接计算阈值并跳过通用问答数据准备。
+  return {
+    name: values.display_name || item.a_name || item.hk_name || item.a_ts_code,
+    a_ts_code: item.a_ts_code,
+    hk_ts_code: item.hk_ts_code,
+    direction,
+    holding_market: values.holding_market,
+    target_premium_pct: numberValue(values.target_premium_pct),
+    metric_premium_pct: numberValue(metricPremium),
+    ah_premium_pct: numberValue(item.ah_premium_pct),
+    ha_premium_pct: numberValue(item.ha_premium_pct),
+    distance_to_target_pct: numberValue(item.distance_to_target_pct),
+    premium_median_60: numberValue(item.premium_median_60),
+    premium_p20_60: numberValue(item.premium_p20_60),
+    premium_p80_60: numberValue(item.premium_p80_60),
+    premium_percentile_60: numberValue(item.premium_percentile_60),
+    connect_channels: item.connect_channels || null
+  };
 }
 
 type RecommendationSource = 'fresh' | 'cached';
@@ -303,14 +330,27 @@ function PremiumPage({ currentUser }: PremiumPageProps) {
         const session = await createChatSession(
           `阈值建议：${values.display_name || watchlistModal.item.a_name || watchlistModal.item.a_ts_code}`
         );
-        const result = await sendChatMessage(session.id, {
+        let streamedAnswer = '';
+        setThresholdRecommendation('');
+        setThresholdRecommendationSource('fresh');
+        await sendChatMessageStream(session.id, {
           question: buildModalThresholdPrompt(watchlistModal.item, values),
           display_question: buildModalThresholdDisplayQuestion(watchlistModal.item, values),
           only_watchlist: true,
-          ts_code: watchlistModal.item.a_ts_code
+          ts_code: watchlistModal.item.a_ts_code,
+          threshold_recommendation: buildModalThresholdContext(watchlistModal.item, values)
+        }, {
+          onDelta: (content) => {
+            // 每个流式片段都立即刷新弹窗回答，降低固定阈值场景的等待感。
+            streamedAnswer += content;
+            setThresholdRecommendation(streamedAnswer);
+          },
+          onDone: (event) => {
+            streamedAnswer = event.answer || streamedAnswer;
+          }
         });
-        setCachedThresholdRecommendation(cacheInput, result.answer);
-        return { answer: result.answer, source: 'fresh' as RecommendationSource };
+        setCachedThresholdRecommendation(cacheInput, streamedAnswer);
+        return { answer: streamedAnswer, source: 'fresh' as RecommendationSource };
       } finally {
         if (progressTimer !== null) {
           window.clearInterval(progressTimer);

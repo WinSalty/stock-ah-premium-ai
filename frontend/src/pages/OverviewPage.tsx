@@ -25,7 +25,7 @@ import { Bot, GripVertical, QrCode, Settings, SlidersHorizontal, Trash2 } from '
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type WheelEvent } from 'react';
 import LlmProgressNote from '../components/LlmProgressNote';
 import PageHeader from '../components/PageHeader';
-import { createChatSession, sendChatMessage } from '../api/chat';
+import { createChatSession, sendChatMessageStream } from '../api/chat';
 import {
   fetchOfficialPremiumTrend,
   fetchPremiumPairs,
@@ -40,6 +40,7 @@ import type {
   PremiumDirection,
   PremiumPairOption,
   PriceAlertOperator,
+  ThresholdRecommendationContext,
   UserInfo,
   WatchlistOpportunity
 } from '../types/domain';
@@ -385,6 +386,29 @@ function buildThresholdDisplayQuestion(item: WatchlistOpportunity) {
   return `为${opportunityName(item)}推荐 ${directionLabel} 目标阈值`;
 }
 
+function buildThresholdRecommendationContext(item: WatchlistOpportunity): ThresholdRecommendationContext {
+  const premium = item.premium;
+  const direction = opportunityDirection(item);
+  // 结构化上下文只承载页面已经展示的数据，后端据此走阈值快路径，避免再路由、消歧或查辅助视图。
+  return {
+    name: opportunityName(item),
+    a_ts_code: item.watchlist.a_ts_code,
+    hk_ts_code: item.watchlist.hk_ts_code,
+    direction,
+    holding_market: item.watchlist.holding_market,
+    target_premium_pct: numberValue(item.watchlist.target_premium_pct),
+    metric_premium_pct: numberValue(premium?.metric_premium_pct),
+    ah_premium_pct: numberValue(premium?.ah_premium_pct),
+    ha_premium_pct: numberValue(premium?.ha_premium_pct),
+    distance_to_target_pct: numberValue(premium?.distance_to_target_pct),
+    premium_median_60: numberValue(premium?.premium_median_60),
+    premium_p20_60: numberValue(premium?.premium_p20_60),
+    premium_p80_60: numberValue(premium?.premium_p80_60),
+    premium_percentile_60: numberValue(premium?.premium_percentile_60),
+    connect_channels: premium?.connect_channels || null
+  };
+}
+
 type RecommendationSource = 'fresh' | 'cached';
 type OverviewChartMode = 'trend' | 'range' | 'deviation';
 
@@ -616,14 +640,27 @@ function OverviewPage({ currentUser }: OverviewPageProps) {
           return { answer: cached.answer, source: 'cached' as RecommendationSource };
         }
         const session = await createChatSession(`阈值建议：${opportunityName(item)}`);
-        const result = await sendChatMessage(session.id, {
+        let streamedAnswer = '';
+        setAiRecommendation('');
+        setAiRecommendationSource('fresh');
+        await sendChatMessageStream(session.id, {
           question: buildThresholdRecommendationPrompt(item),
           display_question: buildThresholdDisplayQuestion(item),
           only_watchlist: true,
-          ts_code: item.watchlist.a_ts_code
+          ts_code: item.watchlist.a_ts_code,
+          threshold_recommendation: buildThresholdRecommendationContext(item)
+        }, {
+          onDelta: (content) => {
+            // 流式片段到达时立即拼接展示，用户不再需要等待完整 LLM 响应结束。
+            streamedAnswer += content;
+            setAiRecommendation(streamedAnswer);
+          },
+          onDone: (event) => {
+            streamedAnswer = event.answer || streamedAnswer;
+          }
         });
-        setCachedThresholdRecommendation(cacheInput, result.answer);
-        return { answer: result.answer, source: 'fresh' as RecommendationSource };
+        setCachedThresholdRecommendation(cacheInput, streamedAnswer);
+        return { answer: streamedAnswer, source: 'fresh' as RecommendationSource };
       } finally {
         if (progressTimer !== null) {
           window.clearInterval(progressTimer);

@@ -1,6 +1,6 @@
 import type { PremiumDirection } from '../types/domain';
 
-const CACHE_PREFIX = 'stock-ah-premium-ai:threshold-recommendation:v1';
+const CACHE_PREFIX = 'stock-ah-premium-ai:threshold-recommendation:v2';
 const CACHE_TIME_ZONE = 'Asia/Shanghai';
 
 export interface ThresholdRecommendationCacheInput {

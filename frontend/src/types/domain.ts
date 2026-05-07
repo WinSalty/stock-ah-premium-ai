@@ -352,6 +352,25 @@ export interface ChatMessageRequest {
   ts_code?: string;
   only_watchlist?: boolean;
   llm_model?: ChatModel;
+  threshold_recommendation?: ThresholdRecommendationContext;
+}
+
+export interface ThresholdRecommendationContext {
+  name?: string | null;
+  a_ts_code?: string | null;
+  hk_ts_code?: string | null;
+  direction?: PremiumDirection | null;
+  holding_market?: string | null;
+  target_premium_pct?: number | null;
+  metric_premium_pct?: number | null;
+  ah_premium_pct?: number | null;
+  ha_premium_pct?: number | null;
+  distance_to_target_pct?: number | null;
+  premium_median_60?: number | null;
+  premium_p20_60?: number | null;
+  premium_p80_60?: number | null;
+  premium_percentile_60?: number | null;
+  connect_channels?: string | null;
 }
 
 export interface ChatMessageResponse {

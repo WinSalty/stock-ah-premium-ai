@@ -93,6 +93,7 @@ export async function sendChatMessageStream(
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
+  let streamError: string | null = null;
   while (true) {
     const { done, value } = await reader.read();
     if (done) {
@@ -113,8 +114,12 @@ export async function sendChatMessageStream(
       } else if (event.type === 'done') {
         handlers.onDone?.(event);
       } else if (event.type === 'error') {
+        streamError = event.content || '流式响应失败';
         handlers.onError?.(event);
       }
     }
+  }
+  if (streamError) {
+    throw new ApiError(response.status, streamError);
   }
 }

@@ -79,6 +79,30 @@ class ChatSessionDetailResponse(ChatSessionResponse):
     messages: list[ChatStoredMessageResponse] = Field(default_factory=list)
 
 
+class ThresholdRecommendationContext(BaseModel):
+    """自选股 AI 阈值推荐的结构化页面上下文。
+
+    创建日期：2026-05-07
+    author: sunshengxian
+    """
+
+    name: str | None = None
+    a_ts_code: str | None = None
+    hk_ts_code: str | None = None
+    direction: Literal["AH", "HA"] | None = None
+    holding_market: str | None = None
+    target_premium_pct: float | None = None
+    metric_premium_pct: float | None = None
+    ah_premium_pct: float | None = None
+    ha_premium_pct: float | None = None
+    distance_to_target_pct: float | None = None
+    premium_median_60: float | None = None
+    premium_p20_60: float | None = None
+    premium_p80_60: float | None = None
+    premium_percentile_60: float | None = None
+    connect_channels: str | None = None
+
+
 class ChatMessageCreate(BaseModel):
     """创建聊天消息请求。
 
@@ -93,6 +117,7 @@ class ChatMessageCreate(BaseModel):
     ts_code: str | None = None
     only_watchlist: bool = False
     llm_model: ChatModel = "deepseek-v4-flash"
+    threshold_recommendation: ThresholdRecommendationContext | None = None
 
 
 class ChatMessageResponse(BaseModel):
