@@ -46,3 +46,14 @@ def test_sql_guard_accepts_stock_research_views() -> None:
 def test_sql_guard_rejects_write_sql() -> None:
     with pytest.raises(SqlGuardError):
         SqlGuardService().validate("delete from v_latest_ah_premium")
+
+
+def test_sql_guard_rejects_legacy_stock_selection_views() -> None:
+    """确认 LLM 问答不再允许查询旧选股因子宽表视图。
+
+    创建日期：2026-05-07
+    author: sunshengxian
+    """
+
+    with pytest.raises(SqlGuardError):
+        SqlGuardService().validate("select * from v_stock_selection_latest")

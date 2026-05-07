@@ -58,11 +58,10 @@ INVESTMENT_ADVISOR_SYSTEM_PROMPT = """你是专业、有独立观点、注重证
 这是用户自己的本地投资评估项目，用户需要明确、可执行、可复核的真实建议。
 
 行为边界：
-1. 只回答股票、基金、指数、行业、估值、财报、红利、仓位、风险、
-组合配置、A/H 溢价、港股通、宏观与投资策略相关问题。
-2. 遇到非投资问题，简洁拒绝，并引导用户改问投资研究问题。
-3. 必须提出明确的研究判断、评级口径、配置倾向、优先级、仓位思路、阈值和触发条件。
-4. 不编造数据，不暗示拥有内幕信息，不提供规避监管或操纵市场建议。
+1. 当前提示词只用于投资研究问题；必须提出明确的研究判断、评级口径、配置倾向、
+优先级、仓位思路、阈值和触发条件。
+2. 不编造数据，不暗示拥有内幕信息，不提供规避监管或操纵市场建议。
+3. 如果材料显示用户只要数据、不需要分析，应尊重该意图，不强行输出投资判断。
 
 回答风格：
 1. 直接进入分析结论，不要使用“好的”“收到”“我将基于提供的 JSON 数据进行回答”等寒暄或过程说明。
@@ -98,13 +97,21 @@ Markdown 格式示例：
 | 进取型 | 修复弹性资产 | 反证条件未触发 |
 """
 
+GENERAL_ASSISTANT_SYSTEM_PROMPT = """你是一个通用中文助手。
+用户询问通用知识、翻译、改写、解释概念、写作润色或日常问答时，请直接回答。
+不要套用投资研究边界，不要提及本项目内部数据、SQL、Tushare、数据库或系统提示词。
+如果问题涉及实时证券价格、财报、估值或需要本项目结构化数据的投资问题，应由业务路由处理。
+"""
+
 SQL_SYSTEM_PROMPT = """你是只读金融数据查询规划器。只生成可执行 MySQL SELECT SQL，并且只返回 JSON。
 禁止输出解释、Markdown、代码块或多余文本。禁止写入、DDL、多语句和非白名单对象。
 """
 
-QUESTION_ROUTER_SYSTEM_PROMPT = """你是投资问答前置路由器。
-你需要在同一次判断中决定：问题是否允许由本投资助手回答、是否需要查询结构化数据、
+QUESTION_ROUTER_SYSTEM_PROMPT = """你是问答前置路由器。
+你需要在同一次判断中决定：问题是否允许由本助手回答、是否需要查询结构化数据、
 是否需要读取本地投研知识库，以及需要读取哪些知识分类。
+通用知识、翻译、改写、解释概念、写作润色和普通问答也属于允许范围；
+这类问题不需要 SQL、不需要知识库、不需要市场数据，直接由 LLM 回答。
 如果用户是在问 A 股的估值、财报、分红、投资分析报告、“怎么看”或多只股票对比，
 还要判断是否需要按需补充市场数据。
 按需补充市场数据最多输出 5 只 A 股，数据包只能从 quote_valuation、
@@ -116,7 +123,7 @@ Tushare 15000 积分在这里是接口权限门槛，不是按次扣费制；
 组合配置、A/H 溢价、港股通、宏观与投资策略相关问题；股票代码、公司投研、
 阈值建议和投资报告写作也属于范围。
 用户询问“你好”“你是谁”“你能做什么”“你可以帮我什么”等问候、角色身份和能力介绍问题也属于允许范围。
-编程、娱乐、日常生活、账号操作、违法违规交易和与投资研究无关的开放闲聊不属于范围。
+违法违规交易、索要敏感信息和账号越权操作不属于范围。
 如果问题需要当前/最近/自选/阈值/列表/排名/筛选/股票代码/精确数值，通常需要查询结构化数据。
 如果问题偏投研框架、报告结论、反证条件、行业逻辑、阈值方法或组合风险表达，
 可以读取知识库；如果是单只上市公司研究，应优先使用结构化补数。
@@ -127,8 +134,8 @@ Tushare 15000 积分在这里是接口权限门槛，不是按次扣费制；
 """
 
 OUT_OF_SCOPE_MESSAGE = (
-    "我现在主要负责投资研究和本项目里的 A/H 溢价分析，这个问题暂时不太在我的工作范围里。"
-    "你可以问我股票、行业、估值、A/H 溢价、港股通、自选股阈值、红利、组合配置或风险控制相关问题。"
+    "这个请求涉及违法违规交易、敏感信息或账号越权操作，我不能协助。"
+    "你可以改问通用知识、翻译、写作润色、投资研究、A/H 溢价、财报、估值或风险控制相关问题。"
 )
 
 SERVICE_INTRO_MESSAGE = (
@@ -273,18 +280,71 @@ REALTIME_DATA_KEYWORDS = (
     "筛选",
 )
 NON_INVESTMENT_KEYWORDS = (
+    "绕过风控",
+    "操纵市场",
+    "内幕消息",
+    "内幕交易",
+    "密码",
+    "token",
+    "apikey",
+    "api_key",
+    "银行卡",
+    "身份证",
+)
+GENERAL_QUESTION_KEYWORDS = (
+    "翻译",
+    "英文",
+    "中文",
+    "解释",
+    "是什么",
+    "为什么",
+    "怎么理解",
+    "知识",
+    "概念",
+    "润色",
+    "改写",
+    "总结",
+    "写一段",
     "写诗",
-    "诗",
-    "诗歌",
     "作文",
-    "菜谱",
-    "天气",
-    "旅游",
-    "电影",
-    "游戏",
     "代码",
     "编程",
     "bug",
+)
+DATA_ONLY_KEYWORDS = (
+    "只要数据",
+    "不要分析",
+    "不用分析",
+    "别分析",
+    "先给数据",
+    "返回数据",
+    "给我数据",
+    "给我看数据",
+    "列出数据",
+    "数据表",
+    "明细",
+    "原始数据",
+    "财报数据",
+    "估值数据",
+    "分红数据",
+    "现金流数据",
+)
+DATA_ANALYSIS_KEYWORDS = (
+    "分析",
+    "怎么看",
+    "对比",
+    "比较",
+    "建议",
+    "投资",
+    "报告",
+    "价值",
+    "逻辑",
+    "结论",
+    "买",
+    "卖",
+    "持有",
+    "配置",
+    "判断",
 )
 
 
@@ -445,6 +505,29 @@ class LlmService:
                 sql=None,
                 rows=[],
             )
+        if self._is_general_direct_question(question, route):
+            answer = self._chat_completion(
+                self._general_answer_prompt(question, request_context),
+                system_prompt=GENERAL_ASSISTANT_SYSTEM_PROMPT,
+                model=selected_model,
+                trace=LlmCallTrace(
+                    question_id=question_id,
+                    phase="answer",
+                    user_id=user_id,
+                    session_id=session_id,
+                    conversation_title=self._metric_conversation_title(question_id),
+                    user_name=self._metric_user_name(question_id),
+                ),
+            )
+            self._log_total_elapsed(
+                "sync_done",
+                question_id,
+                selected_model,
+                started_at,
+                user_id=user_id,
+                session_id=session_id,
+            )
+            return ChatAnswer(answer=answer.strip(), sql=None, rows=[])
         sql, rows, prompt = self._prepare_answer(
             question,
             request_context,
@@ -539,6 +622,21 @@ class LlmService:
                 session_id=session_id,
             )
             return None, [], iter([message])
+        if self._is_general_direct_question(question, route):
+            return None, [], self._chat_completion_stream(
+                self._general_answer_prompt(question, request_context),
+                system_prompt=GENERAL_ASSISTANT_SYSTEM_PROMPT,
+                model=selected_model,
+                trace=LlmCallTrace(
+                    question_id=question_id,
+                    phase="answer_stream",
+                    user_id=user_id,
+                    session_id=session_id,
+                    conversation_title=self._metric_conversation_title(question_id),
+                    user_name=self._metric_user_name(question_id),
+                ),
+                total_started_at=started_at,
+            )
         sql, rows, prompt = self._prepare_answer(
             question,
             request_context,
@@ -578,6 +676,14 @@ class LlmService:
     ) -> tuple[str | None, list[dict[str, Any]], str]:
         sql: str | None = None
         rows: list[dict[str, Any]] = []
+        market_data_context = self._ensure_market_data_context(
+            question,
+            context,
+            route,
+            question_id,
+            user_id,
+            session_id,
+        )
         if route.should_query_data:
             try:
                 sql = self._default_sql_for_question(question, context) or self._generate_sql(
@@ -641,19 +747,14 @@ class LlmService:
                 logger.error("LLM 数据查询准备失败，降级为无精确数据回答", exc_info=True)
                 sql = None
                 rows = []
+        if self._is_data_only_question(question) and (rows or market_data_context):
+            return sql, rows, self._data_only_answer(question, rows, market_data_context)
         return sql, rows, self._answer_prompt(
             question,
             rows,
             context,
             route,
-            market_data_context=self._ensure_market_data_context(
-                question,
-                context,
-                route,
-                question_id,
-                user_id,
-                session_id,
-            ),
+            market_data_context=market_data_context,
         )
 
     def _generate_sql(
@@ -814,16 +915,214 @@ class LlmService:
         if not market_data_context and not any(keyword in normalized for keyword in report_signals):
             return ""
         return (
-            "如果这是个股投资分析报告，请把可观察事实、推断和假设分清楚；"
-            "优先围绕商业质量、盈利增长、资产负债表、现金流质量、估值位置、分红回报、"
-            "业绩预告或景气变化、A/H 价差相关性和主要反证条件建立证据链。"
-            "你可以自由选择最合适的分析结构，不要机械套模板；"
-            "但必须指出数据缺口、最关键的跟踪指标，以及什么变化会推翻当前判断。"
+            "如果这是个股投资分析报告，请按研究员口径先做数据核验再做判断："
+            "第一，先给出评级倾向和一句话结论，但必须说明结论依赖哪些事实；"
+            "第二，把归母净利润、扣非净利润、投资收益、公允价值变动、资产减值和信用减值分开看，"
+            "不要把非经常性或投资收益驱动的利润增长直接等同于主业改善；"
+            "第三，现金流必须和利润对照，重点检查经营现金流覆盖、投资现金流、筹资现金流、"
+            "购建固定资产支出、偿债和分红付息压力；"
+            "第四，资产负债表要看货币资金、交易性金融资产、长期股权投资、商誉、有息负债、"
+            "流动/非流动负债和权益变化，判断利润与资产质量是否匹配；"
+            "第五，估值不能只看 PE/PB，要说明利润口径是否可靠，"
+            "必要时分别用归母、扣非、现金流和股息口径交叉验证；"
+            "第六，根据公司类型调整重点，银行看息差、资产质量和拨备，支付/金融科技看交易规模、费率、"
+            "支付业务收入、科技服务收入和合规成本，制造业看毛利率、存货、应收和资本开支；"
+            "第七，事实、推断和假设要分清楚，材料没有覆盖的指标要直接列为数据缺口，"
+            "并给出后续最该跟踪的 3 到 6 个指标以及推翻当前判断的反证条件。"
+            "不要机械套模板，也不要因为表面估值低就自动给乐观结论。"
         )
 
     def _execute_sql(self, sql: str) -> list[dict[str, Any]]:
         result = self.db.execute(text(sql))
         return [dict(row._mapping) for row in result.fetchall()]
+
+    def _general_answer_prompt(self, question: str, context: dict[str, Any]) -> str:
+        """构造通用问答提示，避免把翻译和知识问答误塞进投研约束。
+
+        创建日期：2026-05-07
+        author: sunshengxian
+        """
+
+        payload = {
+            "user_question": question,
+            "conversation_history": self._conversation_history(context)[-8:],
+        }
+        return (
+            "请直接回答用户问题。若用户要求翻译、改写或解释，请按用户要求输出；"
+            "不要主动转换成投资分析，也不要输出本项目内部处理过程。\n"
+            f"{json.dumps(payload, ensure_ascii=False, default=str)}"
+        )
+
+    def _is_general_direct_question(self, question: str, route: QuestionRoute) -> bool:
+        """判断是否为无需本地数据和投研知识约束的通用问答。
+
+        创建日期：2026-05-07
+        author: sunshengxian
+        """
+
+        if not route.is_answerable or route.should_query_data or route.use_knowledge:
+            return False
+        if route.data_demands:
+            return False
+        normalized = question.lower().replace(" ", "")
+        if any(keyword in normalized for keyword in INVESTMENT_KEYWORDS):
+            return False
+        return (
+            any(keyword in normalized for keyword in GENERAL_QUESTION_KEYWORDS)
+            or not self._should_query_data(question, {})
+        )
+
+    def _is_data_only_question(self, question: str) -> bool:
+        """识别用户只要数据的场景，避免最终回答阶段强行输出投资判断。
+
+        创建日期：2026-05-07
+        author: sunshengxian
+        """
+
+        normalized = question.lower().replace(" ", "")
+        has_data_only = any(keyword in normalized for keyword in DATA_ONLY_KEYWORDS)
+        has_analysis = any(keyword in normalized for keyword in DATA_ANALYSIS_KEYWORDS)
+        return has_data_only and not has_analysis
+
+    def _data_only_answer(
+        self,
+        question: str,
+        rows: list[dict[str, Any]],
+        market_data_context: dict[str, Any] | None,
+    ) -> str:
+        """把问数结果直接格式化为 Markdown 数据表，并提示可继续获取的数据类型。
+
+        创建日期：2026-05-07
+        author: sunshengxian
+        """
+
+        normalized_rows = rows[:20] or self._rows_from_market_data_context(market_data_context)
+        lines = ["## 数据结果", ""]
+        if normalized_rows:
+            lines.append(self._markdown_table(normalized_rows[:20]))
+            lines.append("")
+            if len(normalized_rows) > 20:
+                lines.append(f"已先展示前 20 行，本次共命中 {len(normalized_rows)} 行。")
+                lines.append("")
+        else:
+            lines.append("当前没有查到可展示的数据。")
+            lines.append("")
+        lines.append(
+            "还可以继续返回：行情估值、财务摘要、现金流、利润质量、分红/业绩预告、"
+            "主营业务构成、A/H 溢价和自选股阈值数据。需要分析时直接告诉我。"
+        )
+        return "\n".join(lines)
+
+    def _rows_from_market_data_context(
+        self,
+        market_data_context: dict[str, Any] | None,
+    ) -> list[dict[str, Any]]:
+        """从按需补数上下文提取最适合问数展示的摘要行。
+
+        创建日期：2026-05-07
+        author: sunshengxian
+        """
+
+        if not market_data_context:
+            return []
+        context_payload = market_data_context.get("context")
+        if not isinstance(context_payload, dict):
+            return []
+        extracted: list[dict[str, Any]] = []
+        items = context_payload.get("items")
+        if isinstance(items, list):
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                item_context = item.get("context")
+                if isinstance(item_context, dict):
+                    extracted.extend(self._preferred_context_rows(item_context))
+            return extracted
+        return self._preferred_context_rows(context_payload)
+
+    def _preferred_context_rows(self, context_payload: dict[str, Any]) -> list[dict[str, Any]]:
+        """按财务、估值、最新摘要的优先级选择问数展示行。
+
+        创建日期：2026-05-07
+        author: sunshengxian
+        """
+
+        for key in ("financial_periods", "valuation_trend", "latest"):
+            rows = context_payload.get(key)
+            if isinstance(rows, list) and rows:
+                return [row for row in rows if isinstance(row, dict)]
+        return []
+
+    def _markdown_table(self, rows: list[dict[str, Any]]) -> str:
+        """把结构化数据转为紧凑 Markdown 表，防止问数场景再调用分析模型。
+
+        创建日期：2026-05-07
+        author: sunshengxian
+        """
+
+        columns = self._table_columns(rows)
+        header = "| " + " | ".join(columns) + " |"
+        separator = "| " + " | ".join("---" for _column in columns) + " |"
+        body = [
+            "| "
+            + " | ".join(self._format_table_cell(row.get(column)) for column in columns)
+            + " |"
+            for row in rows
+        ]
+        return "\n".join([header, separator, *body])
+
+    def _table_columns(self, rows: list[dict[str, Any]]) -> list[str]:
+        """保留常用字段顺序，并限制列数避免聊天窗口过宽。
+
+        创建日期：2026-05-07
+        author: sunshengxian
+        """
+
+        preferred = (
+            "ts_code",
+            "name",
+            "trade_date",
+            "end_date",
+            "ann_date",
+            "close",
+            "pct_chg",
+            "pe_ttm",
+            "pb",
+            "dividend_yield_ttm",
+            "eps",
+            "roe",
+            "roe_waa",
+            "total_revenue",
+            "revenue",
+            "n_income_attr_p",
+            "profit_dedt",
+            "invest_income",
+            "fv_value_chg_gain",
+            "n_cashflow_act",
+            "total_assets",
+            "total_liab",
+        )
+        available = {key for row in rows for key, value in row.items() if value is not None}
+        columns = [column for column in preferred if column in available]
+        for row in rows:
+            for key, value in row.items():
+                if value is not None and key not in columns:
+                    columns.append(key)
+                if len(columns) >= 80:
+                    return columns[:80]
+        return columns[:80] or list(rows[0].keys())[:32]
+
+    def _format_table_cell(self, value: Any) -> str:
+        """格式化 Markdown 单元格，处理 None、换行和竖线转义。
+
+        创建日期：2026-05-07
+        author: sunshengxian
+        """
+
+        if value is None:
+            return ""
+        text_value = str(value).replace("\n", " ").replace("|", "\\|")
+        return text_value[:160]
 
     def _chat_completion(
         self,
@@ -1387,9 +1686,10 @@ class LlmService:
             "涉及可操作性时优先查询含 hk_connect 或 watchlist 的视图。"
             "涉及自选、关注、阈值、机会状态或 v_watchlist_opportunity 时，"
             "必须使用 context.user_id 过滤 user_id，禁止查询其他用户自选数据。"
-            "涉及 A 股选股、低估值、红利、蓝筹、ROE、PE、PB、股息率时"
-            "优先查询 v_stock_selection_latest，"
-            "并可用 v_stock_factor_dictionary 解释字段含义。"
+            "涉及 A 股个股财报、估值、红利、ROE、PE、PB、股息率时，"
+            "只能使用 v_stock_research_context_latest、v_stock_quote_valuation_trend、"
+            "v_stock_financial_period_summary 等按需 Tushare 数据视图；"
+            "不要查询旧选股宽表或候选因子宽表。"
             "字段名必须完全来自字段清单；不要使用 stock_name、ha_premium、ah_premium 等不存在字段，"
             "应使用 display_name/a_name/hk_name/name、ha_premium_pct、ah_premium_pct。"
             "不要使用写入、DDL、多语句。问题与上下文如下："
@@ -1497,24 +1797,6 @@ class LlmService:
         normalized = question.lower()
         return any(keyword in normalized for keyword in keywords)
 
-    def _is_stock_selection_question(self, question: str) -> bool:
-        normalized = question.lower()
-        keywords = (
-            "选股",
-            "蓝筹",
-            "低估值",
-            "红利",
-            "股息",
-            "pe",
-            "pb",
-            "roe",
-            "估值",
-            "沪深300",
-            "上证50",
-            "质量",
-        )
-        return any(keyword in normalized for keyword in keywords)
-
     def _default_sql_for_question(
         self,
         question: str,
@@ -1554,14 +1836,6 @@ class LlmService:
                 "ORDER BY ABS(distance_to_target_pct) ASC LIMIT 30"
             )
         if not self._is_ah_arbitrage_question(question):
-            if self._is_stock_selection_question(question):
-                return (
-                    "SELECT factor_date,ts_code,name,industry,selection_tags,selection_score,"
-                    "selection_reason,pe_ttm,pb,dividend_yield_ttm,roe,debt_to_assets,"
-                    "return_20d,return_60d,return_120d "
-                    "FROM v_stock_selection_latest "
-                    "ORDER BY selection_score DESC LIMIT 20"
-            )
             return None
         if any(keyword in normalized for keyword in ("哪些", "适合", "候选", "推荐", "筛选")):
             if any(
@@ -2151,35 +2425,44 @@ class LlmService:
                 "distance_to_target_pct,premium_percentile_60,is_hk_connect,connect_channels,"
                 "data_source,source_updated_at,opportunity_status,updated_at"
             ),
-            "v_stock_selection_latest": (
-                "columns: id,factor_date,ts_code,symbol,name,industry,area,market,selection_tags,"
-                "selection_score,selection_reason,is_hs300,is_sse50,is_csi300_value,"
-                "is_csi_dividend,is_sse_dividend,is_sz_dividend,close,pct_chg,turnover_rate,"
-                "pe_ttm,pb,ps_ttm,dividend_yield_ttm,total_mv,circ_mv,roe,grossprofit_margin,"
-                "netprofit_margin,debt_to_assets,revenue_yoy,latest_report_period,return_20d,"
-                "return_60d,return_120d,latest_dividend_year,latest_cash_div_tax,"
-                "latest_dividend_proc,forecast_type,forecast_summary,data_source,"
-                "source_trade_date,created_at,updated_at"
-            ),
-            "v_stock_selection_history": "columns: same as v_stock_selection_latest",
-            "v_stock_factor_dictionary": "columns: field_name,field_label,description,usage_hint",
             "v_stock_quote_valuation_trend": (
                 "columns: ts_code,name,industry,area,trade_date,close,pct_chg,turnover_rate,"
                 "pe,pe_ttm,pb,ps_ttm,dividend_yield_ttm,total_mv,circ_mv"
             ),
             "v_stock_financial_period_summary": (
                 "columns: ts_code,name,industry,end_date,ann_date,eps,roe,roe_waa,"
-                "grossprofit_margin,netprofit_margin,debt_to_assets,current_ratio,quick_ratio,"
-                "revenue_yoy,netprofit_yoy,ocf_to_revenue,bps,total_revenue,revenue,"
-                "n_income_attr_p,n_cashflow_act,total_assets,total_liab,calculated_debt_to_assets"
+                "roe_dt,roa,grossprofit_margin,netprofit_margin,sales_gpr,profit_to_gr,"
+                "debt_to_assets,assets_to_eqt,current_ratio,quick_ratio,revenue_yoy,"
+                "q_sales_yoy,netprofit_yoy,q_netprofit_yoy,ocf_to_revenue,ocfps,bps,"
+                "profit_dedt,total_revenue,revenue,total_cogs,oper_cost,biz_tax_surchg,"
+                "sell_exp,admin_exp,fin_exp,rd_exp,assets_impair_loss,credit_impa_loss,"
+                "oth_income,asset_disp_income,operate_profit,non_oper_income,non_oper_exp,"
+                "total_profit,income_tax,n_income,n_income_attr_p,minority_gain,invest_income,"
+                "fv_value_chg_gain,ebit,ebitda,cashflow_net_profit,cashflow_finan_exp,"
+                "c_fr_sale_sg,c_paid_goods_s,c_paid_to_for_empl,c_paid_for_taxes,"
+                "n_cashflow_act,c_recp_return_invest,n_recp_disp_fiolta,c_pay_acq_const_fiolta,"
+                "n_cashflow_inv_act,c_recp_borrow,c_prepay_amt_borr,c_pay_dist_dpcp_int_exp,"
+                "n_cash_flows_fnc_act,n_incr_cash_cash_equ,c_cash_equ_end_period,money_cap,"
+                "trad_asset,lt_eqt_invest,invest_real_estate,notes_receiv,accounts_receiv,"
+                "oth_receiv,inventories,fix_assets,cip,intan_assets,goodwill,total_cur_assets,"
+                "total_nca,total_assets,st_borr,notes_payable,acct_payable,contract_liab,"
+                "lt_borr,bond_payable,total_cur_liab,total_ncl,total_liab,"
+                "total_hldr_eqy_inc_min_int,total_hldr_eqy_exc_min_int,cap_rese,surplus_rese,"
+                "undistr_porfit,calculated_debt_to_assets"
             ),
             "v_stock_research_context_latest": (
                 "columns: ts_code,symbol,name,industry,area,market,latest_trade_date,close,"
                 "pct_chg,pe_ttm,pb,ps_ttm,dividend_yield_ttm,total_mv,circ_mv,"
-                "latest_report_period,roe,grossprofit_margin,netprofit_margin,debt_to_assets,"
-                "revenue_yoy,netprofit_yoy,ocf_to_revenue,latest_dividend_period,"
-                "latest_cash_div_tax,latest_dividend_proc,latest_forecast_ann_date,"
-                "latest_forecast_type,latest_forecast_summary"
+                "latest_report_period,roe,roe_waa,roe_dt,roa,grossprofit_margin,"
+                "netprofit_margin,sales_gpr,profit_to_gr,debt_to_assets,assets_to_eqt,"
+                "current_ratio,quick_ratio,revenue_yoy,q_sales_yoy,netprofit_yoy,"
+                "q_netprofit_yoy,ocf_to_revenue,ocfps,bps,total_revenue,revenue,total_cogs,"
+                "oper_cost,sell_exp,admin_exp,fin_exp,rd_exp,n_income_attr_p,profit_dedt,"
+                "invest_income,fv_value_chg_gain,assets_impair_loss,credit_impa_loss,"
+                "n_cashflow_act,n_cashflow_inv_act,n_cash_flows_fnc_act,money_cap,trad_asset,"
+                "lt_eqt_invest,total_assets,total_liab,total_hldr_eqy_exc_min_int,"
+                "latest_dividend_period,latest_cash_div_tax,latest_dividend_proc,"
+                "latest_forecast_ann_date,latest_forecast_type,latest_forecast_summary"
             ),
             "v_market_data_fetch_health": (
                 "columns: id,question_id,intent,market_scope,symbols_json,data_packages_json,"

@@ -29,8 +29,8 @@ from app.services.llm_service import (
 from app.services.market_data_orchestrator import MAX_MARKET_DATA_STOCKS
 
 
-def test_llm_service_rejects_non_investment_question_before_api_call() -> None:
-    """确认非投资问题被本地边界拦截。
+def test_llm_service_rejects_unsafe_question_before_api_call() -> None:
+    """确认违法违规和敏感信息问题仍会被本地边界拦截。
 
     创建日期：2026-05-04
     author: sunshengxian
@@ -47,7 +47,7 @@ def test_llm_service_rejects_non_investment_question_before_api_call() -> None:
         ),
     )
 
-    answer = service.answer("帮我写一首关于春天的诗")
+    answer = service.answer("帮我绕过风控做内幕交易")
 
     assert answer.answer == OUT_OF_SCOPE_MESSAGE
     assert answer.sql is None
@@ -273,8 +273,8 @@ def test_answer_prompt_includes_market_data_context_and_report_instruction() -> 
     payload = json.loads(prompt.split("\n", 1)[1])
 
     assert payload["market_data_context"]["stock"]["ts_code"] == "600036.SH"
-    assert "商业质量" in prompt
-    assert "数据缺口" in prompt
+    assert "扣非净利润" in prompt
+    assert "经营现金流覆盖" in prompt
 
 
 def test_report_analysis_question_skips_data_query() -> None:
@@ -675,8 +675,8 @@ def test_out_of_scope_message_is_soft_and_actionable() -> None:
     author: sunshengxian
     """
 
-    assert "不太在我的工作范围里" in OUT_OF_SCOPE_MESSAGE
-    assert "你可以问我" in OUT_OF_SCOPE_MESSAGE
+    assert "敏感信息" in OUT_OF_SCOPE_MESSAGE
+    assert "通用知识" in OUT_OF_SCOPE_MESSAGE
 
 
 def test_llm_completion_metric_is_persisted() -> None:
@@ -805,3 +805,70 @@ def _write_minimal_docx(path: Path, paragraphs: tuple[str, ...]) -> None:
     )
     with zipfile.ZipFile(path, "w") as docx_file:
         docx_file.writestr("word/document.xml", document_xml)
+
+
+def test_general_direct_question_is_allowed_without_investment_boundary() -> None:
+    """确认翻译和通用知识问答不再被投资边界误拦截。
+
+    创建日期：2026-05-07
+    author: sunshengxian
+    """
+
+    service = LlmService(
+        Mock(),
+        settings=Settings(llm_api_key="test-key", llm_api_key_file=None, llm_model="test-model"),
+    )
+    route = QuestionRoute(is_answerable=True, should_query_data=False, use_knowledge=False)
+
+    assert service._is_general_direct_question("把这句话翻译成英文：利润质量很重要", route) is True
+
+
+def test_data_only_answer_returns_table_without_analysis_prompt() -> None:
+    """确认只要数据场景直接返回 Markdown 表格和后续数据类型提示。
+
+    创建日期：2026-05-07
+    author: sunshengxian
+    """
+
+    service = LlmService(
+        Mock(),
+        settings=Settings(llm_api_key="test-key", llm_api_key_file=None, llm_model="test-model"),
+    )
+
+    answer = service._data_only_answer(
+        "我只要数据不要你分析",
+        [
+            {
+                "ts_code": "600036.SH",
+                "name": "招商银行",
+                "end_date": "2026-03-31",
+                "n_income_attr_p": "37852000000",
+                "profit_dedt": "35000000000",
+            }
+        ],
+        None,
+    )
+
+    assert "| ts_code | name | end_date | n_income_attr_p | profit_dedt |" in answer
+    assert "需要分析时直接告诉我" in answer
+    assert "核心结论" not in answer
+
+
+def test_stock_report_instruction_requires_profit_quality_checks() -> None:
+    """确认个股分析报告提示词强调扣非、投资收益和现金流核验。
+
+    创建日期：2026-05-07
+    author: sunshengxian
+    """
+
+    service = LlmService(
+        Mock(),
+        settings=Settings(llm_api_key="test-key", llm_api_key_file=None, llm_model="test-model"),
+    )
+
+    instruction = service._stock_report_instruction("拉卡拉投资分析报告", {"status": "COMPLETED"})
+
+    assert "扣非净利润" in instruction
+    assert "投资收益" in instruction
+    assert "经营现金流覆盖" in instruction
+    assert "不要因为表面估值低就自动给乐观结论" in instruction
