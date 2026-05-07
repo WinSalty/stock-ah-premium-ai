@@ -26,6 +26,9 @@ from app.services.date_utils import format_tushare_date, parse_tushare_date
 from app.services.decimal_utils import quantize_decimal, to_decimal
 from app.services.repository import UpsertRepository
 from app.services.stock_selection_factor_service import StockSelectionFactorService
+from app.services.tencent_unadjusted_sync_batch_service import (
+    TencentUnadjustedSyncBatchService,
+)
 from app.services.tushare_client import TushareClient
 
 
@@ -71,6 +74,7 @@ CORE_SYNC_PLAN: tuple[tuple[str, dict[str, Any]], ...] = (
 )
 DISABLED_INTERFACE_DATASETS = {"hk_daily"}
 STOCK_SELECTION_FACTOR_DATASET = "stock_selection_factors"
+TENCENT_UNADJUSTED_BACKFILL_DATASET = "tencent_unadjusted_backfill"
 
 
 DATASET_SPECS: dict[str, DatasetSpec] = {
@@ -314,7 +318,7 @@ class SyncService:
 
         return [self._dataset_info(spec) for spec in DATASET_SPECS.values()] + [
             {
-                "name": "tencent_unadjusted_backfill",
+                "name": TENCENT_UNADJUSTED_BACKFILL_DATASET,
                 "label": "腾讯不复权补数",
                 "description": (
                     "同步关注股票腾讯不复权 A/H 日线，并基于 HKD/CNY 汇率追跑历史 AH 比价。"
@@ -350,6 +354,8 @@ class SyncService:
         author: sunshengxian
         """
 
+        if dataset == TENCENT_UNADJUSTED_BACKFILL_DATASET:
+            return self._run_tencent_unadjusted_backfill(params)
         if dataset not in DATASET_SPECS and dataset != STOCK_SELECTION_FACTOR_DATASET:
             raise ValueError(f"不支持的数据集：{dataset}")
         if dataset in DISABLED_INTERFACE_DATASETS:
@@ -407,6 +413,45 @@ class SyncService:
             params = {key: value for key, value in params.items() if value is not None}
             runs.append(self.run_sync(dataset, params))
         return runs
+
+    def _run_tencent_unadjusted_backfill(self, params: dict[str, Any]) -> SyncRun:
+        """把通用同步入口转发到腾讯不复权补数服务。
+
+        创建日期：2026-05-07
+        author: sunshengxian
+        """
+
+        # 同步页既有专用按钮，也允许在“数据集 + 执行同步”里选择同一数据集；
+        # 这里复用腾讯补数编排服务，避免通用 Tushare 分发器误报“不支持的数据集”。
+        normalized_params = self._normalize_params(params)
+        service_result = TencentUnadjustedSyncBatchService(self.db).sync_pending_watchlist(
+            start_date=normalized_params.get("start_date"),
+            end_date=normalized_params.get("end_date"),
+        )
+        run = (
+            self.db.execute(
+                select(SyncRun)
+                .where(SyncRun.dataset == TENCENT_UNADJUSTED_BACKFILL_DATASET)
+                .order_by(SyncRun.id.desc())
+                .limit(1)
+            )
+            .scalars()
+            .first()
+        )
+        if run is None:
+            # 理论上腾讯补数服务会自行写 sync_run；兜底创建成功记录，保证 API 响应模型稳定。
+            run = SyncRun(
+                dataset=TENCENT_UNADJUSTED_BACKFILL_DATASET,
+                params_json=json.dumps(normalized_params, ensure_ascii=False, default=str),
+                status="SUCCESS",
+                row_count=service_result.inserted_rows,
+                started_at=datetime.now(UTC).replace(tzinfo=None),
+                finished_at=datetime.now(UTC).replace(tzinfo=None),
+            )
+            self.db.add(run)
+            self.db.commit()
+            self.db.refresh(run)
+        return run
 
     def _sync_spec(self, spec: DatasetSpec, params: dict[str, Any]) -> int:
         merged_params = self._build_params(spec, params)
