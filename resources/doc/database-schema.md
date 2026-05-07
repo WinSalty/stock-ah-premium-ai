@@ -1,6 +1,6 @@
 # 数据库表结构说明
 
-更新日期：2026-05-06
+更新日期：2026-05-07
 
 ## 维护口径
 
@@ -48,6 +48,20 @@ A/H 溢价与可交易性：
 A 股选股因子：
 
 - `stock_selection_factor_snapshot`：LLM 选股用核心宽表，保存蓝筹、低估值、红利和质量因子候选股票快照。
+
+LLM 按需个股研究数据：
+
+- `a_daily_basic`：单股按需补取的 A 股每日估值指标，用于报告中的估值位置、股息率、市值和换手率分析。
+- `a_income_statement`：单股利润表核心字段，保存近年营收、利润、费用和每股收益等报告证据。
+- `a_balance_sheet`：单股资产负债表核心字段，保存资产、负债、权益、货币资金、应收、存货和借款等字段。
+- `a_cashflow_statement`：单股现金流量表核心字段，保存经营、投资、筹资现金流和期末现金等字段。
+- `a_financial_indicator`：单股财务指标核心字段，保存 ROE、毛利率、净利率、资产负债率、收入和净利润同比等指标。
+- `a_dividend`：单股分红送股记录，用于报告中的股息回报、分红稳定性和执行进度分析。
+- `a_forecast`：单股业绩预告记录，用于报告中的业绩前瞻、反证条件和跟踪指标分析。
+- `llm_market_data_fetch_run`：LLM 按需市场数据抓取批次审计，记录问题追踪 ID、单股代码、数据包、缓存命中、状态和行数。
+- `llm_market_data_fetch_item`：LLM 按需市场数据抓取明细审计，记录每个白名单 Tushare 接口的参数、字段、耗时和错误摘要。
+
+按需补数硬边界：当前仅面向 15000 积分 Tushare 权限设计，自动流程只允许单只 A 股、短区间、低频、缓存优先的数据包补齐；不允许 LLM 任意选择 Tushare 接口、字段或全市场批量拉取。LLM 读取时只通过 `v_stock_quote_valuation_trend`、`v_stock_financial_period_summary`、`v_stock_research_context_latest` 和 `v_market_data_fetch_health` 等只读视图消费整理后的上下文。
 
 任务、质量与问答：
 

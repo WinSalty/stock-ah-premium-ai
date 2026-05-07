@@ -10,6 +10,7 @@
 
 - 一阶段详细开发方案：[phase-1-detailed-development-plan.md](./resources/doc/phase-1-detailed-development-plan.md)
 - A/H 溢价套现评审与展示设计：[ah-premium-review-and-display-design.md](./resources/doc/ah-premium-review-and-display-design.md)
+- LLM 按需补齐 Tushare 股票数据通用开发方案：[llm-tushare-on-demand-stock-data-plan.md](./resources/doc/llm-tushare-on-demand-stock-data-plan.md)
 - 开发进度记录：[development-progress.md](./resources/doc/development-progress.md)
 - 项目启动手册：[startup-guide.md](./resources/doc/startup-guide.md)
 - 单机服务器部署记录：[server-deployment-guide.md](./resources/doc/server-deployment-guide.md)

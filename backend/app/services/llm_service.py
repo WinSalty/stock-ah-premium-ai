@@ -21,6 +21,7 @@ from app.db.models.auth import AppUser
 from app.db.models.chat import LlmCallMetric
 from app.services.investment_knowledge_service import InvestmentKnowledgeService
 from app.services.llm_metric_definitions import phase_description, phase_label
+from app.services.market_data_orchestrator import MarketDataDemand, MarketDataOrchestrator
 from app.services.sql_guard_service import SqlGuardError, SqlGuardService
 
 logger = logging.getLogger(__name__)
@@ -98,6 +99,11 @@ SQL_SYSTEM_PROMPT = """你是只读金融数据查询规划器。只生成可执
 QUESTION_ROUTER_SYSTEM_PROMPT = """你是投资问答前置路由器。
 你需要在同一次判断中决定：问题是否允许由本投资助手回答、是否需要查询结构化数据、
 是否需要读取本地投研知识库，以及需要读取哪些知识分类。
+如果用户是在问单只 A 股的估值、财报、分红、投资分析报告或“怎么看”，
+还要判断是否需要按需补充市场数据。
+按需补充市场数据只能输出单只 A 股，数据包只能从 quote_valuation、
+financial_statement、dividend_forecast 中选择；
+不要输出港股、指数、全市场、多个股票或任意 Tushare 接口名。
 投资研究范围包括股票、基金、指数、行业、估值、财报、红利、仓位、风险、
 组合配置、A/H 溢价、港股通、宏观与投资策略相关问题；股票代码、公司投研、
 阈值建议和投资报告写作也属于范围。
@@ -107,7 +113,7 @@ QUESTION_ROUTER_SYSTEM_PROMPT = """你是投资问答前置路由器。
 如果问题偏投研框架、报告结论、反证条件、行业逻辑、阈值方法、组合风险表达或个股深度研究，
 可以读取知识库；如果结构化数据和常识足够，不要读取知识库。
 只返回 JSON，不要输出解释。格式：
-{"is_answerable":true或false,"needs_sql":true或false,"use_knowledge":true或false,"knowledge_categories":["分类key"],"reason":"一句话原因"}
+{"is_answerable":true或false,"needs_sql":true或false,"use_knowledge":true或false,"knowledge_categories":["分类key"],"data_demands":[{"market":"A","ts_code":"600036.SH","packages":["quote_valuation","financial_statement","dividend_forecast"],"intent":"stock_research"}],"reason":"一句话原因"}
 """
 
 OUT_OF_SCOPE_MESSAGE = (
@@ -327,6 +333,7 @@ class QuestionRoute:
     should_query_data: bool
     use_knowledge: bool
     knowledge_category_keys: tuple[str, ...] = ()
+    data_demands: tuple[MarketDataDemand, ...] = ()
     reason: str = ""
 
 
@@ -616,6 +623,14 @@ class LlmService:
             rows,
             context,
             route,
+            market_data_context=self._ensure_market_data_context(
+                question,
+                context,
+                route,
+                question_id,
+                user_id,
+                session_id,
+            ),
         )
 
     def _generate_sql(
@@ -668,6 +683,7 @@ class LlmService:
         rows: list[dict[str, Any]],
         context: dict[str, Any],
         route: QuestionRoute | None = None,
+        market_data_context: dict[str, Any] | None = None,
     ) -> str:
         history = self._conversation_history(context)
         category_keys = route.knowledge_category_keys if route and route.use_knowledge else ()
@@ -690,9 +706,11 @@ class LlmService:
             "filters": filters,
             "market_observations": rows[:ANSWER_MARKET_ROW_LIMIT],
             "supplemental_market_observations": self._supporting_data(question, context),
+            "market_data_context": market_data_context,
             "knowledge_categories": knowledge.categories,
             "reference_materials": knowledge.chunks,
         }
+        stock_report_instruction = self._stock_report_instruction(question, market_data_context)
         return (
             "请根据以下分析材料生成给用户的最终投资研究回答。"
             "材料中的结构化字段和参考内容只供你内部分析，最终回答不得提及材料格式、"
@@ -703,10 +721,77 @@ class LlmService:
             "不要过度自我设限；在证据足够时可以给出清晰的看多/中性/谨慎判断、"
             "配置优先级、仓位思路和触发条件。"
             "请直接给出结论、投资逻辑、配置建议、执行条件、反证条件和跟踪项。"
+            f"{stock_report_instruction}"
             "第一块 `## 一、核心结论` 必须使用项目符号列表，不要使用表格。"
             "如需表格，只能从第二块开始使用，并确保表格前后空行、表头、分隔行和列数完全合法。"
             "不要输出模板化免责句或泛泛风险警告。\n"
             f"{json.dumps(payload, ensure_ascii=False, default=str)}"
+        )
+
+    def _ensure_market_data_context(
+        self,
+        question: str,
+        context: dict[str, Any],
+        route: QuestionRoute,
+        question_id: str,
+        user_id: int | None,
+        session_id: int | None,
+    ) -> dict[str, Any] | None:
+        """在回答前按需补足单只股票研究数据。
+
+        创建日期：2026-05-07
+        author: sunshengxian
+        """
+
+        try:
+            result = MarketDataOrchestrator(self.db).ensure_for_question(
+                question,
+                context,
+                route.data_demands,
+                question_id=question_id,
+                user_id=user_id,
+                session_id=session_id,
+            )
+        except Exception:
+            logger.error("LLM 按需市场数据上下文准备失败，降级为已有数据回答", exc_info=True)
+            return {"status": "FAILED", "reason": "按需市场数据上下文准备失败"}
+        if result.status == "SKIPPED" and not result.context:
+            return None
+        return {
+            "status": result.status,
+            "cache_hit": result.cache_hit,
+            "fetched_rows": result.fetched_rows,
+            "packages": result.packages,
+            "stock": result.stock,
+            "context": result.context,
+            "reason": result.reason,
+            "data_boundary": (
+                "仅按单只 A 股和白名单数据包补充有限区间数据；"
+                "材料缺口需要在结论中说明。"
+            ),
+        }
+
+    def _stock_report_instruction(
+        self,
+        question: str,
+        market_data_context: dict[str, Any] | None,
+    ) -> str:
+        """为个股投资报告追加方法论提示，不限制模型的推理组织方式。
+
+        创建日期：2026-05-07
+        author: sunshengxian
+        """
+
+        normalized = question.lower()
+        report_signals = ("分析报告", "投资报告", "深度报告", "个股分析", "怎么看", "估值", "财报")
+        if not market_data_context and not any(keyword in normalized for keyword in report_signals):
+            return ""
+        return (
+            "如果这是个股投资分析报告，请把可观察事实、推断和假设分清楚；"
+            "优先围绕商业质量、盈利增长、资产负债表、现金流质量、估值位置、分红回报、"
+            "业绩预告或景气变化、A/H 价差相关性和主要反证条件建立证据链。"
+            "你可以自由选择最合适的分析结构，不要机械套模板；"
+            "但必须指出数据缺口、最关键的跟踪指标，以及什么变化会推翻当前判断。"
         )
 
     def _execute_sql(self, sql: str) -> list[dict[str, Any]]:
@@ -1539,13 +1624,49 @@ class LlmService:
         if not isinstance(categories, list):
             categories = []
         category_keys = tuple(item for item in categories if isinstance(item, str))
+        demands = self._data_demands_from_payload(payload.get("data_demands"))
         return QuestionRoute(
             is_answerable=payload.get("is_answerable") is True,
             should_query_data=payload.get("needs_sql") is True,
             use_knowledge=payload.get("use_knowledge") is True,
             knowledge_category_keys=category_keys,
+            data_demands=demands,
             reason=str(payload.get("reason") or ""),
         )
+
+    def _data_demands_from_payload(self, raw_demands: Any) -> tuple[MarketDataDemand, ...]:
+        """解析前置路由提出的数据包需求，并过滤掉非白名单内容。
+
+        创建日期：2026-05-07
+        author: sunshengxian
+        """
+
+        if not isinstance(raw_demands, list):
+            return ()
+        demands: list[MarketDataDemand] = []
+        allowed_packages = {"quote_valuation", "financial_statement", "dividend_forecast"}
+        for item in raw_demands[:2]:
+            if not isinstance(item, dict):
+                continue
+            ts_code = str(item.get("ts_code") or "").upper()
+            if not re.fullmatch(r"\d{6}\.(SH|SZ|BJ)", ts_code):
+                continue
+            packages = item.get("packages")
+            if not isinstance(packages, list):
+                packages = []
+            filtered_packages = tuple(
+                package
+                for package in packages
+                if isinstance(package, str) and package in allowed_packages
+            )
+            demands.append(
+                MarketDataDemand(
+                    ts_code=ts_code,
+                    packages=filtered_packages or ("quote_valuation",),
+                    intent=str(item.get("intent") or "stock_research"),
+                )
+            )
+        return tuple(demands)
 
     def _local_question_route(
         self,
@@ -1566,9 +1687,50 @@ class LlmService:
                 is_answerable=True,
                 should_query_data=self._should_query_data(question, context or {}),
                 use_knowledge=False,
+                data_demands=self._local_data_demands(question, context or {}),
                 reason="前置路由不可用，本地规则放行",
             )
         return QuestionRoute(False, False, False, reason="前置路由不可用且本地规则不确定")
+
+    def _local_data_demands(
+        self,
+        question: str,
+        context: dict[str, Any],
+    ) -> tuple[MarketDataDemand, ...]:
+        """路由模型不可用时按本地规则生成单股数据包需求。
+
+        创建日期：2026-05-07
+        author: sunshengxian
+        """
+
+        normalized = question.lower()
+        ts_code = self._local_ts_code(question, context)
+        if not ts_code:
+            return ()
+        packages = ["quote_valuation"]
+        financial_keywords = ("分析报告", "投资报告", "深度报告", "财报", "估值", "roe")
+        dividend_keywords = ("分析报告", "投资报告", "分红", "股息", "预告")
+        if any(keyword in normalized for keyword in financial_keywords):
+            packages.append("financial_statement")
+        if any(keyword in normalized for keyword in dividend_keywords):
+            packages.append("dividend_forecast")
+        return (MarketDataDemand(ts_code=ts_code, packages=tuple(packages)),)
+
+    def _local_ts_code(self, question: str, context: dict[str, Any]) -> str | None:
+        # 这里只做格式抽取，最终是否允许补数仍由 StockIdentityResolver 回查本地基础表确认。
+        for key in ("ts_code", "a_ts_code", "stock_code"):
+            value = context.get(key)
+            if isinstance(value, str) and re.fullmatch(r"\d{6}\.(SH|SZ|BJ)", value.upper()):
+                return value.upper()
+        match = re.search(r"\b(\d{6})\.(SH|SZ|BJ)\b", question, re.IGNORECASE)
+        if match:
+            return f"{match.group(1)}.{match.group(2).upper()}"
+        match = re.search(r"(?<!\d)(\d{6})(?!\d)", question)
+        if not match:
+            return None
+        symbol = match.group(1)
+        suffix = "SH" if symbol.startswith(("6", "9")) else "SZ"
+        return f"{symbol}.{suffix}"
 
     def _is_investment_related_question(
         self,
@@ -1756,6 +1918,28 @@ class LlmService:
             ),
             "v_stock_selection_history": "columns: same as v_stock_selection_latest",
             "v_stock_factor_dictionary": "columns: field_name,field_label,description,usage_hint",
+            "v_stock_quote_valuation_trend": (
+                "columns: ts_code,name,industry,area,trade_date,close,pct_chg,turnover_rate,"
+                "pe,pe_ttm,pb,ps_ttm,dividend_yield_ttm,total_mv,circ_mv"
+            ),
+            "v_stock_financial_period_summary": (
+                "columns: ts_code,name,industry,end_date,ann_date,eps,roe,roe_waa,"
+                "grossprofit_margin,netprofit_margin,debt_to_assets,current_ratio,quick_ratio,"
+                "revenue_yoy,netprofit_yoy,ocf_to_revenue,bps,total_revenue,revenue,"
+                "n_income_attr_p,n_cashflow_act,total_assets,total_liab,calculated_debt_to_assets"
+            ),
+            "v_stock_research_context_latest": (
+                "columns: ts_code,symbol,name,industry,area,market,latest_trade_date,close,"
+                "pct_chg,pe_ttm,pb,ps_ttm,dividend_yield_ttm,total_mv,circ_mv,"
+                "latest_report_period,roe,grossprofit_margin,netprofit_margin,debt_to_assets,"
+                "revenue_yoy,netprofit_yoy,ocf_to_revenue,latest_dividend_period,"
+                "latest_cash_div_tax,latest_dividend_proc,latest_forecast_ann_date,"
+                "latest_forecast_type,latest_forecast_summary"
+            ),
+            "v_market_data_fetch_health": (
+                "columns: id,question_id,intent,market_scope,symbols_json,data_packages_json,"
+                "period_policy,status,cache_hit,row_count,error_message,started_at,finished_at,updated_at"
+            ),
             "v_latest_ah_premium": "columns: same as v_latest_official_ah_premium",
             "v_ah_premium_trend": "columns: same as v_official_ah_premium_trend",
             "v_sync_health": (

@@ -8,6 +8,9 @@
 
 ## 已完成
 
+- 新增 `resources/doc/llm-tushare-on-demand-stock-data-plan.md`，沉淀 LLM 股票问答通用按需补数方案：基于 Tushare 数据分类抽象 `MarketDataDemand`、数据包白名单、缓存限流和补数审计；明确当前只有 15000 积分权限，自动补数只允许单股、短区间、低频、缓存优先，不自动全市场或多股票批量拉取；个股投资分析报告作为第一优先级优化场景，提示词只教分析方法和证据链，不用死板模板过度约束 LLM 推理。
+- 已按方案落地 LLM 单股按需补数首版：新增 `a_daily_basic`、三张财务报表核心表、`a_financial_indicator`、`a_dividend`、`a_forecast` 和补数审计表；新增股票解析器、Tushare 白名单抓取器和按需编排器。LLM 路由支持 `data_demands`，但后端只接受单只 A 股和 `quote_valuation`、`financial_statement`、`dividend_forecast` 三类数据包；命中缓存时不调用 Tushare，名称歧义或多股需求会停止自动补数。
+- 个股投资分析报告提示词已优化：回答上下文新增 `market_data_context`，报告场景要求区分可观察事实、推断和假设，围绕商业质量、盈利增长、资产负债、现金流、估值、分红、业绩预告、A/H 相关性和反证条件建立证据链，同时保留 LLM 自主组织报告结构的自由度。
 - 项目目录调整为前后端混合 coding 项目：`/Users/salty/codeProject/ai/coding/stock-ah-premium-ai`。
 - 新增项目级 `AGENTS.md`，明确 `backend/` 继承后端规则、`frontend/` 继承前端规则。
 - 后端 FastAPI 项目骨架：
@@ -20,6 +23,7 @@
   - 新增完整建表 SQL 注释版 `resources/sql/03_full_schema_with_comments.sql`，覆盖当前全部业务表、同步表、自选股表和 LLM 会话表，表与字段均配置 `COMMENT`。
   - 新增数据库表结构说明 `resources/doc/database-schema.md`，统一说明建库 SQL、Alembic 迁移、注释版 DDL 和只读视图的分工。
   - LLM 只读视图和只读用户模板 SQL。
+  - 新增个股研究只读视图 `v_stock_quote_valuation_trend`、`v_stock_financial_period_summary`、`v_stock_research_context_latest` 和 `v_market_data_fetch_health`，并纳入 SQL Guard 白名单和只读用户授权模板。
   - 新增自选股表 `watchlist_stock`，用于维护用户关注标的、方向、阈值、持有侧和备注。
   - LLM 只读视图已切换到官方 AH 比价口径，并新增官方趋势、最新官方 AH、港股通官方 AH 和自选机会视图。
   - 已在本地 MySQL 5.7 完成建库、Alembic 迁移和只读视图创建验证。

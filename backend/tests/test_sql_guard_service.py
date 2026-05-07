@@ -26,6 +26,23 @@ def test_sql_guard_accepts_official_and_watchlist_views() -> None:
     assert "v_watchlist_opportunity" in watchlist.tables
 
 
+def test_sql_guard_accepts_stock_research_views() -> None:
+    """确认个股研究视图纳入 LLM 只读白名单。
+
+    创建日期：2026-05-07
+    author: sunshengxian
+    """
+
+    service = SqlGuardService()
+
+    guarded = service.validate(
+        "select ts_code, close from v_stock_research_context_latest where ts_code = '600036.SH'",
+        default_limit=10,
+    )
+
+    assert "v_stock_research_context_latest" in guarded.tables
+
+
 def test_sql_guard_rejects_write_sql() -> None:
     with pytest.raises(SqlGuardError):
         SqlGuardService().validate("delete from v_latest_ah_premium")

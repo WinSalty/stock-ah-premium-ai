@@ -191,6 +191,63 @@ def test_clear_investment_question_uses_unified_deepseek_router(monkeypatch) -> 
     assert "knowledge_catalog" in str(captured["prompt"])
 
 
+def test_route_from_payload_accepts_market_data_demands() -> None:
+    """确认前置路由可以声明单股白名单数据包需求。
+
+    创建日期：2026-05-07
+    author: sunshengxian
+    """
+
+    service = LlmService(
+        Mock(),
+        settings=Settings(llm_api_key="test-key", llm_api_key_file=None, llm_model="test-model"),
+    )
+
+    route = service._route_from_payload(
+        {
+            "is_answerable": True,
+            "needs_sql": False,
+            "use_knowledge": True,
+            "knowledge_categories": ["company_research"],
+            "data_demands": [
+                {
+                    "market": "A",
+                    "ts_code": "600036.SH",
+                    "packages": ["quote_valuation", "financial_statement", "danger_api"],
+                }
+            ],
+        }
+    )
+
+    assert route.data_demands[0].ts_code == "600036.SH"
+    assert route.data_demands[0].packages == ("quote_valuation", "financial_statement")
+
+
+def test_answer_prompt_includes_market_data_context_and_report_instruction() -> None:
+    """确认个股报告提示词会携带市场上下文并强调专业分析方法。
+
+    创建日期：2026-05-07
+    author: sunshengxian
+    """
+
+    service = LlmService(
+        Mock(),
+        settings=Settings(llm_api_key="test-key", llm_api_key_file=None, llm_model="test-model"),
+    )
+
+    prompt = service._answer_prompt(
+        "招商银行投资分析报告",
+        rows=[],
+        context={},
+        market_data_context={"stock": {"ts_code": "600036.SH"}, "context": {"latest": []}},
+    )
+    payload = json.loads(prompt.split("\n", 1)[1])
+
+    assert payload["market_data_context"]["stock"]["ts_code"] == "600036.SH"
+    assert "商业质量" in prompt
+    assert "数据缺口" in prompt
+
+
 def test_report_analysis_question_skips_data_query() -> None:
     """确认报告分析类问题优先走知识材料，不触发 SQL 生成。
 

@@ -44,6 +44,10 @@ class SqlGuardService:
         "v_stock_selection_latest",
         "v_stock_selection_history",
         "v_stock_factor_dictionary",
+        "v_stock_quote_valuation_trend",
+        "v_stock_financial_period_summary",
+        "v_stock_research_context_latest",
+        "v_market_data_fetch_health",
         "v_sync_health",
         "v_data_quality_issues",
     }
