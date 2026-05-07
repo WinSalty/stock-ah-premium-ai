@@ -56,12 +56,19 @@ LLM 按需个股研究数据：
 - `a_balance_sheet`：单股资产负债表核心字段，保存资产、负债、权益、货币资金、应收、存货和借款等字段。
 - `a_cashflow_statement`：单股现金流量表核心字段，保存经营、投资、筹资现金流和期末现金等字段。
 - `a_financial_indicator`：单股财务指标核心字段，保存 ROE、毛利率、净利率、资产负债率、收入和净利润同比等指标。
+- `a_main_business_composition`：单股主营业务构成，保存 Tushare `fina_mainbz` 的产品和地区收入、成本、利润，用于判断利润来源是否集中、是否依赖非核心地区或单一产品。
+- `a_financial_audit`：单股财务审计意见，保存 Tushare `fina_audit` 的审计结果、审计机构和签字会计师，用于识别财报可信度、保留意见和审计异常线索。
+- `a_express`：单股业绩快报，保存 Tushare `express` 的快报收入、利润、同比和经营摘要，用于在正式财报前补充最新经营变化。
 - `a_dividend`：单股分红送股记录，用于报告中的股息回报、分红稳定性和执行进度分析。
 - `a_forecast`：单股业绩预告记录，用于报告中的业绩前瞻、反证条件和跟踪指标分析。
+- `a_top10_holder`：单股前十大股东和前十大流通股东，统一保存 Tushare `top10_holders` 与 `top10_floatholders`，用于分析股权集中度、筹码结构和重要股东变化。
+- `a_holder_number`：单股股东户数，保存 Tushare `stk_holdernumber`，用于观察筹码集中或分散趋势。
+- `a_pledge_stat`：单股质押统计，保存 Tushare `pledge_stat`，用于识别控股股东质押压力和潜在流动性风险。
+- `a_moneyflow`：单股资金流向，保存 Tushare `moneyflow` 的大小单买卖额和净流入，用于解释短期交易情绪，不作为基本面替代证据。
 - `llm_market_data_fetch_run`：LLM 按需市场数据抓取批次审计，记录问题追踪 ID、股票代码列表、数据包、缓存命中、状态和行数。
 - `llm_market_data_fetch_item`：LLM 按需市场数据抓取明细审计，记录每个白名单 Tushare 接口的参数、字段、耗时和错误摘要。
 
-按需补数硬边界：当前仅面向 15000 积分 Tushare 权限门槛设计，积分表示接口可用范围，不是按次扣费制。自动流程只允许 A 股、短区间、低频、缓存优先的数据包补齐；单股研究优先，明确多股对比时单轮最多 5 只股票。LLM 不得任意选择 Tushare 接口、字段或全市场批量拉取。LLM 读取时只通过 `v_stock_quote_valuation_trend`、`v_stock_financial_period_summary`、`v_stock_research_context_latest` 和 `v_market_data_fetch_health` 等只读视图消费整理后的上下文。
+按需补数硬边界：当前仅面向 15000 积分 Tushare 权限门槛设计，积分表示接口可用范围，不是按次扣费制。自动流程只允许 A 股、短区间、低频、缓存优先的数据包补齐；单股研究优先，明确多股对比时单轮最多 5 只股票。LLM 不得任意选择 Tushare 接口、字段或全市场批量拉取。LLM 读取时只通过 `v_stock_quote_valuation_trend`、`v_stock_financial_period_summary`、`v_stock_business_profile_summary`、`v_stock_shareholder_governance_summary`、`v_stock_moneyflow_recent`、`v_stock_research_context_latest` 和 `v_market_data_fetch_health` 等只读视图消费整理后的上下文。
 
 任务、质量与问答：
 

@@ -16,9 +16,16 @@ from app.db.models.market import (
     ADailyBasic,
     ADailyQuote,
     ADividend,
+    AExpress,
+    AFinancialAudit,
     AFinancialIndicator,
     AForecast,
+    AHolderNumber,
     AIncomeStatement,
+    AMainBusinessComposition,
+    AMoneyflow,
+    APledgeStat,
+    ATop10Holder,
     LlmMarketDataFetchItem,
 )
 from app.services.date_utils import format_tushare_date, parse_tushare_date
@@ -31,6 +38,9 @@ logger = logging.getLogger(__name__)
 QUOTE_VALUATION_PACKAGE = "quote_valuation"
 FINANCIAL_STATEMENT_PACKAGE = "financial_statement"
 DIVIDEND_FORECAST_PACKAGE = "dividend_forecast"
+BUSINESS_PROFILE_PACKAGE = "business_profile"
+SHAREHOLDER_GOVERNANCE_PACKAGE = "shareholder_governance"
+CAPITAL_FLOW_PACKAGE = "capital_flow_light"
 
 
 @dataclass(frozen=True)
@@ -49,6 +59,8 @@ class FetchApiSpec:
     decimal_fields: tuple[str, ...]
     default_days: int | None = None
     default_years: int | None = None
+    extra_params: dict[str, Any] | None = None
+    static_fields: dict[str, Any] | None = None
 
 
 class TushareStockResearchFetcher:
@@ -207,7 +219,7 @@ class TushareStockResearchFetcher:
                     "ebit",
                     "ebitda",
                 ),
-                default_years=5,
+                default_years=8,
             ),
             FetchApiSpec(
                 package_name=FINANCIAL_STATEMENT_PACKAGE,
@@ -283,7 +295,7 @@ class TushareStockResearchFetcher:
                     "surplus_rese",
                     "undistr_porfit",
                 ),
-                default_years=5,
+                default_years=8,
             ),
             FetchApiSpec(
                 package_name=FINANCIAL_STATEMENT_PACKAGE,
@@ -335,7 +347,7 @@ class TushareStockResearchFetcher:
                     "n_incr_cash_cash_equ",
                     "c_cash_equ_end_period",
                 ),
-                default_years=5,
+                default_years=8,
             ),
             FetchApiSpec(
                 package_name=FINANCIAL_STATEMENT_PACKAGE,
@@ -396,7 +408,7 @@ class TushareStockResearchFetcher:
                     "bps",
                     "profit_dedt",
                 ),
-                default_years=5,
+                default_years=8,
             ),
         ),
         DIVIDEND_FORECAST_PACKAGE: (
@@ -418,7 +430,7 @@ class TushareStockResearchFetcher:
                 ),
                 date_fields=("end_date", "ann_date", "record_date", "ex_date", "pay_date"),
                 decimal_fields=("stk_div", "cash_div", "cash_div_tax"),
-                default_years=5,
+                default_years=8,
             ),
             FetchApiSpec(
                 package_name=DIVIDEND_FORECAST_PACKAGE,
@@ -446,7 +458,240 @@ class TushareStockResearchFetcher:
                     "net_profit_max",
                     "last_parent_net",
                 ),
-                default_years=3,
+                default_years=5,
+            ),
+        ),
+        BUSINESS_PROFILE_PACKAGE: (
+            FetchApiSpec(
+                package_name=BUSINESS_PROFILE_PACKAGE,
+                api_name="fina_mainbz",
+                model=AMainBusinessComposition,
+                fields=(
+                    "ts_code",
+                    "end_date",
+                    "bz_item",
+                    "bz_sales",
+                    "bz_profit",
+                    "bz_cost",
+                    "curr_type",
+                    "update_flag",
+                ),
+                date_fields=("end_date",),
+                decimal_fields=("bz_sales", "bz_profit", "bz_cost"),
+                default_years=8,
+                extra_params={"type": "P"},
+                static_fields={"business_type": "PRODUCT"},
+            ),
+            FetchApiSpec(
+                package_name=BUSINESS_PROFILE_PACKAGE,
+                api_name="fina_mainbz",
+                model=AMainBusinessComposition,
+                fields=(
+                    "ts_code",
+                    "end_date",
+                    "bz_item",
+                    "bz_sales",
+                    "bz_profit",
+                    "bz_cost",
+                    "curr_type",
+                    "update_flag",
+                ),
+                date_fields=("end_date",),
+                decimal_fields=("bz_sales", "bz_profit", "bz_cost"),
+                default_years=8,
+                extra_params={"type": "D"},
+                static_fields={"business_type": "REGION"},
+            ),
+            FetchApiSpec(
+                package_name=BUSINESS_PROFILE_PACKAGE,
+                api_name="fina_audit",
+                model=AFinancialAudit,
+                fields=(
+                    "ts_code",
+                    "ann_date",
+                    "end_date",
+                    "audit_result",
+                    "audit_fees",
+                    "audit_agency",
+                    "audit_sign",
+                ),
+                date_fields=("ann_date", "end_date"),
+                decimal_fields=("audit_fees",),
+                default_years=8,
+            ),
+            FetchApiSpec(
+                package_name=BUSINESS_PROFILE_PACKAGE,
+                api_name="express",
+                model=AExpress,
+                fields=(
+                    "ts_code",
+                    "ann_date",
+                    "end_date",
+                    "revenue",
+                    "operate_profit",
+                    "total_profit",
+                    "n_income",
+                    "total_assets",
+                    "total_hldr_eqy_exc_min_int",
+                    "diluted_eps",
+                    "diluted_roe",
+                    "yoy_net_profit",
+                    "bps",
+                    "yoy_sales",
+                    "yoy_op",
+                    "yoy_tp",
+                    "yoy_dedu_np",
+                    "yoy_eps",
+                    "yoy_roe",
+                    "growth_assets",
+                    "yoy_equity",
+                    "growth_bps",
+                    "perf_summary",
+                    "is_audit",
+                    "remark",
+                ),
+                date_fields=("ann_date", "end_date"),
+                decimal_fields=(
+                    "revenue",
+                    "operate_profit",
+                    "total_profit",
+                    "n_income",
+                    "total_assets",
+                    "total_hldr_eqy_exc_min_int",
+                    "diluted_eps",
+                    "diluted_roe",
+                    "yoy_net_profit",
+                    "bps",
+                    "yoy_sales",
+                    "yoy_op",
+                    "yoy_tp",
+                    "yoy_dedu_np",
+                    "yoy_eps",
+                    "yoy_roe",
+                    "growth_assets",
+                    "yoy_equity",
+                    "growth_bps",
+                ),
+                default_years=5,
+            ),
+        ),
+        SHAREHOLDER_GOVERNANCE_PACKAGE: (
+            FetchApiSpec(
+                package_name=SHAREHOLDER_GOVERNANCE_PACKAGE,
+                api_name="top10_holders",
+                model=ATop10Holder,
+                fields=(
+                    "ts_code",
+                    "ann_date",
+                    "end_date",
+                    "holder_name",
+                    "hold_amount",
+                    "hold_ratio",
+                    "hold_float_ratio",
+                    "hold_change",
+                    "holder_type",
+                ),
+                date_fields=("ann_date", "end_date"),
+                decimal_fields=("hold_amount", "hold_ratio", "hold_float_ratio", "hold_change"),
+                default_years=5,
+                static_fields={"holder_scope": "TOTAL"},
+            ),
+            FetchApiSpec(
+                package_name=SHAREHOLDER_GOVERNANCE_PACKAGE,
+                api_name="top10_floatholders",
+                model=ATop10Holder,
+                fields=(
+                    "ts_code",
+                    "ann_date",
+                    "end_date",
+                    "holder_name",
+                    "hold_amount",
+                    "hold_ratio",
+                    "hold_float_ratio",
+                    "hold_change",
+                    "holder_type",
+                ),
+                date_fields=("ann_date", "end_date"),
+                decimal_fields=("hold_amount", "hold_ratio", "hold_float_ratio", "hold_change"),
+                default_years=5,
+                static_fields={"holder_scope": "FLOAT"},
+            ),
+            FetchApiSpec(
+                package_name=SHAREHOLDER_GOVERNANCE_PACKAGE,
+                api_name="stk_holdernumber",
+                model=AHolderNumber,
+                fields=("ts_code", "ann_date", "end_date", "holder_num"),
+                date_fields=("ann_date", "end_date"),
+                decimal_fields=(),
+                default_years=5,
+            ),
+            FetchApiSpec(
+                package_name=SHAREHOLDER_GOVERNANCE_PACKAGE,
+                api_name="pledge_stat",
+                model=APledgeStat,
+                fields=(
+                    "ts_code",
+                    "end_date",
+                    "pledge_count",
+                    "unrest_pledge",
+                    "rest_pledge",
+                    "total_share",
+                    "pledge_ratio",
+                ),
+                date_fields=("end_date",),
+                decimal_fields=("unrest_pledge", "rest_pledge", "total_share", "pledge_ratio"),
+                default_years=5,
+            ),
+        ),
+        CAPITAL_FLOW_PACKAGE: (
+            FetchApiSpec(
+                package_name=CAPITAL_FLOW_PACKAGE,
+                api_name="moneyflow",
+                model=AMoneyflow,
+                fields=(
+                    "ts_code",
+                    "trade_date",
+                    "buy_sm_vol",
+                    "buy_sm_amount",
+                    "sell_sm_vol",
+                    "sell_sm_amount",
+                    "buy_md_vol",
+                    "buy_md_amount",
+                    "sell_md_vol",
+                    "sell_md_amount",
+                    "buy_lg_vol",
+                    "buy_lg_amount",
+                    "sell_lg_vol",
+                    "sell_lg_amount",
+                    "buy_elg_vol",
+                    "buy_elg_amount",
+                    "sell_elg_vol",
+                    "sell_elg_amount",
+                    "net_mf_vol",
+                    "net_mf_amount",
+                ),
+                date_fields=("trade_date",),
+                decimal_fields=(
+                    "buy_sm_vol",
+                    "buy_sm_amount",
+                    "sell_sm_vol",
+                    "sell_sm_amount",
+                    "buy_md_vol",
+                    "buy_md_amount",
+                    "sell_md_vol",
+                    "sell_md_amount",
+                    "buy_lg_vol",
+                    "buy_lg_amount",
+                    "sell_lg_vol",
+                    "sell_lg_amount",
+                    "buy_elg_vol",
+                    "buy_elg_amount",
+                    "sell_elg_vol",
+                    "sell_elg_amount",
+                    "net_mf_vol",
+                    "net_mf_amount",
+                ),
+                default_days=60,
             ),
         ),
     }
@@ -514,6 +759,10 @@ class TushareStockResearchFetcher:
     def _params_for_spec(self, ts_code: str, spec: FetchApiSpec, today: date) -> dict[str, Any]:
         # 15000 积分权限下不做全市场扫描，只以 ts_code 加短日期窗口请求，避免误触宽接口。
         params: dict[str, Any] = {"ts_code": ts_code}
+        if spec.extra_params:
+            # 同一接口可能按业务口径拆分抓取，例如主营构成按产品和地区分别请求；
+            # 固定参数只来自白名单配置，避免 LLM 自行扩展 Tushare 查询范围。
+            params.update(spec.extra_params)
         if spec.default_days:
             start_date = today - timedelta(days=spec.default_days)
             params["start_date"] = format_tushare_date(start_date)
@@ -530,6 +779,10 @@ class TushareStockResearchFetcher:
             "change_amount" if key == "change" else key: value
             for key, value in row.items()
         }
+        if spec.static_fields:
+            # Tushare 部分接口返回值不包含查询口径，本地补入固定字段；
+            # 这样同一张表能区分产品/地区、全体/流通股东等不同业务口径。
+            normalized.update(spec.static_fields)
         for field in spec.date_fields:
             normalized[field] = parse_tushare_date(normalized.get(field))
         for field in spec.decimal_fields:
@@ -541,9 +794,30 @@ class TushareStockResearchFetcher:
             normalized["div_proc"] = str(normalized.get("div_proc") or "")
         if spec.api_name == "forecast":
             normalized["type"] = str(normalized.get("type") or "")
+        if spec.api_name == "fina_mainbz":
+            normalized["business_type"] = str(normalized.get("business_type") or "")
+            normalized["bz_item"] = str(normalized.get("bz_item") or "")
+            normalized["update_flag"] = str(normalized.get("update_flag") or "")
+        if spec.api_name in {"top10_holders", "top10_floatholders"}:
+            normalized["holder_scope"] = str(normalized.get("holder_scope") or "")
+            normalized["holder_name"] = str(normalized.get("holder_name") or "")
         normalized["raw_payload_json"] = json.dumps(row, ensure_ascii=False, default=str)
         model_columns = set(spec.model.__table__.columns.keys())
-        return {key: value for key, value in normalized.items() if key in model_columns}
+        filtered = {key: value for key, value in normalized.items() if key in model_columns}
+        required_columns = {
+            column.name
+            for column in spec.model.__table__.columns
+            if (
+                not column.primary_key
+                and not column.nullable
+                and column.default is None
+                and column.server_default is None
+                and column.name not in {"created_at", "updated_at"}
+            )
+        }
+        if any(filtered.get(column_name) in (None, "") for column_name in required_columns):
+            return {}
+        return filtered
 
     def _start_item(
         self,

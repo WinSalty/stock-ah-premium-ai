@@ -6,6 +6,7 @@ import re
 from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import datetime, time, timedelta
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from time import perf_counter
 from typing import Any
 from uuid import uuid4
@@ -44,6 +45,8 @@ LLM_EXTERNAL_CALL_PHASES = (
     "repair_sql",
     "answer",
     "answer_stream",
+    "threshold_answer",
+    "threshold_answer_stream",
 )
 DEFAULT_CHAT_MODEL = "deepseek-v4-flash"
 ANSWER_MARKET_ROW_LIMIT = 60
@@ -103,6 +106,13 @@ GENERAL_ASSISTANT_SYSTEM_PROMPT = """你是一个通用中文助手。
 如果问题涉及实时证券价格、财报、估值或需要本项目结构化数据的投资问题，应由业务路由处理。
 """
 
+THRESHOLD_RECOMMENDATION_SYSTEM_PROMPT = """你是 A/H 自选股阈值推荐助手。
+你只根据本轮给出的页面数据和已计算阈值解释建议，不要改写建议阈值，不要额外查询数据，
+不要提及 SQL、JSON、本地数据库、视图名或系统处理过程。
+输出中文 GitHub Flavored Markdown，固定包含 `## 最终答案`、`## 推荐理由`、`## 执行条件` 三个小节。
+禁止输出“不构成投资建议”“仅供参考”“请咨询专业人士”等模板化免责句。
+"""
+
 SQL_SYSTEM_PROMPT = """你是只读金融数据查询规划器。只生成可执行 MySQL SELECT SQL，并且只返回 JSON。
 禁止输出解释、Markdown、代码块或多余文本。禁止写入、DDL、多语句和非白名单对象。
 """
@@ -115,7 +125,8 @@ QUESTION_ROUTER_SYSTEM_PROMPT = """你是问答前置路由器。
 如果用户是在问 A 股的估值、财报、分红、投资分析报告、“怎么看”或多只股票对比，
 还要判断是否需要按需补充市场数据。
 按需补充市场数据最多输出 5 只 A 股，数据包只能从 quote_valuation、
-financial_statement、dividend_forecast 中选择；
+financial_statement、business_profile、dividend_forecast、shareholder_governance、
+capital_flow_light 中选择；
 不要输出港股、指数、全市场或任意 Tushare 接口名。
 Tushare 15000 积分在这里是接口权限门槛，不是按次扣费制；
 因此路由重点是控制接口范围、股票数量和时间窗口。
@@ -130,7 +141,7 @@ Tushare 15000 积分在这里是接口权限门槛，不是按次扣费制；
 只有知识库目录中存在同一公司、同一股票代码或明确场景匹配材料时，才选择对应知识分类；
 不要为了“个股深度研究”泛化选择其他公司的报告。
 只返回 JSON，不要输出解释。格式：
-{"is_answerable":true或false,"needs_sql":true或false,"use_knowledge":true或false,"knowledge_categories":["分类key"],"data_demands":[{"market":"A","ts_code":"600036.SH","packages":["quote_valuation","financial_statement","dividend_forecast"],"intent":"stock_research"}],"reason":"一句话原因"}
+{"is_answerable":true或false,"needs_sql":true或false,"use_knowledge":true或false,"knowledge_categories":["分类key"],"data_demands":[{"market":"A","ts_code":"600036.SH","packages":["quote_valuation","financial_statement","business_profile","dividend_forecast","shareholder_governance","capital_flow_light"],"intent":"stock_research"}],"reason":"一句话原因"}
 """
 
 OUT_OF_SCOPE_MESSAGE = (
@@ -566,6 +577,21 @@ class LlmCallTrace:
 
 
 @dataclass(frozen=True)
+class ThresholdRecommendationResult:
+    """自选股阈值推荐的本地确定性计算结果。
+
+    创建日期：2026-05-07
+    author: sunshengxian
+    """
+
+    threshold_pct: Decimal
+    direction: str
+    direction_label: str
+    reason_code: str
+    formula_note: str
+
+
+@dataclass(frozen=True)
 class QuestionRoute:
     """问答前置路由结果。
 
@@ -644,6 +670,16 @@ class LlmService:
                 session_id=session_id,
             )
             return ChatAnswer(answer=SERVICE_INTRO_MESSAGE, sql=None, rows=[])
+        if self._threshold_recommendation_context(request_context):
+            return self._answer_threshold_recommendation(
+                question,
+                request_context,
+                selected_model,
+                question_id,
+                started_at,
+                user_id,
+                session_id,
+            )
         route = self._route_question(
             question,
             request_context,
@@ -764,6 +800,16 @@ class LlmService:
                 session_id=session_id,
             )
             return None, [], iter([SERVICE_INTRO_MESSAGE])
+        if self._threshold_recommendation_context(request_context):
+            return self._stream_threshold_recommendation(
+                question,
+                request_context,
+                selected_model,
+                question_id,
+                started_at,
+                user_id,
+                session_id,
+            )
         route = self._route_question(
             question,
             request_context,
@@ -931,6 +977,265 @@ class LlmService:
             market_data_context=market_data_context,
         )
 
+    def _answer_threshold_recommendation(
+        self,
+        question: str,
+        context: dict[str, Any],
+        model: str,
+        question_id: str,
+        started_at: float,
+        user_id: int | None,
+        session_id: int | None,
+    ) -> ChatAnswer:
+        """按页面传入数据生成自选阈值推荐，跳过通用路由、补数和辅助视图查询。
+
+        创建日期：2026-05-07
+        author: sunshengxian
+        """
+
+        endpoint = self._model_endpoint(model)
+        if not endpoint.api_key or not endpoint.model:
+            answer = self._threshold_recommendation_fallback(context)
+            self._log_total_elapsed(
+                "threshold_done",
+                question_id,
+                model,
+                started_at,
+                user_id=user_id,
+                session_id=session_id,
+            )
+            return ChatAnswer(answer=answer, sql=None, rows=[])
+        answer = self._chat_completion(
+            self._threshold_recommendation_prompt(question, context),
+            system_prompt=THRESHOLD_RECOMMENDATION_SYSTEM_PROMPT,
+            model=model,
+            trace=LlmCallTrace(
+                question_id=question_id,
+                phase="threshold_answer",
+                user_id=user_id,
+                session_id=session_id,
+                conversation_title=self._metric_conversation_title(question_id),
+                user_name=self._metric_user_name(question_id),
+            ),
+        )
+        self._log_total_elapsed(
+            "threshold_done",
+            question_id,
+            endpoint.model,
+            started_at,
+            user_id=user_id,
+            session_id=session_id,
+        )
+        return ChatAnswer(answer=self._strip_forbidden_preamble(answer), sql=None, rows=[])
+
+    def _stream_threshold_recommendation(
+        self,
+        question: str,
+        context: dict[str, Any],
+        model: str,
+        question_id: str,
+        started_at: float,
+        user_id: int | None,
+        session_id: int | None,
+    ) -> tuple[str | None, list[dict[str, Any]], Iterator[str]]:
+        """流式输出自选阈值推荐，让用户先看到首包，不等待完整回答落地。
+
+        创建日期：2026-05-07
+        author: sunshengxian
+        """
+
+        endpoint = self._model_endpoint(model)
+        if not endpoint.api_key or not endpoint.model:
+            self._log_total_elapsed(
+                "threshold_stream_done",
+                question_id,
+                model,
+                started_at,
+                user_id=user_id,
+                session_id=session_id,
+            )
+            return None, [], iter([self._threshold_recommendation_fallback(context)])
+        return None, [], self._clean_answer_stream(
+            self._chat_completion_stream(
+                self._threshold_recommendation_prompt(question, context),
+                system_prompt=THRESHOLD_RECOMMENDATION_SYSTEM_PROMPT,
+                model=model,
+                trace=LlmCallTrace(
+                    question_id=question_id,
+                    phase="threshold_answer_stream",
+                    user_id=user_id,
+                    session_id=session_id,
+                    conversation_title=self._metric_conversation_title(question_id),
+                    user_name=self._metric_user_name(question_id),
+                ),
+                total_started_at=started_at,
+                total_phase="threshold_stream_done",
+            )
+        )
+
+    def _threshold_recommendation_context(self, context: dict[str, Any]) -> dict[str, Any] | None:
+        """读取前端传入的结构化阈值推荐上下文，缺失时维持原通用问答链路。
+
+        创建日期：2026-05-07
+        author: sunshengxian
+        """
+
+        payload = context.get("threshold_recommendation")
+        if isinstance(payload, dict) and payload:
+            return payload
+        return None
+
+    def _threshold_recommendation_prompt(self, question: str, context: dict[str, Any]) -> str:
+        """构造紧凑提示词，只解释本地确定性阈值，不携带知识库和市场补数材料。
+
+        创建日期：2026-05-07
+        author: sunshengxian
+        """
+
+        result = self._calculate_threshold_recommendation(context)
+        payload = {
+            "user_question": question,
+            "page_data": self._threshold_recommendation_context(context),
+            "calculated_threshold_pct": self._format_threshold_number(result.threshold_pct),
+            "direction": result.direction,
+            "direction_label": result.direction_label,
+            "calculation_reason": result.reason_code,
+            "formula_note": result.formula_note,
+            "output_contract": [
+                f"最终答案必须包含：建议将 {result.direction_label} 目标阈值设为 "
+                f"{self._format_threshold_number(result.threshold_pct)}%。",
+                "推荐理由用 3-5 条说明历史分位、当前价差、持有侧和港股通可操作性。",
+                "执行条件说明触发复核、上调/下调阈值和需要跟踪的成交、汇率、基本面条件。",
+            ],
+        }
+        return (
+            "请根据以下页面数据和本地确定性计算结果，生成自选股目标阈值推荐。"
+            "不要重新计算或更改 calculated_threshold_pct，只负责解释为什么这个阈值可执行。\n"
+            f"{json.dumps(payload, ensure_ascii=False, default=str)}"
+        )
+
+    def _threshold_recommendation_fallback(self, context: dict[str, Any]) -> str:
+        """模型未配置时仍返回可执行阈值，避免固定场景因外部服务失败不可用。
+
+        创建日期：2026-05-07
+        author: sunshengxian
+        """
+
+        payload = self._threshold_recommendation_context(context) or {}
+        result = self._calculate_threshold_recommendation(context)
+        name = str(payload.get("name") or payload.get("a_ts_code") or "该标的").strip()
+        threshold = self._format_threshold_number(result.threshold_pct)
+        return (
+            "## 最终答案\n\n"
+            f"建议将{name}的 {result.direction_label} 目标阈值设为 {threshold}%。\n\n"
+            "## 推荐理由\n\n"
+            f"- 本次按页面已有价差和 60 日分位数据计算，采用口径：{result.formula_note}\n"
+            "- 该快路径不额外查询全市场或自选机会视图，因此相同页面输入会得到稳定阈值。\n"
+            "- 当前模型服务未配置，先返回本地确定性结果；配置恢复后会由模型补充更细的文字解释。\n\n"
+            "## 执行条件\n\n"
+            "- 当关注方向溢价达到或超过该阈值时，先复核 A/H 报价日期、"
+            "港股通通道、汇率和成交活跃度。\n"
+            "- 若 60 日分位明显抬升且基本面未恶化，可上调阈值；若流动性或基本面走弱，应下调阈值。"
+        )
+
+    def _calculate_threshold_recommendation(
+        self,
+        context: dict[str, Any],
+    ) -> ThresholdRecommendationResult:
+        """按知识库公式确定阈值，保证固定页面输入下的建议值稳定。
+
+        创建日期：2026-05-07
+        author: sunshengxian
+        """
+
+        payload = self._threshold_recommendation_context(context) or {}
+        direction = str(payload.get("direction") or "HA").upper()
+        if direction not in {"AH", "HA"}:
+            direction = "HA"
+        direction_label = "A/H" if direction == "AH" else "H/A"
+        current = self._decimal_or_none(payload.get("metric_premium_pct"))
+        median = self._decimal_or_none(payload.get("premium_median_60"))
+        p80 = self._decimal_or_none(payload.get("premium_p80_60"))
+        percentile = self._decimal_or_none(payload.get("premium_percentile_60"))
+        if current is not None and median is not None and p80 is not None:
+            base = median + Decimal("0.65") * (p80 - median)
+            if percentile is not None and percentile > Decimal("80"):
+                threshold = max(base, current)
+                reason_code = "current_above_p80"
+                note = "当前分位高于 80%，取基础锚点与当前溢价的较高值作为确认触发线"
+            else:
+                threshold = base
+                reason_code = "base_formula"
+                note = (
+                    "60 日分位齐全，取 median + 0.65 * (p80 - median) "
+                    "作为靠近 80% 分位但不追高的锚点"
+                )
+        elif current is not None and median is not None:
+            threshold = median + Decimal("0.5") * abs(current - median)
+            reason_code = "median_current_only"
+            note = "缺少 80% 分位时，取 median + 0.5 * abs(current - median) 作为折中锚点"
+        elif current is not None:
+            buffer_pct = self._threshold_missing_history_buffer(payload)
+            threshold = current + buffer_pct
+            reason_code = "missing_history"
+            note = (
+                f"历史分位缺失，按当前溢价加 "
+                f"{self._format_threshold_number(buffer_pct)} 个百分点缓冲"
+            )
+        else:
+            threshold = Decimal("0")
+            reason_code = "missing_current"
+            note = "当前溢价缺失，先给 0% 观察阈值并要求补齐页面行情后复核"
+        return ThresholdRecommendationResult(
+            threshold_pct=threshold.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP),
+            direction=direction,
+            direction_label=direction_label,
+            reason_code=reason_code,
+            formula_note=note,
+        )
+
+    def _threshold_missing_history_buffer(self, payload: dict[str, Any]) -> Decimal:
+        """根据通道和当前值给历史缺失场景设置保守缓冲，避免阈值贴得过近。
+
+        创建日期：2026-05-07
+        author: sunshengxian
+        """
+
+        current = self._decimal_or_none(payload.get("metric_premium_pct")) or Decimal("0")
+        channels = str(payload.get("connect_channels") or "").strip()
+        buffer_pct = Decimal("3")
+        if abs(current) >= Decimal("30"):
+            buffer_pct = Decimal("5")
+        elif not channels:
+            buffer_pct = Decimal("4")
+        if current < 0:
+            return -buffer_pct
+        return buffer_pct
+
+    def _decimal_or_none(self, value: Any) -> Decimal | None:
+        """把前端字符串或数字安全转为 Decimal，无法解析时视作缺失字段。
+
+        创建日期：2026-05-07
+        author: sunshengxian
+        """
+
+        if value in (None, ""):
+            return None
+        try:
+            return Decimal(str(value))
+        except (InvalidOperation, ValueError):
+            return None
+
+    def _format_threshold_number(self, value: Decimal) -> str:
+        """格式化百分比数值，保留两位精度但去掉无意义尾零。
+
+        创建日期：2026-05-07
+        author: sunshengxian
+        """
+
+        quantized = value.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        return format(quantized.normalize(), "f")
+
     def _generate_sql(
         self,
         question: str,
@@ -1069,7 +1374,7 @@ class LlmService:
             "data_boundary": (
                 f"仅按 A 股、白名单数据包和最多 {MAX_MARKET_DATA_STOCKS} 只股票补充有限区间数据；"
                 "Tushare 15000 积分是接口权限门槛，不代表随查询减少的余额；"
-                "材料缺口需要在结论中说明。"
+                "财务、主营、股东治理和资金流均为单股受控补数，材料缺口需要在结论中说明。"
             ),
         }
 
@@ -1099,9 +1404,14 @@ class LlmService:
             "流动/非流动负债和权益变化，判断利润与资产质量是否匹配；"
             "第五，估值不能只看 PE/PB，要说明利润口径是否可靠，"
             "必要时分别用归母、扣非、现金流和股息口径交叉验证；"
-            "第六，根据公司类型调整重点，银行看息差、资产质量和拨备，支付/金融科技看交易规模、费率、"
+            "第六，主营业务构成要看收入和利润是否过度依赖单一产品、地区或非主营来源，"
+            "审计意见、审计机构和业绩快报可作为财报可靠性与最新经营变化的校验材料；"
+            "第七，股东治理要检查前十大股东、流通股东、股东户数和质押比例，"
+            "区分长期战略持有、筹码分散和高质押流动性压力；"
+            "第八，资金流只用于解释短期交易情绪和验证价格异动，不要用大单或特大单净流入替代基本面结论；"
+            "第九，根据公司类型调整重点，银行看息差、资产质量和拨备，支付/金融科技看交易规模、费率、"
             "支付业务收入、科技服务收入和合规成本，制造业看毛利率、存货、应收和资本开支；"
-            "第七，事实、推断和假设要分清楚，材料没有覆盖的指标要直接列为数据缺口，"
+            "第十，事实、推断和假设要分清楚，材料没有覆盖的指标要直接列为数据缺口，"
             "并给出后续最该跟踪的 3 到 6 个指标以及推翻当前判断的反证条件。"
             "不要机械套模板，也不要因为表面估值低就自动给乐观结论。"
         )
@@ -1257,7 +1567,10 @@ class LlmService:
         normalized = question.lower().replace(" ", "")
         preferred_keys = (
             ("valuation_trend", "latest", "financial_periods")
-            if any(keyword in normalized for keyword in ("估值", "行情", "股价", "收盘", "pe", "pb"))
+            if any(
+                keyword in normalized
+                for keyword in ("估值", "行情", "股价", "收盘", "pe", "pb")
+            )
             else ("financial_periods", "valuation_trend", "latest")
         )
         for key in preferred_keys:
@@ -1379,6 +1692,7 @@ class LlmService:
         trace: LlmCallTrace | None = None,
         total_started_at: float | None = None,
         row_count: int = 0,
+        total_phase: str = "stream_done",
     ) -> Iterator[str]:
         endpoint = self._model_endpoint(model)
         if not endpoint.api_key:
@@ -1440,7 +1754,7 @@ class LlmService:
         )
         if total_started_at is not None and trace is not None:
             self._log_total_elapsed(
-                "stream_done",
+                total_phase,
                 trace.question_id,
                 endpoint.model,
                 total_started_at,
@@ -1902,7 +2216,9 @@ class LlmService:
             "必须使用 context.user_id 过滤 user_id，禁止查询其他用户自选数据。"
             "涉及 A 股个股财报、估值、红利、ROE、PE、PB、股息率时，"
             "只能使用 v_stock_research_context_latest、v_stock_quote_valuation_trend、"
-            "v_stock_financial_period_summary 等按需 Tushare 数据视图；"
+            "v_stock_financial_period_summary、v_stock_business_profile_summary、"
+            "v_stock_shareholder_governance_summary、v_stock_moneyflow_recent "
+            "等按需 Tushare 数据视图；"
             "不要查询旧选股宽表或候选因子宽表。"
             "字段名必须完全来自字段清单；不要使用 stock_name、ha_premium、ah_premium 等不存在字段，"
             "应使用 display_name/a_name/hk_name/name、ha_premium_pct、ah_premium_pct。"
@@ -2218,7 +2534,14 @@ class LlmService:
         if not isinstance(raw_demands, list):
             return ()
         demands: list[MarketDataDemand] = []
-        allowed_packages = {"quote_valuation", "financial_statement", "dividend_forecast"}
+        allowed_packages = {
+            "quote_valuation",
+            "financial_statement",
+            "business_profile",
+            "dividend_forecast",
+            "shareholder_governance",
+            "capital_flow_light",
+        }
         seen_ts_codes: set[str] = set()
         for item in raw_demands[:MAX_MARKET_DATA_STOCKS]:
             if not isinstance(item, dict):
@@ -2377,9 +2700,50 @@ class LlmService:
             packages.append("financial_statement")
         if any(
             keyword in normalized
-            for keyword in ("分析报告", "投资报告", "分红", "股息", "预告", "对比", "比较")
+            for keyword in (
+                "分析报告",
+                "投资报告",
+                "分红",
+                "股息",
+                "预告",
+                "对比",
+                "比较",
+            )
         ):
             packages.append("dividend_forecast")
+        if any(
+            keyword in normalized
+            for keyword in (
+                "分析报告",
+                "投资报告",
+                "深度报告",
+                "主营",
+                "业务构成",
+                "收入结构",
+                "审计",
+                "业绩快报",
+            )
+        ):
+            packages.append("business_profile")
+        if any(
+            keyword in normalized
+            for keyword in (
+                "分析报告",
+                "投资报告",
+                "深度报告",
+                "股东",
+                "质押",
+                "股东户数",
+                "持股",
+                "治理",
+            )
+        ):
+            packages.append("shareholder_governance")
+        if any(
+            keyword in normalized
+            for keyword in ("资金流", "资金流向", "大单", "特大单", "净流入")
+        ):
+            packages.append("capital_flow_light")
         return tuple(dict.fromkeys(packages))
 
     def _local_question_route(
@@ -2431,10 +2795,37 @@ class LlmService:
         packages = ["quote_valuation"]
         financial_keywords = ("分析报告", "投资报告", "深度报告", "财报", "估值", "roe")
         dividend_keywords = ("分析报告", "投资报告", "分红", "股息", "预告")
+        business_keywords = (
+            "分析报告",
+            "投资报告",
+            "深度报告",
+            "主营",
+            "业务构成",
+            "收入结构",
+            "审计",
+            "业绩快报",
+        )
+        governance_keywords = (
+            "分析报告",
+            "投资报告",
+            "深度报告",
+            "股东",
+            "质押",
+            "股东户数",
+            "持股",
+            "治理",
+        )
+        capital_flow_keywords = ("资金流", "资金流向", "大单", "特大单", "净流入")
         if any(keyword in normalized for keyword in financial_keywords):
             packages.append("financial_statement")
         if any(keyword in normalized for keyword in dividend_keywords):
             packages.append("dividend_forecast")
+        if any(keyword in normalized for keyword in business_keywords):
+            packages.append("business_profile")
+        if any(keyword in normalized for keyword in governance_keywords):
+            packages.append("shareholder_governance")
+        if any(keyword in normalized for keyword in capital_flow_keywords):
+            packages.append("capital_flow_light")
         return tuple(
             MarketDataDemand(ts_code=ts_code, packages=tuple(packages))
             for ts_code in ts_codes[:MAX_MARKET_DATA_STOCKS]
@@ -2664,6 +3055,22 @@ class LlmService:
                 "total_hldr_eqy_inc_min_int,total_hldr_eqy_exc_min_int,cap_rese,surplus_rese,"
                 "undistr_porfit,calculated_debt_to_assets"
             ),
+            "v_stock_business_profile_summary": (
+                "columns: ts_code,name,industry,end_date,business_type,bz_item,bz_sales,"
+                "bz_profit,bz_cost,gross_margin,revenue_share_pct,curr_type,latest_audit_result,"
+                "latest_audit_agency,latest_express_revenue,latest_express_n_income,"
+                "latest_express_yoy_sales,latest_express_yoy_dedu_np,latest_express_summary"
+            ),
+            "v_stock_shareholder_governance_summary": (
+                "columns: ts_code,name,section_type,sort_date,ranking,holder_scope,holder_name,"
+                "hold_amount,hold_ratio,hold_float_ratio,hold_change,holder_type,holder_num,"
+                "pledge_count,pledge_ratio,total_pledge"
+            ),
+            "v_stock_moneyflow_recent": (
+                "columns: ts_code,name,trade_date,net_mf_amount,big_order_net_amount,"
+                "extra_big_order_net_amount,buy_lg_amount,sell_lg_amount,buy_elg_amount,"
+                "sell_elg_amount"
+            ),
             "v_stock_research_context_latest": (
                 "columns: ts_code,symbol,name,industry,area,market,latest_trade_date,close,"
                 "pct_chg,pe_ttm,pb,ps_ttm,dividend_yield_ttm,total_mv,circ_mv,"
@@ -2675,8 +3082,13 @@ class LlmService:
                 "invest_income,fv_value_chg_gain,assets_impair_loss,credit_impa_loss,"
                 "n_cashflow_act,n_cashflow_inv_act,n_cash_flows_fnc_act,money_cap,trad_asset,"
                 "lt_eqt_invest,total_assets,total_liab,total_hldr_eqy_exc_min_int,"
-                "latest_dividend_period,latest_cash_div_tax,latest_dividend_proc,"
-                "latest_forecast_ann_date,latest_forecast_type,latest_forecast_summary"
+                "latest_main_business_item,latest_main_business_revenue_share_pct,"
+                "latest_main_business_gross_margin,latest_audit_result,latest_audit_agency,"
+                "latest_express_revenue,latest_express_n_income,latest_express_yoy_sales,"
+                "latest_express_yoy_dedu_np,latest_dividend_period,latest_cash_div_tax,"
+                "latest_dividend_proc,latest_forecast_ann_date,latest_forecast_type,"
+                "latest_forecast_summary,latest_holder_num,latest_pledge_ratio,"
+                "latest_net_mf_amount,latest_big_order_net_amount"
             ),
             "v_market_data_fetch_health": (
                 "columns: id,question_id,intent,market_scope,symbols_json,data_packages_json,"

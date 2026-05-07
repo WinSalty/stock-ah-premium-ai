@@ -35,12 +35,21 @@ def test_sql_guard_accepts_stock_research_views() -> None:
 
     service = SqlGuardService()
 
-    guarded = service.validate(
-        "select ts_code, close from v_stock_research_context_latest where ts_code = '600036.SH'",
-        default_limit=10,
-    )
+    # 新增主营、股东治理和资金流视图后，需要用测试锁住白名单边界，
+    # 避免提示词推荐了数据源但 SQL 安全层误拦截。
+    expected_tables = {
+        "v_stock_research_context_latest",
+        "v_stock_business_profile_summary",
+        "v_stock_shareholder_governance_summary",
+        "v_stock_moneyflow_recent",
+    }
 
-    assert "v_stock_research_context_latest" in guarded.tables
+    for table in expected_tables:
+        guarded = service.validate(
+            f"select * from {table} where ts_code = '600036.SH'",
+            default_limit=10,
+        )
+        assert table in guarded.tables
 
 
 def test_sql_guard_rejects_write_sql() -> None:

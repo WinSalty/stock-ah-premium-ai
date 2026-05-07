@@ -339,6 +339,142 @@ LEFT JOIN a_balance_sheet bs
    WHERE bs2.ts_code = fi.ts_code AND bs2.end_date = fi.end_date
  );
 
+CREATE OR REPLACE VIEW v_stock_business_profile_summary AS
+SELECT
+  mb.ts_code,
+  b.name,
+  b.industry,
+  mb.end_date,
+  mb.business_type,
+  mb.bz_item,
+  mb.bz_sales,
+  mb.bz_profit,
+  mb.bz_cost,
+  CASE
+    WHEN mb.bz_sales IS NULL OR mb.bz_sales = 0 THEN NULL
+    ELSE ROUND(mb.bz_profit * 100 / mb.bz_sales, 8)
+  END AS gross_margin,
+  CASE
+    WHEN SUM(mb.bz_sales) OVER (PARTITION BY mb.ts_code, mb.end_date, mb.business_type) IS NULL
+      OR SUM(mb.bz_sales) OVER (PARTITION BY mb.ts_code, mb.end_date, mb.business_type) = 0 THEN NULL
+    ELSE ROUND(
+      mb.bz_sales * 100
+      / SUM(mb.bz_sales) OVER (PARTITION BY mb.ts_code, mb.end_date, mb.business_type),
+      8
+    )
+  END AS revenue_share_pct,
+  mb.curr_type,
+  fa.audit_result AS latest_audit_result,
+  fa.audit_agency AS latest_audit_agency,
+  ex.revenue AS latest_express_revenue,
+  ex.n_income AS latest_express_n_income,
+  ex.yoy_sales AS latest_express_yoy_sales,
+  ex.yoy_dedu_np AS latest_express_yoy_dedu_np,
+  ex.perf_summary AS latest_express_summary
+FROM a_main_business_composition mb
+LEFT JOIN a_stock_basic b
+  ON b.ts_code = mb.ts_code
+LEFT JOIN a_financial_audit fa
+  ON fa.ts_code = mb.ts_code
+ AND fa.ann_date = (
+   SELECT MAX(fa2.ann_date)
+   FROM a_financial_audit fa2
+   WHERE fa2.ts_code = mb.ts_code
+ )
+LEFT JOIN a_express ex
+  ON ex.ts_code = mb.ts_code
+ AND ex.ann_date = (
+   SELECT MAX(ex2.ann_date)
+   FROM a_express ex2
+   WHERE ex2.ts_code = mb.ts_code
+ );
+
+CREATE OR REPLACE VIEW v_stock_shareholder_governance_summary AS
+SELECT
+  h.ts_code,
+  b.name,
+  'TOP10_HOLDER' AS section_type,
+  h.end_date AS sort_date,
+  ROW_NUMBER() OVER (
+    PARTITION BY h.ts_code, h.end_date, h.holder_scope
+    ORDER BY h.hold_ratio DESC, h.hold_amount DESC
+  ) AS ranking,
+  h.holder_scope,
+  h.holder_name,
+  h.hold_amount,
+  h.hold_ratio,
+  h.hold_float_ratio,
+  h.hold_change,
+  h.holder_type,
+  NULL AS holder_num,
+  NULL AS pledge_count,
+  NULL AS pledge_ratio,
+  NULL AS total_pledge
+FROM a_top10_holder h
+LEFT JOIN a_stock_basic b
+  ON b.ts_code = h.ts_code
+UNION ALL
+SELECT
+  hn.ts_code,
+  b.name,
+  'HOLDER_NUMBER' AS section_type,
+  hn.end_date AS sort_date,
+  1 AS ranking,
+  NULL AS holder_scope,
+  NULL AS holder_name,
+  NULL AS hold_amount,
+  NULL AS hold_ratio,
+  NULL AS hold_float_ratio,
+  NULL AS hold_change,
+  NULL AS holder_type,
+  hn.holder_num,
+  NULL AS pledge_count,
+  NULL AS pledge_ratio,
+  NULL AS total_pledge
+FROM a_holder_number hn
+LEFT JOIN a_stock_basic b
+  ON b.ts_code = hn.ts_code
+UNION ALL
+SELECT
+  ps.ts_code,
+  b.name,
+  'PLEDGE' AS section_type,
+  ps.end_date AS sort_date,
+  1 AS ranking,
+  NULL AS holder_scope,
+  NULL AS holder_name,
+  NULL AS hold_amount,
+  NULL AS hold_ratio,
+  NULL AS hold_float_ratio,
+  NULL AS hold_change,
+  NULL AS holder_type,
+  NULL AS holder_num,
+  ps.pledge_count,
+  ps.pledge_ratio,
+  COALESCE(ps.unrest_pledge, 0) + COALESCE(ps.rest_pledge, 0) AS total_pledge
+FROM a_pledge_stat ps
+LEFT JOIN a_stock_basic b
+  ON b.ts_code = ps.ts_code;
+
+CREATE OR REPLACE VIEW v_stock_moneyflow_recent AS
+SELECT
+  mf.ts_code,
+  b.name,
+  mf.trade_date,
+  mf.net_mf_amount,
+  COALESCE(mf.buy_lg_amount, 0) + COALESCE(mf.buy_elg_amount, 0)
+    - COALESCE(mf.sell_lg_amount, 0) - COALESCE(mf.sell_elg_amount, 0)
+    AS big_order_net_amount,
+  COALESCE(mf.buy_elg_amount, 0) - COALESCE(mf.sell_elg_amount, 0)
+    AS extra_big_order_net_amount,
+  mf.buy_lg_amount,
+  mf.sell_lg_amount,
+  mf.buy_elg_amount,
+  mf.sell_elg_amount
+FROM a_moneyflow mf
+LEFT JOIN a_stock_basic b
+  ON b.ts_code = mf.ts_code;
+
 CREATE OR REPLACE VIEW v_stock_research_context_latest AS
 SELECT
   b.ts_code,
@@ -399,12 +535,25 @@ SELECT
   f.total_assets,
   f.total_liab,
   f.total_hldr_eqy_exc_min_int,
+  bp.bz_item AS latest_main_business_item,
+  bp.revenue_share_pct AS latest_main_business_revenue_share_pct,
+  bp.gross_margin AS latest_main_business_gross_margin,
+  bp.latest_audit_result,
+  bp.latest_audit_agency,
+  bp.latest_express_revenue,
+  bp.latest_express_n_income,
+  bp.latest_express_yoy_sales,
+  bp.latest_express_yoy_dedu_np,
   d.end_date AS latest_dividend_period,
   d.cash_div_tax AS latest_cash_div_tax,
   d.div_proc AS latest_dividend_proc,
   fc.ann_date AS latest_forecast_ann_date,
   fc.type AS latest_forecast_type,
-  fc.summary AS latest_forecast_summary
+  fc.summary AS latest_forecast_summary,
+  hn.holder_num AS latest_holder_num,
+  ps.pledge_ratio AS latest_pledge_ratio,
+  mf.net_mf_amount AS latest_net_mf_amount,
+  mf.big_order_net_amount AS latest_big_order_net_amount
 FROM a_stock_basic b
 LEFT JOIN v_stock_quote_valuation_trend q
   ON q.ts_code = b.ts_code
@@ -420,6 +569,21 @@ LEFT JOIN v_stock_financial_period_summary f
    FROM v_stock_financial_period_summary f2
    WHERE f2.ts_code = b.ts_code
  )
+LEFT JOIN v_stock_business_profile_summary bp
+  ON bp.ts_code = b.ts_code
+ AND bp.business_type = 'PRODUCT'
+ AND bp.end_date = (
+   SELECT MAX(bp2.end_date)
+   FROM v_stock_business_profile_summary bp2
+   WHERE bp2.ts_code = b.ts_code AND bp2.business_type = 'PRODUCT'
+ )
+ AND bp.revenue_share_pct = (
+   SELECT MAX(bp3.revenue_share_pct)
+   FROM v_stock_business_profile_summary bp3
+   WHERE bp3.ts_code = b.ts_code
+     AND bp3.business_type = 'PRODUCT'
+     AND bp3.end_date = bp.end_date
+ )
 LEFT JOIN a_dividend d
   ON d.ts_code = b.ts_code
  AND d.ann_date = (
@@ -433,6 +597,27 @@ LEFT JOIN a_forecast fc
    SELECT MAX(fc2.ann_date)
    FROM a_forecast fc2
    WHERE fc2.ts_code = b.ts_code
+ )
+LEFT JOIN a_holder_number hn
+  ON hn.ts_code = b.ts_code
+ AND hn.end_date = (
+   SELECT MAX(hn2.end_date)
+   FROM a_holder_number hn2
+   WHERE hn2.ts_code = b.ts_code
+ )
+LEFT JOIN a_pledge_stat ps
+  ON ps.ts_code = b.ts_code
+ AND ps.end_date = (
+   SELECT MAX(ps2.end_date)
+   FROM a_pledge_stat ps2
+   WHERE ps2.ts_code = b.ts_code
+ )
+LEFT JOIN v_stock_moneyflow_recent mf
+  ON mf.ts_code = b.ts_code
+ AND mf.trade_date = (
+   SELECT MAX(mf2.trade_date)
+   FROM v_stock_moneyflow_recent mf2
+   WHERE mf2.ts_code = b.ts_code
  );
 
 CREATE OR REPLACE VIEW v_market_data_fetch_health AS

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import zipfile
+from collections.abc import Iterator
 from datetime import datetime
 from pathlib import Path
 from time import perf_counter
@@ -214,14 +215,27 @@ def test_route_from_payload_accepts_market_data_demands() -> None:
                 {
                     "market": "A",
                     "ts_code": "600036.SH",
-                    "packages": ["quote_valuation", "financial_statement", "danger_api"],
+                    "packages": [
+                        "quote_valuation",
+                        "financial_statement",
+                        "business_profile",
+                        "shareholder_governance",
+                        "capital_flow_light",
+                        "danger_api",
+                    ],
                 }
             ],
         }
     )
 
     assert route.data_demands[0].ts_code == "600036.SH"
-    assert route.data_demands[0].packages == ("quote_valuation", "financial_statement")
+    assert route.data_demands[0].packages == (
+        "quote_valuation",
+        "financial_statement",
+        "business_profile",
+        "shareholder_governance",
+        "capital_flow_light",
+    )
 
 
 def test_route_from_payload_accepts_up_to_five_market_data_demands() -> None:
@@ -275,6 +289,8 @@ def test_answer_prompt_includes_market_data_context_and_report_instruction() -> 
     assert payload["market_data_context"]["stock"]["ts_code"] == "600036.SH"
     assert "扣非净利润" in prompt
     assert "经营现金流覆盖" in prompt
+    assert "主营业务构成" in prompt
+    assert "资金流只用于解释短期交易情绪" in prompt
 
 
 def test_report_analysis_question_skips_data_query() -> None:
@@ -448,6 +464,138 @@ def test_investment_knowledge_selects_threshold_recommendation_logic() -> None:
 
     assert "A/H 溢价与跨市场价差" in selection.categories
     assert any("统一计算框架" in chunk["content"] for chunk in selection.chunks)
+
+
+def test_threshold_recommendation_fast_path_skips_router_and_market_data(monkeypatch) -> None:
+    """确认结构化阈值推荐走快路径，不再触发路由、消歧、补数和辅助视图。
+
+    创建日期：2026-05-07
+    author: sunshengxian
+    """
+
+    service = LlmService(
+        Mock(),
+        settings=Settings(llm_api_key="test-key", llm_api_key_file=None, llm_model="test-model"),
+    )
+    monkeypatch.setattr(
+        service,
+        "_route_question",
+        Mock(side_effect=AssertionError("threshold fast path should skip router")),
+    )
+    monkeypatch.setattr(
+        service,
+        "_ensure_market_data_context",
+        Mock(side_effect=AssertionError("threshold fast path should skip market data")),
+    )
+    captured_prompt: dict[str, str] = {}
+
+    def fake_chat_completion(
+        prompt: str,
+        system_prompt: str | None = None,
+        model: str | None = None,
+        temperature: float = 0.1,
+        trace: LlmCallTrace | None = None,
+    ) -> str:
+        captured_prompt["prompt"] = prompt
+        captured_prompt["phase"] = trace.phase if trace else ""
+        return "## 最终答案\n\n建议将 H/A 目标阈值设为 10.55%。"
+
+    monkeypatch.setattr(service, "_chat_completion", fake_chat_completion)
+
+    answer = service.answer(
+        "为招商银行推荐 H/A 目标阈值",
+        context={
+            "threshold_recommendation": {
+                "name": "招商银行",
+                "direction": "HA",
+                "metric_premium_pct": "9.8",
+                "premium_median_60": "8.6",
+                "premium_p80_60": "11.6",
+                "premium_percentile_60": "72",
+            }
+        },
+    )
+
+    assert answer.sql is None
+    assert answer.rows == []
+    assert "10.55" in captured_prompt["prompt"]
+    assert captured_prompt["phase"] == "threshold_answer"
+
+
+def test_threshold_recommendation_uses_deterministic_formula() -> None:
+    """确认阈值公式按 60 日中位数和 80% 分位稳定计算。
+
+    创建日期：2026-05-07
+    author: sunshengxian
+    """
+
+    service = LlmService(
+        Mock(),
+        settings=Settings(llm_api_key="test-key", llm_api_key_file=None, llm_model="test-model"),
+    )
+
+    result = service._calculate_threshold_recommendation(
+        {
+            "threshold_recommendation": {
+                "direction": "HA",
+                "metric_premium_pct": "9.8",
+                "premium_median_60": "8.6",
+                "premium_p80_60": "11.6",
+                "premium_percentile_60": "72",
+            }
+        }
+    )
+
+    assert service._format_threshold_number(result.threshold_pct) == "10.55"
+    assert result.reason_code == "base_formula"
+
+
+def test_threshold_recommendation_stream_fast_path_logs_stream_phase(monkeypatch) -> None:
+    """确认阈值推荐流式快路径使用专用阶段，便于耗时追踪。
+
+    创建日期：2026-05-07
+    author: sunshengxian
+    """
+
+    service = LlmService(
+        Mock(),
+        settings=Settings(llm_api_key="test-key", llm_api_key_file=None, llm_model="test-model"),
+    )
+    captured: dict[str, str] = {}
+
+    def fake_chat_completion_stream(
+        prompt: str,
+        system_prompt: str | None = None,
+        model: str | None = None,
+        trace: LlmCallTrace | None = None,
+        total_started_at: float | None = None,
+        row_count: int = 0,
+        total_phase: str = "stream_done",
+    ) -> Iterator[str]:
+        captured["phase"] = trace.phase if trace else ""
+        yield "## 最终答案\n\n"
+        yield "建议将 H/A 目标阈值设为 10.55%。"
+
+    monkeypatch.setattr(service, "_chat_completion_stream", fake_chat_completion_stream)
+
+    sql, rows, chunks = service.stream_answer(
+        "为招商银行推荐 H/A 目标阈值",
+        context={
+            "threshold_recommendation": {
+                "name": "招商银行",
+                "direction": "HA",
+                "metric_premium_pct": "9.8",
+                "premium_median_60": "8.6",
+                "premium_p80_60": "11.6",
+                "premium_percentile_60": "72",
+            }
+        },
+    )
+
+    assert sql is None
+    assert rows == []
+    assert "10.55" in "".join(chunks)
+    assert captured["phase"] == "threshold_answer_stream"
 
 
 def test_deepseek_model_alias_uses_supported_api_name(monkeypatch) -> None:
@@ -916,4 +1064,6 @@ def test_stock_report_instruction_requires_profit_quality_checks() -> None:
     assert "扣非净利润" in instruction
     assert "投资收益" in instruction
     assert "经营现金流覆盖" in instruction
+    assert "主营业务构成" in instruction
+    assert "股东治理" in instruction
     assert "不要因为表面估值低就自动给乐观结论" in instruction

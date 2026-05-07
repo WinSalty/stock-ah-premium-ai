@@ -135,3 +135,28 @@ def test_orchestrator_limits_multi_stock_demands_to_five(monkeypatch) -> None:
     assert result.status == "COMPLETED"
     assert len(result.stocks) == 5
     assert len(fetcher.calls) == 5
+
+
+def test_orchestrator_report_question_requests_enhanced_research_packages() -> None:
+    """确认个股报告问题会自动带上主营、治理和资金流数据包。
+
+    创建日期：2026-05-07
+    author: sunshengxian
+    """
+
+    service = MarketDataOrchestrator(_session(), fetcher=RecordingFetcher())  # type: ignore[arg-type]
+
+    # 报告类问题通常需要从商业结构、财务质量、股东治理和短期资金面交叉验证，
+    # 这里锁住关键词触发口径，避免后续只补行情估值导致报告证据链退化。
+    packages = service._packages_for_question(  # noqa: SLF001
+        "给我写一份招商银行投资分析报告，关注主营业务、股东质押和资金流向"
+    )
+
+    assert packages == (
+        "quote_valuation",
+        "financial_statement",
+        "business_profile",
+        "dividend_forecast",
+        "shareholder_governance",
+        "capital_flow_light",
+    )

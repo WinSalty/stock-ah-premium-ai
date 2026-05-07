@@ -14,13 +14,21 @@ from app.db.models.market import (
     ADividend,
     AFinancialIndicator,
     AForecast,
+    AHolderNumber,
+    AMainBusinessComposition,
+    AMoneyflow,
+    APledgeStat,
+    ATop10Holder,
     LlmMarketDataFetchRun,
 )
 from app.services.stock_identity_resolver import StockIdentity, StockIdentityResolver
 from app.services.tushare_stock_research_fetcher import (
+    BUSINESS_PROFILE_PACKAGE,
+    CAPITAL_FLOW_PACKAGE,
     DIVIDEND_FORECAST_PACKAGE,
     FINANCIAL_STATEMENT_PACKAGE,
     QUOTE_VALUATION_PACKAGE,
+    SHAREHOLDER_GOVERNANCE_PACKAGE,
     TushareStockResearchFetcher,
 )
 
@@ -36,6 +44,9 @@ REPORT_KEYWORDS = (
 )
 FINANCIAL_KEYWORDS = ("财报", "利润", "营收", "现金流", "资产负债", "ROE", "毛利率", "净利率")
 DIVIDEND_KEYWORDS = ("分红", "股息", "派息", "业绩预告", "预告")
+BUSINESS_PROFILE_KEYWORDS = ("主营", "业务构成", "收入结构", "产品", "地区", "审计", "业绩快报")
+GOVERNANCE_KEYWORDS = ("股东", "持股", "质押", "股东户数", "治理", "大股东", "筹码集中")
+CAPITAL_FLOW_KEYWORDS = ("资金流", "资金流向", "大单", "特大单", "净流入", "短期资金")
 MAX_MARKET_DATA_STOCKS = 5
 
 
@@ -261,18 +272,41 @@ class MarketDataOrchestrator:
             for keyword in REPORT_KEYWORDS + FINANCIAL_KEYWORDS
         ):
             packages.append(FINANCIAL_STATEMENT_PACKAGE)
+        if any(
+            keyword.lower() in question.lower()
+            for keyword in REPORT_KEYWORDS + BUSINESS_PROFILE_KEYWORDS
+        ):
+            packages.append(BUSINESS_PROFILE_PACKAGE)
         if any(keyword in question for keyword in REPORT_KEYWORDS + DIVIDEND_KEYWORDS):
             packages.append(DIVIDEND_FORECAST_PACKAGE)
+        if any(keyword in question for keyword in REPORT_KEYWORDS + GOVERNANCE_KEYWORDS):
+            packages.append(SHAREHOLDER_GOVERNANCE_PACKAGE)
+        if any(keyword in question for keyword in CAPITAL_FLOW_KEYWORDS):
+            packages.append(CAPITAL_FLOW_PACKAGE)
         return tuple(packages)
 
     def _normalize_packages(self, packages: tuple[str, ...]) -> tuple[str, ...]:
-        allowed = (QUOTE_VALUATION_PACKAGE, FINANCIAL_STATEMENT_PACKAGE, DIVIDEND_FORECAST_PACKAGE)
+        allowed = (
+            QUOTE_VALUATION_PACKAGE,
+            FINANCIAL_STATEMENT_PACKAGE,
+            BUSINESS_PROFILE_PACKAGE,
+            DIVIDEND_FORECAST_PACKAGE,
+            SHAREHOLDER_GOVERNANCE_PACKAGE,
+            CAPITAL_FLOW_PACKAGE,
+        )
         normalized = tuple(package for package in allowed if package in set(packages))
         return normalized or (QUOTE_VALUATION_PACKAGE,)
 
     def _merged_packages(self, package_groups: tuple[tuple[str, ...], ...]) -> tuple[str, ...]:
         # 批次审计表只记录本轮问答涉及的包合集，逐股实际包仍保留在 market_data_context.items 中。
-        allowed = (QUOTE_VALUATION_PACKAGE, FINANCIAL_STATEMENT_PACKAGE, DIVIDEND_FORECAST_PACKAGE)
+        allowed = (
+            QUOTE_VALUATION_PACKAGE,
+            FINANCIAL_STATEMENT_PACKAGE,
+            BUSINESS_PROFILE_PACKAGE,
+            DIVIDEND_FORECAST_PACKAGE,
+            SHAREHOLDER_GOVERNANCE_PACKAGE,
+            CAPITAL_FLOW_PACKAGE,
+        )
         selected = {package for packages in package_groups for package in packages}
         return tuple(package for package in allowed if package in selected)
 
@@ -290,6 +324,13 @@ class MarketDataOrchestrator:
                 )
             )
             return latest_period is None or latest_period < today - timedelta(days=220)
+        if package == BUSINESS_PROFILE_PACKAGE:
+            latest_business = self.db.scalar(
+                select(func.max(AMainBusinessComposition.end_date)).where(
+                    AMainBusinessComposition.ts_code == ts_code
+                )
+            )
+            return latest_business is None or latest_business < today - timedelta(days=365)
         if package == DIVIDEND_FORECAST_PACKAGE:
             latest_dividend = self.db.scalar(
                 select(func.max(ADividend.ann_date)).where(ADividend.ts_code == ts_code)
@@ -302,6 +343,26 @@ class MarketDataOrchestrator:
                 default=None,
             )
             return latest is None or latest < today - timedelta(days=365)
+        if package == SHAREHOLDER_GOVERNANCE_PACKAGE:
+            latest_holder = self.db.scalar(
+                select(func.max(AHolderNumber.end_date)).where(AHolderNumber.ts_code == ts_code)
+            )
+            latest_top10 = self.db.scalar(
+                select(func.max(ATop10Holder.end_date)).where(ATop10Holder.ts_code == ts_code)
+            )
+            latest_pledge = self.db.scalar(
+                select(func.max(APledgeStat.end_date)).where(APledgeStat.ts_code == ts_code)
+            )
+            latest = max(
+                [item for item in (latest_holder, latest_top10, latest_pledge) if item],
+                default=None,
+            )
+            return latest is None or latest < today - timedelta(days=365)
+        if package == CAPITAL_FLOW_PACKAGE:
+            latest_moneyflow = self.db.scalar(
+                select(func.max(AMoneyflow.trade_date)).where(AMoneyflow.ts_code == ts_code)
+            )
+            return latest_moneyflow is None or latest_moneyflow < today - timedelta(days=14)
         return False
 
     def _build_context(self, ts_code: str, packages: tuple[str, ...]) -> dict[str, Any]:
@@ -323,7 +384,30 @@ class MarketDataOrchestrator:
             "financial_periods": self._query_view(
                 (
                     "select * from v_stock_financial_period_summary "
-                    "where ts_code = :ts_code order by end_date desc limit 8"
+                    "where ts_code = :ts_code order by end_date desc limit 12"
+                ),
+                ts_code,
+            ),
+            "business_profile": self._query_view(
+                (
+                    "select * from v_stock_business_profile_summary "
+                    "where ts_code = :ts_code "
+                    "order by end_date desc, business_type, bz_sales desc limit 20"
+                ),
+                ts_code,
+            ),
+            "shareholder_governance": self._query_view(
+                (
+                    "select * from v_stock_shareholder_governance_summary "
+                    "where ts_code = :ts_code "
+                    "order by sort_date desc, section_type, ranking limit 30"
+                ),
+                ts_code,
+            ),
+            "capital_flow_recent": self._query_view(
+                (
+                    "select * from v_stock_moneyflow_recent "
+                    "where ts_code = :ts_code order by trade_date desc limit 20"
                 ),
                 ts_code,
             ),
@@ -374,8 +458,8 @@ class MarketDataOrchestrator:
             market_scope="A_STOCK_SINGLE" if len(stocks) == 1 else "A_STOCK_MULTI",
             symbols_json=json.dumps(stock_codes, ensure_ascii=False),
             data_packages_json=json.dumps(list(packages), ensure_ascii=False),
-            period_policy="A_STOCK_RECENT_LIMITED_15000_PERMISSION",
-            start_date=date.today() - timedelta(days=365 * 5),
+            period_policy="A_STOCK_EXTENDED_SINGLE_STOCK_15000_PERMISSION",
+            start_date=date.today() - timedelta(days=365 * 8),
             end_date=date.today(),
             status="RUNNING",
             cache_hit=False,

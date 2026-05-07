@@ -805,6 +805,219 @@ class AForecast(TimestampMixin, Base):
     raw_payload_json: Mapped[str | None] = mapped_column(Text)
 
 
+class AMainBusinessComposition(TimestampMixin, Base):
+    """A 股主营业务构成表。
+
+    创建日期：2026-05-07
+    author: sunshengxian
+    """
+
+    __tablename__ = "a_main_business_composition"
+    __table_args__ = (
+        UniqueConstraint(
+            "ts_code",
+            "end_date",
+            "business_type",
+            "bz_item",
+            name="uk_a_main_business_composition",
+        ),
+        Index("idx_a_main_business_code_period", "ts_code", "end_date"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    ts_code: Mapped[str] = mapped_column(String(16), nullable=False)
+    end_date: Mapped[date] = mapped_column(Date, nullable=False)
+    business_type: Mapped[str] = mapped_column(String(8), nullable=False, default="")
+    bz_item: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    bz_sales: Mapped[Decimal | None] = mapped_column(DECIMAL(24, 6))
+    bz_profit: Mapped[Decimal | None] = mapped_column(DECIMAL(24, 6))
+    bz_cost: Mapped[Decimal | None] = mapped_column(DECIMAL(24, 6))
+    curr_type: Mapped[str | None] = mapped_column(String(16))
+    update_flag: Mapped[str | None] = mapped_column(String(8))
+    raw_payload_json: Mapped[str | None] = mapped_column(Text)
+
+
+class AFinancialAudit(TimestampMixin, Base):
+    """A 股财务审计意见表。
+
+    创建日期：2026-05-07
+    author: sunshengxian
+    """
+
+    __tablename__ = "a_financial_audit"
+    __table_args__ = (
+        UniqueConstraint("ts_code", "ann_date", "end_date", name="uk_a_financial_audit"),
+        Index("idx_a_financial_audit_code_period", "ts_code", "end_date"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    ts_code: Mapped[str] = mapped_column(String(16), nullable=False)
+    ann_date: Mapped[date] = mapped_column(Date, nullable=False)
+    end_date: Mapped[date] = mapped_column(Date, nullable=False)
+    audit_result: Mapped[str | None] = mapped_column(String(128))
+    audit_fees: Mapped[Decimal | None] = mapped_column(DECIMAL(24, 6))
+    audit_agency: Mapped[str | None] = mapped_column(String(255))
+    audit_sign: Mapped[str | None] = mapped_column(String(255))
+    raw_payload_json: Mapped[str | None] = mapped_column(Text)
+
+
+class AExpress(TimestampMixin, Base):
+    """A 股业绩快报表。
+
+    创建日期：2026-05-07
+    author: sunshengxian
+    """
+
+    __tablename__ = "a_express"
+    __table_args__ = (
+        UniqueConstraint("ts_code", "ann_date", "end_date", name="uk_a_express"),
+        Index("idx_a_express_code_period", "ts_code", "end_date"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    ts_code: Mapped[str] = mapped_column(String(16), nullable=False)
+    ann_date: Mapped[date] = mapped_column(Date, nullable=False)
+    end_date: Mapped[date] = mapped_column(Date, nullable=False)
+    revenue: Mapped[Decimal | None] = mapped_column(DECIMAL(24, 6))
+    operate_profit: Mapped[Decimal | None] = mapped_column(DECIMAL(24, 6))
+    total_profit: Mapped[Decimal | None] = mapped_column(DECIMAL(24, 6))
+    n_income: Mapped[Decimal | None] = mapped_column(DECIMAL(24, 6))
+    total_assets: Mapped[Decimal | None] = mapped_column(DECIMAL(24, 6))
+    total_hldr_eqy_exc_min_int: Mapped[Decimal | None] = mapped_column(DECIMAL(24, 6))
+    diluted_eps: Mapped[Decimal | None] = mapped_column(DECIMAL(20, 8))
+    diluted_roe: Mapped[Decimal | None] = mapped_column(DECIMAL(20, 8))
+    yoy_net_profit: Mapped[Decimal | None] = mapped_column(DECIMAL(24, 6))
+    bps: Mapped[Decimal | None] = mapped_column(DECIMAL(20, 8))
+    yoy_sales: Mapped[Decimal | None] = mapped_column(DECIMAL(20, 8))
+    yoy_op: Mapped[Decimal | None] = mapped_column(DECIMAL(20, 8))
+    yoy_tp: Mapped[Decimal | None] = mapped_column(DECIMAL(20, 8))
+    yoy_dedu_np: Mapped[Decimal | None] = mapped_column(DECIMAL(20, 8))
+    yoy_eps: Mapped[Decimal | None] = mapped_column(DECIMAL(20, 8))
+    yoy_roe: Mapped[Decimal | None] = mapped_column(DECIMAL(20, 8))
+    growth_assets: Mapped[Decimal | None] = mapped_column(DECIMAL(20, 8))
+    yoy_equity: Mapped[Decimal | None] = mapped_column(DECIMAL(20, 8))
+    growth_bps: Mapped[Decimal | None] = mapped_column(DECIMAL(20, 8))
+    perf_summary: Mapped[str | None] = mapped_column(Text)
+    is_audit: Mapped[int | None] = mapped_column(Integer)
+    remark: Mapped[str | None] = mapped_column(Text)
+    raw_payload_json: Mapped[str | None] = mapped_column(Text)
+
+
+class ATop10Holder(TimestampMixin, Base):
+    """A 股前十大股东和前十大流通股东表。
+
+    创建日期：2026-05-07
+    author: sunshengxian
+    """
+
+    __tablename__ = "a_top10_holder"
+    __table_args__ = (
+        UniqueConstraint(
+            "ts_code",
+            "end_date",
+            "holder_scope",
+            "holder_name",
+            name="uk_a_top10_holder",
+        ),
+        Index("idx_a_top10_holder_code_period", "ts_code", "end_date"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    ts_code: Mapped[str] = mapped_column(String(16), nullable=False)
+    ann_date: Mapped[date | None] = mapped_column(Date)
+    end_date: Mapped[date] = mapped_column(Date, nullable=False)
+    holder_scope: Mapped[str] = mapped_column(String(16), nullable=False, default="")
+    holder_name: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    hold_amount: Mapped[Decimal | None] = mapped_column(DECIMAL(24, 6))
+    hold_ratio: Mapped[Decimal | None] = mapped_column(DECIMAL(20, 8))
+    hold_float_ratio: Mapped[Decimal | None] = mapped_column(DECIMAL(20, 8))
+    hold_change: Mapped[Decimal | None] = mapped_column(DECIMAL(24, 6))
+    holder_type: Mapped[str | None] = mapped_column(String(128))
+    raw_payload_json: Mapped[str | None] = mapped_column(Text)
+
+
+class AHolderNumber(TimestampMixin, Base):
+    """A 股股东户数表。
+
+    创建日期：2026-05-07
+    author: sunshengxian
+    """
+
+    __tablename__ = "a_holder_number"
+    __table_args__ = (
+        UniqueConstraint("ts_code", "end_date", "ann_date", name="uk_a_holder_number"),
+        Index("idx_a_holder_number_code_period", "ts_code", "end_date"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    ts_code: Mapped[str] = mapped_column(String(16), nullable=False)
+    ann_date: Mapped[date] = mapped_column(Date, nullable=False)
+    end_date: Mapped[date] = mapped_column(Date, nullable=False)
+    holder_num: Mapped[int | None] = mapped_column(Integer)
+    raw_payload_json: Mapped[str | None] = mapped_column(Text)
+
+
+class APledgeStat(TimestampMixin, Base):
+    """A 股股权质押统计表。
+
+    创建日期：2026-05-07
+    author: sunshengxian
+    """
+
+    __tablename__ = "a_pledge_stat"
+    __table_args__ = (
+        UniqueConstraint("ts_code", "end_date", name="uk_a_pledge_stat"),
+        Index("idx_a_pledge_stat_code_date", "ts_code", "end_date"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    ts_code: Mapped[str] = mapped_column(String(16), nullable=False)
+    end_date: Mapped[date] = mapped_column(Date, nullable=False)
+    pledge_count: Mapped[int | None] = mapped_column(Integer)
+    unrest_pledge: Mapped[Decimal | None] = mapped_column(DECIMAL(24, 6))
+    rest_pledge: Mapped[Decimal | None] = mapped_column(DECIMAL(24, 6))
+    total_share: Mapped[Decimal | None] = mapped_column(DECIMAL(24, 6))
+    pledge_ratio: Mapped[Decimal | None] = mapped_column(DECIMAL(20, 8))
+    raw_payload_json: Mapped[str | None] = mapped_column(Text)
+
+
+class AMoneyflow(TimestampMixin, Base):
+    """A 股个股资金流向表。
+
+    创建日期：2026-05-07
+    author: sunshengxian
+    """
+
+    __tablename__ = "a_moneyflow"
+    __table_args__ = (
+        UniqueConstraint("ts_code", "trade_date", name="uk_a_moneyflow"),
+        Index("idx_a_moneyflow_code_date", "ts_code", "trade_date"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    ts_code: Mapped[str] = mapped_column(String(16), nullable=False)
+    trade_date: Mapped[date] = mapped_column(Date, nullable=False)
+    buy_sm_vol: Mapped[Decimal | None] = mapped_column(DECIMAL(24, 6))
+    buy_sm_amount: Mapped[Decimal | None] = mapped_column(DECIMAL(24, 6))
+    sell_sm_vol: Mapped[Decimal | None] = mapped_column(DECIMAL(24, 6))
+    sell_sm_amount: Mapped[Decimal | None] = mapped_column(DECIMAL(24, 6))
+    buy_md_vol: Mapped[Decimal | None] = mapped_column(DECIMAL(24, 6))
+    buy_md_amount: Mapped[Decimal | None] = mapped_column(DECIMAL(24, 6))
+    sell_md_vol: Mapped[Decimal | None] = mapped_column(DECIMAL(24, 6))
+    sell_md_amount: Mapped[Decimal | None] = mapped_column(DECIMAL(24, 6))
+    buy_lg_vol: Mapped[Decimal | None] = mapped_column(DECIMAL(24, 6))
+    buy_lg_amount: Mapped[Decimal | None] = mapped_column(DECIMAL(24, 6))
+    sell_lg_vol: Mapped[Decimal | None] = mapped_column(DECIMAL(24, 6))
+    sell_lg_amount: Mapped[Decimal | None] = mapped_column(DECIMAL(24, 6))
+    buy_elg_vol: Mapped[Decimal | None] = mapped_column(DECIMAL(24, 6))
+    buy_elg_amount: Mapped[Decimal | None] = mapped_column(DECIMAL(24, 6))
+    sell_elg_vol: Mapped[Decimal | None] = mapped_column(DECIMAL(24, 6))
+    sell_elg_amount: Mapped[Decimal | None] = mapped_column(DECIMAL(24, 6))
+    net_mf_vol: Mapped[Decimal | None] = mapped_column(DECIMAL(24, 6))
+    net_mf_amount: Mapped[Decimal | None] = mapped_column(DECIMAL(24, 6))
+    raw_payload_json: Mapped[str | None] = mapped_column(Text)
+
+
 class LlmMarketDataFetchRun(TimestampMixin, Base):
     """LLM 按需市场数据抓取批次表。
 

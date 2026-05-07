@@ -711,6 +711,158 @@ CREATE TABLE IF NOT EXISTS `a_forecast` (
   KEY `idx_a_forecast_code_period` (`ts_code`, `end_date`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='A 股业绩预告表';
 
+CREATE TABLE IF NOT EXISTS `a_main_business_composition` (
+  `id` INT NOT NULL AUTO_INCREMENT COMMENT '自增主键',
+  `ts_code` VARCHAR(16) NOT NULL COMMENT 'A 股 Tushare 代码',
+  `end_date` DATE NOT NULL COMMENT '报告期',
+  `business_type` VARCHAR(8) NOT NULL DEFAULT '' COMMENT '主营构成口径，PRODUCT 产品、REGION 地区',
+  `bz_item` VARCHAR(255) NOT NULL DEFAULT '' COMMENT '主营业务项目',
+  `bz_sales` DECIMAL(24,6) DEFAULT NULL COMMENT '主营业务收入',
+  `bz_profit` DECIMAL(24,6) DEFAULT NULL COMMENT '主营业务利润',
+  `bz_cost` DECIMAL(24,6) DEFAULT NULL COMMENT '主营业务成本',
+  `curr_type` VARCHAR(16) DEFAULT NULL COMMENT '货币代码',
+  `update_flag` VARCHAR(8) DEFAULT NULL COMMENT '更新标识',
+  `raw_payload_json` TEXT DEFAULT NULL COMMENT 'Tushare 原始行 JSON',
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '更新时间',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_a_main_business_composition` (`ts_code`, `end_date`, `business_type`, `bz_item`),
+  KEY `idx_a_main_business_code_period` (`ts_code`, `end_date`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='A 股主营业务构成表';
+
+CREATE TABLE IF NOT EXISTS `a_financial_audit` (
+  `id` INT NOT NULL AUTO_INCREMENT COMMENT '自增主键',
+  `ts_code` VARCHAR(16) NOT NULL COMMENT 'A 股 Tushare 代码',
+  `ann_date` DATE NOT NULL COMMENT '公告日期',
+  `end_date` DATE NOT NULL COMMENT '报告期',
+  `audit_result` VARCHAR(128) DEFAULT NULL COMMENT '审计结果',
+  `audit_fees` DECIMAL(24,6) DEFAULT NULL COMMENT '审计费用',
+  `audit_agency` VARCHAR(255) DEFAULT NULL COMMENT '会计师事务所',
+  `audit_sign` VARCHAR(255) DEFAULT NULL COMMENT '签字会计师',
+  `raw_payload_json` TEXT DEFAULT NULL COMMENT 'Tushare 原始行 JSON',
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '更新时间',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_a_financial_audit` (`ts_code`, `ann_date`, `end_date`),
+  KEY `idx_a_financial_audit_code_period` (`ts_code`, `end_date`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='A 股财务审计意见表';
+
+CREATE TABLE IF NOT EXISTS `a_express` (
+  `id` INT NOT NULL AUTO_INCREMENT COMMENT '自增主键',
+  `ts_code` VARCHAR(16) NOT NULL COMMENT 'A 股 Tushare 代码',
+  `ann_date` DATE NOT NULL COMMENT '公告日期',
+  `end_date` DATE NOT NULL COMMENT '报告期',
+  `revenue` DECIMAL(24,6) DEFAULT NULL COMMENT '营业收入',
+  `operate_profit` DECIMAL(24,6) DEFAULT NULL COMMENT '营业利润',
+  `total_profit` DECIMAL(24,6) DEFAULT NULL COMMENT '利润总额',
+  `n_income` DECIMAL(24,6) DEFAULT NULL COMMENT '净利润',
+  `total_assets` DECIMAL(24,6) DEFAULT NULL COMMENT '总资产',
+  `total_hldr_eqy_exc_min_int` DECIMAL(24,6) DEFAULT NULL COMMENT '归母股东权益',
+  `diluted_eps` DECIMAL(20,8) DEFAULT NULL COMMENT '摊薄每股收益',
+  `diluted_roe` DECIMAL(20,8) DEFAULT NULL COMMENT '摊薄净资产收益率',
+  `yoy_net_profit` DECIMAL(24,6) DEFAULT NULL COMMENT '去年同期净利润',
+  `bps` DECIMAL(20,8) DEFAULT NULL COMMENT '每股净资产',
+  `yoy_sales` DECIMAL(20,8) DEFAULT NULL COMMENT '营业收入同比',
+  `yoy_op` DECIMAL(20,8) DEFAULT NULL COMMENT '营业利润同比',
+  `yoy_tp` DECIMAL(20,8) DEFAULT NULL COMMENT '利润总额同比',
+  `yoy_dedu_np` DECIMAL(20,8) DEFAULT NULL COMMENT '归母净利润同比',
+  `yoy_eps` DECIMAL(20,8) DEFAULT NULL COMMENT '每股收益同比',
+  `yoy_roe` DECIMAL(20,8) DEFAULT NULL COMMENT '加权 ROE 同比',
+  `growth_assets` DECIMAL(20,8) DEFAULT NULL COMMENT '总资产较年初增长率',
+  `yoy_equity` DECIMAL(20,8) DEFAULT NULL COMMENT '归母权益较年初增长率',
+  `growth_bps` DECIMAL(20,8) DEFAULT NULL COMMENT '每股净资产较年初增长率',
+  `perf_summary` TEXT DEFAULT NULL COMMENT '业绩简要说明',
+  `is_audit` INT DEFAULT NULL COMMENT '是否审计',
+  `remark` TEXT DEFAULT NULL COMMENT '备注',
+  `raw_payload_json` TEXT DEFAULT NULL COMMENT 'Tushare 原始行 JSON',
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '更新时间',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_a_express` (`ts_code`, `ann_date`, `end_date`),
+  KEY `idx_a_express_code_period` (`ts_code`, `end_date`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='A 股业绩快报表';
+
+CREATE TABLE IF NOT EXISTS `a_top10_holder` (
+  `id` INT NOT NULL AUTO_INCREMENT COMMENT '自增主键',
+  `ts_code` VARCHAR(16) NOT NULL COMMENT 'A 股 Tushare 代码',
+  `ann_date` DATE DEFAULT NULL COMMENT '公告日期',
+  `end_date` DATE NOT NULL COMMENT '报告期',
+  `holder_scope` VARCHAR(16) NOT NULL DEFAULT '' COMMENT '股东范围，TOTAL 前十大股东、FLOAT 前十大流通股东',
+  `holder_name` VARCHAR(255) NOT NULL DEFAULT '' COMMENT '股东名称',
+  `hold_amount` DECIMAL(24,6) DEFAULT NULL COMMENT '持股数量',
+  `hold_ratio` DECIMAL(20,8) DEFAULT NULL COMMENT '持股比例',
+  `hold_float_ratio` DECIMAL(20,8) DEFAULT NULL COMMENT '流通股持股比例',
+  `hold_change` DECIMAL(24,6) DEFAULT NULL COMMENT '持股变动',
+  `holder_type` VARCHAR(128) DEFAULT NULL COMMENT '股东类型',
+  `raw_payload_json` TEXT DEFAULT NULL COMMENT 'Tushare 原始行 JSON',
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '更新时间',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_a_top10_holder` (`ts_code`, `end_date`, `holder_scope`, `holder_name`),
+  KEY `idx_a_top10_holder_code_period` (`ts_code`, `end_date`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='A 股前十大股东和前十大流通股东表';
+
+CREATE TABLE IF NOT EXISTS `a_holder_number` (
+  `id` INT NOT NULL AUTO_INCREMENT COMMENT '自增主键',
+  `ts_code` VARCHAR(16) NOT NULL COMMENT 'A 股 Tushare 代码',
+  `ann_date` DATE NOT NULL COMMENT '公告日期',
+  `end_date` DATE NOT NULL COMMENT '截止日期',
+  `holder_num` INT DEFAULT NULL COMMENT '股东户数',
+  `raw_payload_json` TEXT DEFAULT NULL COMMENT 'Tushare 原始行 JSON',
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '更新时间',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_a_holder_number` (`ts_code`, `end_date`, `ann_date`),
+  KEY `idx_a_holder_number_code_period` (`ts_code`, `end_date`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='A 股股东户数表';
+
+CREATE TABLE IF NOT EXISTS `a_pledge_stat` (
+  `id` INT NOT NULL AUTO_INCREMENT COMMENT '自增主键',
+  `ts_code` VARCHAR(16) NOT NULL COMMENT 'A 股 Tushare 代码',
+  `end_date` DATE NOT NULL COMMENT '截止日期',
+  `pledge_count` INT DEFAULT NULL COMMENT '质押次数',
+  `unrest_pledge` DECIMAL(24,6) DEFAULT NULL COMMENT '无限售股质押数量',
+  `rest_pledge` DECIMAL(24,6) DEFAULT NULL COMMENT '限售股质押数量',
+  `total_share` DECIMAL(24,6) DEFAULT NULL COMMENT '总股本',
+  `pledge_ratio` DECIMAL(20,8) DEFAULT NULL COMMENT '质押比例',
+  `raw_payload_json` TEXT DEFAULT NULL COMMENT 'Tushare 原始行 JSON',
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '更新时间',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_a_pledge_stat` (`ts_code`, `end_date`),
+  KEY `idx_a_pledge_stat_code_date` (`ts_code`, `end_date`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='A 股股权质押统计表';
+
+CREATE TABLE IF NOT EXISTS `a_moneyflow` (
+  `id` INT NOT NULL AUTO_INCREMENT COMMENT '自增主键',
+  `ts_code` VARCHAR(16) NOT NULL COMMENT 'A 股 Tushare 代码',
+  `trade_date` DATE NOT NULL COMMENT '交易日期',
+  `buy_sm_vol` DECIMAL(24,6) DEFAULT NULL COMMENT '小单买入量',
+  `buy_sm_amount` DECIMAL(24,6) DEFAULT NULL COMMENT '小单买入金额',
+  `sell_sm_vol` DECIMAL(24,6) DEFAULT NULL COMMENT '小单卖出量',
+  `sell_sm_amount` DECIMAL(24,6) DEFAULT NULL COMMENT '小单卖出金额',
+  `buy_md_vol` DECIMAL(24,6) DEFAULT NULL COMMENT '中单买入量',
+  `buy_md_amount` DECIMAL(24,6) DEFAULT NULL COMMENT '中单买入金额',
+  `sell_md_vol` DECIMAL(24,6) DEFAULT NULL COMMENT '中单卖出量',
+  `sell_md_amount` DECIMAL(24,6) DEFAULT NULL COMMENT '中单卖出金额',
+  `buy_lg_vol` DECIMAL(24,6) DEFAULT NULL COMMENT '大单买入量',
+  `buy_lg_amount` DECIMAL(24,6) DEFAULT NULL COMMENT '大单买入金额',
+  `sell_lg_vol` DECIMAL(24,6) DEFAULT NULL COMMENT '大单卖出量',
+  `sell_lg_amount` DECIMAL(24,6) DEFAULT NULL COMMENT '大单卖出金额',
+  `buy_elg_vol` DECIMAL(24,6) DEFAULT NULL COMMENT '特大单买入量',
+  `buy_elg_amount` DECIMAL(24,6) DEFAULT NULL COMMENT '特大单买入金额',
+  `sell_elg_vol` DECIMAL(24,6) DEFAULT NULL COMMENT '特大单卖出量',
+  `sell_elg_amount` DECIMAL(24,6) DEFAULT NULL COMMENT '特大单卖出金额',
+  `net_mf_vol` DECIMAL(24,6) DEFAULT NULL COMMENT '净流入量',
+  `net_mf_amount` DECIMAL(24,6) DEFAULT NULL COMMENT '净流入金额',
+  `raw_payload_json` TEXT DEFAULT NULL COMMENT 'Tushare 原始行 JSON',
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '更新时间',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_a_moneyflow` (`ts_code`, `trade_date`),
+  KEY `idx_a_moneyflow_code_date` (`ts_code`, `trade_date`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='A 股个股资金流向表';
+
 CREATE TABLE IF NOT EXISTS `llm_market_data_fetch_run` (
   `id` INT NOT NULL AUTO_INCREMENT COMMENT '自增主键',
   `question_id` VARCHAR(64) DEFAULT NULL COMMENT 'LLM 单轮问题追踪 ID',
