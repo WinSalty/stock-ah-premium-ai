@@ -195,9 +195,10 @@ ha_premium = (ha_comparison - 1) * 100
 ```text
 data_source = TENCENT_UNADJUSTED_BACKFILL
 is_realtime = 0
+a_name/hk_name = 优先取 ah_stock_pair，缺失时继承同股票对已有官方主表名称
 ```
 
-8. 对同日同 A/H 股票对先删除 `BAIDU_HISTORY_BACKFILL` 行，再使用 `INSERT IGNORE` 或等价 upsert 写入不复权结果；不覆盖 `TUSHARE_OFFICIAL`、实时计算或人工来源。
+8. 对同日同 A/H 股票对先删除 `BAIDU_HISTORY_BACKFILL` 行，再使用 `INSERT IGNORE` 或等价 upsert 写入不复权结果；不覆盖 `TUSHARE_OFFICIAL`、实时计算或人工来源。名称字段用于数据查询页中文关键词检索，不参与比价计算。
 9. 记录 `historical_ah_unadjusted_backfill_run`，已 `COMPLETED` 的股票对默认跳过。
 
 说明：Baidu 前复权补数是本次替换对象，追跑时允许按 `data_source='BAIDU_HISTORY_BACKFILL'` 有条件删除重建；官方 Tushare 行仍保持最高优先级，不被不复权补数覆盖。

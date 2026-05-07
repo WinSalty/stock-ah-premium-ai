@@ -10,6 +10,7 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session, aliased
 
 from app.db.models.market import (
+    AHStockPair,
     HistoricalAhUnadjustedBackfillRun,
     OfficialAHComparison,
     TencentUnadjustedDailyQuote,
@@ -104,11 +105,12 @@ class UnadjustedAhBackfillService:
     ) -> HistoricalAhUnadjustedBackfillRun:
         run = self._mark_started(a_ts_code, hk_ts_code)
         try:
+            pair_names = self._resolve_pair_names(a_ts_code, hk_ts_code)
             rows = self._build_candidate_rows(a_ts_code, hk_ts_code, start_date, end_date)
             snapshots: list[dict[str, object]] = []
             skipped_invalid_rows = 0
             for row in rows:
-                snapshot = self._build_snapshot(row)
+                snapshot = self._build_snapshot(row, pair_names[0], pair_names[1])
                 if snapshot is None:
                     skipped_invalid_rows += 1
                     continue
@@ -185,7 +187,68 @@ class UnadjustedAhBackfillService:
             statement = statement.where(a_quote.trade_date <= end_date)
         return [dict(row._mapping) for row in self.db.execute(statement).all()]
 
-    def _build_snapshot(self, row: dict[str, object]) -> dict[str, object] | None:
+    def _resolve_pair_names(self, a_ts_code: str, hk_ts_code: str) -> tuple[str | None, str | None]:
+        """解析不复权补数写入主表时使用的 A/H 名称。
+
+        创建日期：2026-05-07
+        author: sunshengxian
+        """
+
+        # 主表查询页支持按 a_name/hk_name 搜索；腾讯原始 K 线只有代码没有名称，
+        # 因此追跑前先从 AH 配对表取标准名称，避免历史补数行按中文股票名搜索时被漏掉。
+        pair_row = self.db.execute(
+            select(AHStockPair.a_name, AHStockPair.hk_name)
+            .where(
+                AHStockPair.a_ts_code == a_ts_code.upper(),
+                AHStockPair.hk_ts_code == hk_ts_code.upper(),
+            )
+            .order_by(AHStockPair.is_active.desc(), AHStockPair.id.desc())
+        ).first()
+        a_name = pair_row.a_name if pair_row else None
+        hk_name = pair_row.hk_name if pair_row else None
+        if a_name and hk_name:
+            return a_name, hk_name
+
+        # 老环境不一定已经维护 AH 配对名称；若主表已有 Tushare 官方行，则继承同一股票对
+        # 最近的非空名称，保持腾讯历史补数和官方日终数据在页面搜索口径上一致。
+        official_row = self.db.execute(
+            select(OfficialAHComparison.a_name, OfficialAHComparison.hk_name)
+            .where(
+                OfficialAHComparison.a_ts_code == a_ts_code.upper(),
+                OfficialAHComparison.hk_ts_code == hk_ts_code.upper(),
+                (
+                    OfficialAHComparison.a_name.is_not(None)
+                    | OfficialAHComparison.hk_name.is_not(None)
+                ),
+            )
+            .order_by(OfficialAHComparison.trade_date.desc(), OfficialAHComparison.id.desc())
+        ).first()
+        if official_row:
+            a_name = a_name or official_row.a_name
+            hk_name = hk_name or official_row.hk_name
+        if a_name and hk_name:
+            return a_name, hk_name
+
+        # watchlist_stock 只有用户展示名，不能可靠代表 H 股名称；仅在 A 股名称仍缺失时作为
+        # 搜索兜底，保证用户刚关注的新标的在补数完成后至少能按自选展示名查到历史行。
+        watchlist_display_name = self.db.scalar(
+            select(WatchlistStock.display_name)
+            .where(
+                WatchlistStock.a_ts_code == a_ts_code.upper(),
+                WatchlistStock.hk_ts_code == hk_ts_code.upper(),
+                WatchlistStock.is_active.is_(True),
+                WatchlistStock.display_name.is_not(None),
+            )
+            .order_by(WatchlistStock.id.desc())
+        )
+        return a_name or watchlist_display_name, hk_name
+
+    def _build_snapshot(
+        self,
+        row: dict[str, object],
+        a_name: str | None,
+        hk_name: str | None,
+    ) -> dict[str, object] | None:
         a_close = row.get("a_close")
         hk_close = row.get("hk_close")
         hkd_cny_close = row.get("hkd_cny_close")
@@ -216,6 +279,8 @@ class UnadjustedAhBackfillService:
             "trade_date": row["trade_date"],
             "a_ts_code": row["a_ts_code"],
             "hk_ts_code": row["hk_ts_code"],
+            "a_name": a_name,
+            "hk_name": hk_name,
             "a_close": a_close,
             "a_pct_chg": row.get("a_pct_chg"),
             "hk_close": hk_close,

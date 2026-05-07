@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.db.base import Base
 from app.db.models.market import (
+    AHStockPair,
     HistoricalAhUnadjustedBackfillRun,
     OfficialAHComparison,
     TencentUnadjustedDailyQuote,
@@ -148,6 +149,61 @@ def test_unadjusted_backfill_requires_a_h_and_fx_same_date() -> None:
     assert result.inserted_rows == 1
     assert len(rows) == 1
     assert rows[0].trade_date == date(2025, 8, 11)
+
+
+def test_unadjusted_backfill_writes_pair_names_for_keyword_query() -> None:
+    """确认腾讯补数行继承 AH 名称，避免数据查询页按中文名称搜索漏掉历史行。
+
+    创建日期：2026-05-07
+    author: sunshengxian
+    """
+
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    with Session(engine) as db:
+        db.add(
+            AHStockPair(
+                a_ts_code="601633.SH",
+                hk_ts_code="02333.HK",
+                a_name="长城汽车",
+                hk_name="长城汽车",
+                is_active=True,
+            )
+        )
+        db.add(WatchlistStock(a_ts_code="601633.SH", hk_ts_code="02333.HK", is_active=True))
+        db.add_all(
+            [
+                TencentUnadjustedDailyQuote(
+                    market="A",
+                    ts_code="601633.SH",
+                    tencent_symbol="sh601633",
+                    trade_date=date(2018, 9, 3),
+                    close=Decimal("8.2"),
+                    adjust_type="NONE",
+                ),
+                TencentUnadjustedDailyQuote(
+                    market="HK",
+                    ts_code="02333.HK",
+                    tencent_symbol="hk02333",
+                    trade_date=date(2018, 9, 3),
+                    close=Decimal("5.1"),
+                    adjust_type="NONE",
+                ),
+                WaterstockFxRateDaily(
+                    currency_pair="HKDCNY",
+                    rate_date=date(2018, 9, 3),
+                    close=Decimal("0.87"),
+                ),
+            ]
+        )
+        db.commit()
+
+        result = UnadjustedAhBackfillService(db).backfill_watchlist(force=True)
+        row = db.query(OfficialAHComparison).one()
+
+    assert result.inserted_rows == 1
+    assert row.a_name == "长城汽车"
+    assert row.hk_name == "长城汽车"
 
 
 def test_unadjusted_pending_pairs_skip_completed_watchlist_pair() -> None:
