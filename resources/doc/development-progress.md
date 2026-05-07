@@ -8,8 +8,8 @@
 
 ## 已完成
 
-- 新增 `resources/doc/llm-tushare-on-demand-stock-data-plan.md`，沉淀 LLM 股票问答通用按需补数方案：基于 Tushare 数据分类抽象 `MarketDataDemand`、数据包白名单、缓存限流和补数审计；明确当前只有 15000 积分权限，自动补数只允许单股、短区间、低频、缓存优先，不自动全市场或多股票批量拉取；个股投资分析报告作为第一优先级优化场景，提示词只教分析方法和证据链，不用死板模板过度约束 LLM 推理。
-- 已按方案落地 LLM 单股按需补数首版：新增 `a_daily_basic`、三张财务报表核心表、`a_financial_indicator`、`a_dividend`、`a_forecast` 和补数审计表；新增股票解析器、Tushare 白名单抓取器和按需编排器。LLM 路由支持 `data_demands`，但后端只接受单只 A 股和 `quote_valuation`、`financial_statement`、`dividend_forecast` 三类数据包；命中缓存时不调用 Tushare，名称歧义或多股需求会停止自动补数。
+- 新增 `resources/doc/llm-tushare-on-demand-stock-data-plan.md`，沉淀 LLM 股票问答通用按需补数方案：基于 Tushare 数据分类抽象 `MarketDataDemand`、数据包白名单、缓存限流和补数审计；明确当前 15000 积分是权限门槛不是按次扣费制，自动补数只允许 A 股、短区间、低频、缓存优先，不自动全市场批量拉取；个股投资分析报告作为第一优先级优化场景，提示词只教分析方法和证据链，不用死板模板过度约束 LLM 推理。
+- 已按方案落地 LLM 股票按需补数链路：新增 `a_daily_basic`、三张财务报表核心表、`a_financial_indicator`、`a_dividend`、`a_forecast` 和补数审计表；新增股票解析器、Tushare 白名单抓取器和按需编排器。LLM 路由支持 `data_demands`，后端接受 `quote_valuation`、`financial_statement`、`dividend_forecast` 三类数据包；命中缓存时不调用 Tushare，名称歧义会先基于本地股票基础表召回候选再让 LLM 在候选内语义消歧，明确多股对比时允许 5 只以内逐只补数。
 - 个股投资分析报告提示词已优化：回答上下文新增 `market_data_context`，报告场景要求区分可观察事实、推断和假设，围绕商业质量、盈利增长、资产负债、现金流、估值、分红、业绩预告、A/H 相关性和反证条件建立证据链，同时保留 LLM 自主组织报告结构的自由度。
 - 项目目录调整为前后端混合 coding 项目：`/Users/salty/codeProject/ai/coding/stock-ah-premium-ai`。
 - 新增项目级 `AGENTS.md`，明确 `backend/` 继承后端规则、`frontend/` 继承前端规则。

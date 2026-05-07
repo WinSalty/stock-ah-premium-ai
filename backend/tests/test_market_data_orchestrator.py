@@ -63,18 +63,24 @@ def test_orchestrator_uses_cache_for_recent_quote_package(monkeypatch) -> None:
     assert fetcher.calls == []
 
 
-def test_orchestrator_skips_multi_stock_demands() -> None:
-    """确认多股票需求不会自动补数，保护低积分 Tushare 权限。
+def test_orchestrator_allows_multi_stock_demands_within_limit(monkeypatch) -> None:
+    """确认 5 只以内多股票对比会逐只构造完整市场上下文。
 
     创建日期：2026-05-07
     author: sunshengxian
     """
 
     db = _session()
-    db.add(AStockBasic(ts_code="600036.SH", symbol="600036", name="招商银行", list_status="L"))
+    db.add_all(
+        [
+            AStockBasic(ts_code="600036.SH", symbol="600036", name="招商银行", list_status="L"),
+            AStockBasic(ts_code="000001.SZ", symbol="000001", name="平安银行", list_status="L"),
+        ]
+    )
     db.commit()
     fetcher = RecordingFetcher()
     service = MarketDataOrchestrator(db, fetcher=fetcher)  # type: ignore[arg-type]
+    monkeypatch.setattr(service, "_build_context", lambda ts_code, packages: {"ts_code": ts_code})
 
     result = service.ensure_for_question(
         "比较招商银行和平安银行",
@@ -85,5 +91,47 @@ def test_orchestrator_skips_multi_stock_demands() -> None:
         ),
     )
 
-    assert result.status == "SKIPPED"
-    assert fetcher.calls == []
+    assert result.status == "COMPLETED"
+    assert result.context["scope"] == "A_STOCK_MULTI"
+    assert [item["stock"].ts_code for item in result.context["items"]] == [
+        "600036.SH",
+        "000001.SZ",
+    ]
+    assert fetcher.calls == [("600036.SH", "quote_valuation"), ("000001.SZ", "quote_valuation")]
+
+
+def test_orchestrator_limits_multi_stock_demands_to_five(monkeypatch) -> None:
+    """确认多股补数最多接受 5 只，避免对权限边界内接口做大批量调用。
+
+    创建日期：2026-05-07
+    author: sunshengxian
+    """
+
+    db = _session()
+    stocks = [
+        AStockBasic(
+            ts_code=f"00000{index}.SZ",
+            symbol=f"00000{index}",
+            name=f"测试{index}",
+            list_status="L",
+        )
+        for index in range(1, 7)
+    ]
+    db.add_all(stocks)
+    db.commit()
+    fetcher = RecordingFetcher()
+    service = MarketDataOrchestrator(db, fetcher=fetcher)  # type: ignore[arg-type]
+    monkeypatch.setattr(service, "_build_context", lambda ts_code, packages: {"ts_code": ts_code})
+
+    result = service.ensure_for_question(
+        "比较 6 只股票",
+        {},
+        tuple(
+            MarketDataDemand(stock.ts_code, ("quote_valuation",))
+            for stock in stocks
+        ),
+    )
+
+    assert result.status == "COMPLETED"
+    assert len(result.stocks) == 5
+    assert len(fetcher.calls) == 5

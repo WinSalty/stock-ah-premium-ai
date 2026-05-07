@@ -58,10 +58,10 @@ LLM 按需个股研究数据：
 - `a_financial_indicator`：单股财务指标核心字段，保存 ROE、毛利率、净利率、资产负债率、收入和净利润同比等指标。
 - `a_dividend`：单股分红送股记录，用于报告中的股息回报、分红稳定性和执行进度分析。
 - `a_forecast`：单股业绩预告记录，用于报告中的业绩前瞻、反证条件和跟踪指标分析。
-- `llm_market_data_fetch_run`：LLM 按需市场数据抓取批次审计，记录问题追踪 ID、单股代码、数据包、缓存命中、状态和行数。
+- `llm_market_data_fetch_run`：LLM 按需市场数据抓取批次审计，记录问题追踪 ID、股票代码列表、数据包、缓存命中、状态和行数。
 - `llm_market_data_fetch_item`：LLM 按需市场数据抓取明细审计，记录每个白名单 Tushare 接口的参数、字段、耗时和错误摘要。
 
-按需补数硬边界：当前仅面向 15000 积分 Tushare 权限设计，自动流程只允许单只 A 股、短区间、低频、缓存优先的数据包补齐；不允许 LLM 任意选择 Tushare 接口、字段或全市场批量拉取。LLM 读取时只通过 `v_stock_quote_valuation_trend`、`v_stock_financial_period_summary`、`v_stock_research_context_latest` 和 `v_market_data_fetch_health` 等只读视图消费整理后的上下文。
+按需补数硬边界：当前仅面向 15000 积分 Tushare 权限门槛设计，积分表示接口可用范围，不是按次扣费制。自动流程只允许 A 股、短区间、低频、缓存优先的数据包补齐；单股研究优先，明确多股对比时单轮最多 5 只股票。LLM 不得任意选择 Tushare 接口、字段或全市场批量拉取。LLM 读取时只通过 `v_stock_quote_valuation_trend`、`v_stock_financial_period_summary`、`v_stock_research_context_latest` 和 `v_market_data_fetch_health` 等只读视图消费整理后的上下文。
 
 任务、质量与问答：
 

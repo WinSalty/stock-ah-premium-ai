@@ -39,7 +39,7 @@ def test_resolver_resolves_explicit_a_share_code() -> None:
 
 
 def test_resolver_stops_on_ambiguous_name() -> None:
-    """确认名称命中多只股票时不自动补数，避免消耗 15000 积分权限。
+    """确认名称命中多只股票时返回候选，交给后续语义消歧处理。
 
     创建日期：2026-05-07
     author: sunshengxian
@@ -58,6 +58,32 @@ def test_resolver_stops_on_ambiguous_name() -> None:
 
     assert result.resolved is False
     assert len(result.ambiguous_candidates) == 2
+
+
+def test_resolver_returns_local_candidates_for_semantic_selection() -> None:
+    """确认本地股票名称表可召回简称候选，供 LLM 按用户语义筛选。
+
+    创建日期：2026-05-07
+    author: sunshengxian
+    """
+
+    db = _session()
+    db.add_all(
+        [
+            AStockBasic(ts_code="000001.SZ", symbol="000001", name="平安银行", list_status="L"),
+            AStockBasic(ts_code="601318.SH", symbol="601318", name="中国平安", list_status="L"),
+            AStockBasic(ts_code="600036.SH", symbol="600036", name="招商银行", list_status="L"),
+        ]
+    )
+    db.commit()
+
+    candidates = StockIdentityResolver(db).resolve_candidates("招商和平安银行对比")
+
+    assert {candidate.ts_code for candidate in candidates} == {
+        "000001.SZ",
+        "601318.SH",
+        "600036.SH",
+    }
 
 
 def test_resolver_maps_ah_hk_name_to_a_code() -> None:

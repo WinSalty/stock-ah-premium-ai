@@ -21,8 +21,13 @@ from app.db.models.auth import AppUser
 from app.db.models.chat import LlmCallMetric
 from app.services.investment_knowledge_service import InvestmentKnowledgeService
 from app.services.llm_metric_definitions import phase_description, phase_label
-from app.services.market_data_orchestrator import MarketDataDemand, MarketDataOrchestrator
+from app.services.market_data_orchestrator import (
+    MAX_MARKET_DATA_STOCKS,
+    MarketDataDemand,
+    MarketDataOrchestrator,
+)
 from app.services.sql_guard_service import SqlGuardError, SqlGuardService
+from app.services.stock_identity_resolver import StockIdentity, StockIdentityResolver
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +39,7 @@ LLM_LIMIT_EXCEEDED_MESSAGE = (
 )
 LLM_EXTERNAL_CALL_PHASES = (
     "question_router",
+    "stock_disambiguation",
     "generate_sql",
     "repair_sql",
     "answer",
@@ -99,11 +105,13 @@ SQL_SYSTEM_PROMPT = """你是只读金融数据查询规划器。只生成可执
 QUESTION_ROUTER_SYSTEM_PROMPT = """你是投资问答前置路由器。
 你需要在同一次判断中决定：问题是否允许由本投资助手回答、是否需要查询结构化数据、
 是否需要读取本地投研知识库，以及需要读取哪些知识分类。
-如果用户是在问单只 A 股的估值、财报、分红、投资分析报告或“怎么看”，
+如果用户是在问 A 股的估值、财报、分红、投资分析报告、“怎么看”或多只股票对比，
 还要判断是否需要按需补充市场数据。
-按需补充市场数据只能输出单只 A 股，数据包只能从 quote_valuation、
+按需补充市场数据最多输出 5 只 A 股，数据包只能从 quote_valuation、
 financial_statement、dividend_forecast 中选择；
-不要输出港股、指数、全市场、多个股票或任意 Tushare 接口名。
+不要输出港股、指数、全市场或任意 Tushare 接口名。
+Tushare 15000 积分在这里是接口权限门槛，不是按次扣费制；
+因此路由重点是控制接口范围、股票数量和时间窗口。
 投资研究范围包括股票、基金、指数、行业、估值、财报、红利、仓位、风险、
 组合配置、A/H 溢价、港股通、宏观与投资策略相关问题；股票代码、公司投研、
 阈值建议和投资报告写作也属于范围。
@@ -337,6 +345,19 @@ class QuestionRoute:
     knowledge_category_keys: tuple[str, ...] = ()
     data_demands: tuple[MarketDataDemand, ...] = ()
     reason: str = ""
+
+
+@dataclass(frozen=True)
+class StockDisambiguationResult:
+    """LLM 基于本地股票候选做语义消歧后的结果。
+
+    创建日期：2026-05-07
+    author: sunshengxian
+    """
+
+    selected_ts_codes: tuple[str, ...]
+    reason: str = ""
+    confidence: float = 0.0
 
 
 class LlmDailyLimitExceeded(Exception):
@@ -741,7 +762,7 @@ class LlmService:
         user_id: int | None,
         session_id: int | None,
     ) -> dict[str, Any] | None:
-        """在回答前按需补足单只股票研究数据。
+        """在回答前按需补足股票研究数据，单轮最多覆盖 5 只 A 股。
 
         创建日期：2026-05-07
         author: sunshengxian
@@ -769,8 +790,10 @@ class LlmService:
             "stock": result.stock,
             "context": result.context,
             "reason": result.reason,
+            "stocks": result.stocks,
             "data_boundary": (
-                "仅按单只 A 股和白名单数据包补充有限区间数据；"
+                f"仅按 A 股、白名单数据包和最多 {MAX_MARKET_DATA_STOCKS} 只股票补充有限区间数据；"
+                "Tushare 15000 积分是接口权限门槛，不代表随查询减少的余额；"
                 "材料缺口需要在结论中说明。"
             ),
         }
@@ -1612,10 +1635,69 @@ class LlmService:
                 ),
             )
             payload = self._extract_json(content)
-            return self._route_from_payload(payload)
+            route = self._route_from_payload(payload)
+            return self._route_with_semantic_stocks(
+                question,
+                context,
+                route,
+                question_id,
+                user_id,
+                session_id,
+            )
         except (ValueError, KeyError, TypeError, json.JSONDecodeError, httpx.HTTPError):
             logger.error("问答前置路由模型失败，降级使用本地兜底规则", exc_info=True)
             return self._local_question_route(question, context)
+
+    def _route_with_semantic_stocks(
+        self,
+        question: str,
+        context: dict[str, Any],
+        route: QuestionRoute,
+        question_id: str | None,
+        user_id: int | None,
+        session_id: int | None,
+    ) -> QuestionRoute:
+        """在路由之后补充本地股票候选语义消歧结果。
+
+        创建日期：2026-05-07
+        author: sunshengxian
+        """
+
+        if not route.is_answerable:
+            return route
+        if route.data_demands:
+            return route
+        selected_ts_codes = self._semantic_stock_ts_codes(
+            question,
+            context,
+            trace=LlmCallTrace(
+                question_id=question_id or self._new_trace_id(),
+                phase="stock_disambiguation",
+                user_id=user_id,
+                session_id=session_id,
+                conversation_title=self._metric_conversation_title(question_id),
+                user_name=self._metric_user_name(question_id),
+            ),
+            fallback_to_unique=False,
+        )
+        if not selected_ts_codes:
+            return route
+        demands = tuple(
+            MarketDataDemand(
+                ts_code=ts_code,
+                packages=self._packages_for_semantic_stock(question),
+                intent="stock_research",
+            )
+            for ts_code in selected_ts_codes[:MAX_MARKET_DATA_STOCKS]
+        )
+        return QuestionRoute(
+            is_answerable=route.is_answerable,
+            should_query_data=route.should_query_data,
+            use_knowledge=route.use_knowledge,
+            knowledge_category_keys=route.knowledge_category_keys,
+            data_demands=demands,
+            reason=route.reason,
+        )
 
     def _route_from_payload(self, payload: dict[str, Any]) -> QuestionRoute:
         """把前置路由 JSON 转换为内部结构。
@@ -1649,12 +1731,16 @@ class LlmService:
             return ()
         demands: list[MarketDataDemand] = []
         allowed_packages = {"quote_valuation", "financial_statement", "dividend_forecast"}
-        for item in raw_demands[:2]:
+        seen_ts_codes: set[str] = set()
+        for item in raw_demands[:MAX_MARKET_DATA_STOCKS]:
             if not isinstance(item, dict):
                 continue
             ts_code = str(item.get("ts_code") or "").upper()
             if not re.fullmatch(r"\d{6}\.(SH|SZ|BJ)", ts_code):
                 continue
+            if ts_code in seen_ts_codes:
+                continue
+            seen_ts_codes.add(ts_code)
             packages = item.get("packages")
             if not isinstance(packages, list):
                 packages = []
@@ -1671,6 +1757,142 @@ class LlmService:
                 )
             )
         return tuple(demands)
+
+    def _semantic_stock_ts_codes(
+        self,
+        question: str,
+        context: dict[str, Any],
+        trace: LlmCallTrace | None,
+        fallback_to_unique: bool,
+    ) -> tuple[str, ...]:
+        """从本地股票候选中让 LLM 按用户语义筛选具体股票。
+
+        创建日期：2026-05-07
+        author: sunshengxian
+        """
+
+        resolver = StockIdentityResolver(self.db)
+        try:
+            candidates = resolver.resolve_candidates(
+                question,
+                context,
+                limit=max(MAX_MARKET_DATA_STOCKS * 3, 12),
+            )
+        except Exception:
+            # 股票消歧是补充能力，数据库替身、只读视图异常或本地表不可用时不能影响主问答路由。
+            logger.error("本地股票候选召回失败，跳过股票语义消歧", exc_info=True)
+            return ()
+        if not candidates:
+            return ()
+        if fallback_to_unique and len(candidates) == 1:
+            return (candidates[0].ts_code,)
+        try:
+            selected = self._disambiguate_stock_candidates(question, context, candidates, trace)
+        except (ValueError, KeyError, TypeError, json.JSONDecodeError, httpx.HTTPError):
+            logger.error("股票语义消歧失败，降级为不自动补数", exc_info=True)
+            return ()
+        valid_codes = {candidate.ts_code for candidate in candidates}
+        return tuple(
+            ts_code
+            for ts_code in selected.selected_ts_codes
+            if ts_code in valid_codes
+        )[:MAX_MARKET_DATA_STOCKS]
+
+    def _disambiguate_stock_candidates(
+        self,
+        question: str,
+        context: dict[str, Any],
+        candidates: tuple[StockIdentity, ...],
+        trace: LlmCallTrace | None,
+    ) -> StockDisambiguationResult:
+        """调用轻量路由模型，在本地候选内完成股票名称歧义消解。
+
+        创建日期：2026-05-07
+        author: sunshengxian
+        """
+
+        payload = {
+            "question": question.strip()[:1200],
+            "frontend_context": {
+                key: value
+                for key, value in context.items()
+                if key != "conversation_history"
+                and not key.startswith("_metric_")
+                and value not in (None, "", [])
+            },
+            "max_selected": MAX_MARKET_DATA_STOCKS,
+            "candidates": [
+                {
+                    "ts_code": candidate.ts_code,
+                    "symbol": candidate.symbol,
+                    "name": candidate.name,
+                    "industry": candidate.industry,
+                    "area": candidate.area,
+                    "market": candidate.market,
+                }
+                for candidate in candidates
+            ],
+        }
+        system_prompt = (
+            "你是股票名称语义消歧器，只能从候选列表中选择 A 股 ts_code。"
+            f"如果用户在比较多只股票，最多选择 {MAX_MARKET_DATA_STOCKS} 只；"
+            "如果问题语义不足以判断具体股票，返回空数组。"
+            "不要输出候选之外的代码，不要解释过程，只返回 JSON："
+            '{"selected_ts_codes":["600036.SH"],"confidence":0.0到1.0,"reason":"一句话"}'
+        )
+        content = self._chat_completion(
+            json.dumps(payload, ensure_ascii=False, default=str),
+            system_prompt=system_prompt,
+            model=self.settings.resolve_question_router_model(),
+            temperature=0,
+            trace=trace,
+        )
+        parsed = self._extract_json(content)
+        raw_codes = parsed.get("selected_ts_codes")
+        if not isinstance(raw_codes, list):
+            raw_codes = []
+        selected_codes = tuple(
+            str(code).upper()
+            for code in raw_codes
+            if isinstance(code, str) and re.fullmatch(r"\d{6}\.(SH|SZ|BJ)", code.upper())
+        )
+        raw_confidence = parsed.get("confidence")
+        confidence = raw_confidence if isinstance(raw_confidence, (int, float)) else 0.0
+        return StockDisambiguationResult(
+            selected_ts_codes=selected_codes[:MAX_MARKET_DATA_STOCKS],
+            reason=str(parsed.get("reason") or ""),
+            confidence=float(confidence),
+        )
+
+    def _packages_for_semantic_stock(self, question: str) -> tuple[str, ...]:
+        """按用户问题类型为语义识别出的股票生成报告数据包。
+
+        创建日期：2026-05-07
+        author: sunshengxian
+        """
+
+        normalized = question.lower()
+        packages = ["quote_valuation"]
+        if any(
+            keyword in normalized
+            for keyword in (
+                "分析报告",
+                "投资报告",
+                "深度报告",
+                "财报",
+                "估值",
+                "roe",
+                "对比",
+                "比较",
+            )
+        ):
+            packages.append("financial_statement")
+        if any(
+            keyword in normalized
+            for keyword in ("分析报告", "投资报告", "分红", "股息", "预告", "对比", "比较")
+        ):
+            packages.append("dividend_forecast")
+        return tuple(dict.fromkeys(packages))
 
     def _local_question_route(
         self,
@@ -1701,15 +1923,22 @@ class LlmService:
         question: str,
         context: dict[str, Any],
     ) -> tuple[MarketDataDemand, ...]:
-        """路由模型不可用时按本地规则生成单股数据包需求。
+        """路由模型不可用时按本地规则生成最多 5 只股票的数据包需求。
 
         创建日期：2026-05-07
         author: sunshengxian
         """
 
         normalized = question.lower()
-        ts_code = self._local_ts_code(question, context)
-        if not ts_code:
+        ts_codes = self._local_ts_codes(question, context)
+        if not ts_codes:
+            ts_codes = self._semantic_stock_ts_codes(
+                question,
+                context,
+                trace=None,
+                fallback_to_unique=True,
+            )
+        if not ts_codes:
             return ()
         packages = ["quote_valuation"]
         financial_keywords = ("分析报告", "投资报告", "深度报告", "财报", "估值", "roe")
@@ -1718,23 +1947,35 @@ class LlmService:
             packages.append("financial_statement")
         if any(keyword in normalized for keyword in dividend_keywords):
             packages.append("dividend_forecast")
-        return (MarketDataDemand(ts_code=ts_code, packages=tuple(packages)),)
+        return tuple(
+            MarketDataDemand(ts_code=ts_code, packages=tuple(packages))
+            for ts_code in ts_codes[:MAX_MARKET_DATA_STOCKS]
+        )
 
     def _local_ts_code(self, question: str, context: dict[str, Any]) -> str | None:
         # 这里只做格式抽取，最终是否允许补数仍由 StockIdentityResolver 回查本地基础表确认。
+        ts_codes = self._local_ts_codes(question, context)
+        return ts_codes[0] if ts_codes else None
+
+    def _local_ts_codes(self, question: str, context: dict[str, Any]) -> tuple[str, ...]:
+        """从上下文和问题文本抽取最多 5 个本地格式 A 股代码。
+
+        创建日期：2026-05-07
+        author: sunshengxian
+        """
+
+        codes: list[str] = []
         for key in ("ts_code", "a_ts_code", "stock_code"):
             value = context.get(key)
             if isinstance(value, str) and re.fullmatch(r"\d{6}\.(SH|SZ|BJ)", value.upper()):
-                return value.upper()
-        match = re.search(r"\b(\d{6})\.(SH|SZ|BJ)\b", question, re.IGNORECASE)
-        if match:
-            return f"{match.group(1)}.{match.group(2).upper()}"
-        match = re.search(r"(?<!\d)(\d{6})(?!\d)", question)
-        if not match:
-            return None
-        symbol = match.group(1)
-        suffix = "SH" if symbol.startswith(("6", "9")) else "SZ"
-        return f"{symbol}.{suffix}"
+                codes.append(value.upper())
+        for match in re.finditer(r"\b(\d{6})\.(SH|SZ|BJ)\b", question, re.IGNORECASE):
+            codes.append(f"{match.group(1)}.{match.group(2).upper()}")
+        for match in re.finditer(r"(?<!\d)(\d{6})(?!\d)", question):
+            symbol = match.group(1)
+            suffix = "SH" if symbol.startswith(("6", "9")) else "SZ"
+            codes.append(f"{symbol}.{suffix}")
+        return tuple(dict.fromkeys(codes))[:MAX_MARKET_DATA_STOCKS]
 
     def _is_investment_related_question(
         self,

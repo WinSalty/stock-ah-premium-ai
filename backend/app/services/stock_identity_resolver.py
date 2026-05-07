@@ -10,6 +10,21 @@ from app.db.models.market import AHStockPair, AStockBasic
 
 TS_CODE_PATTERN = re.compile(r"\b(?P<symbol>\d{6})\.(?P<exchange>SH|SZ|BJ)\b", re.IGNORECASE)
 SIX_DIGIT_PATTERN = re.compile(r"(?<!\d)(?P<symbol>\d{6})(?!\d)")
+DEFAULT_CANDIDATE_LIMIT = 12
+GENERIC_NAME_FRAGMENTS = frozenset(
+    {
+        "股份",
+        "有限",
+        "集团",
+        "控股",
+        "银行",
+        "证券",
+        "中国",
+        "上海",
+        "深圳",
+        "科技",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -47,7 +62,7 @@ class StockResolveResult:
 
 
 class StockIdentityResolver:
-    """从用户问题和前端上下文中保守解析单只 A 股股票。
+    """从用户问题和前端上下文中解析本地 A 股股票候选。
 
     创建日期：2026-05-07
     author: sunshengxian
@@ -85,6 +100,39 @@ class StockIdentityResolver:
                 return result
         return self._resolve_name(question)
 
+    def resolve_code(self, ts_code: str) -> StockResolveResult:
+        """按本地基础表校验单个 A 股代码，供 LLM 语义消歧结果二次验真。
+
+        创建日期：2026-05-07
+        author: sunshengxian
+        """
+
+        return self._resolve_ts_code(ts_code)
+
+    def resolve_candidates(
+        self,
+        question: str,
+        context: dict[str, object] | None = None,
+        limit: int = DEFAULT_CANDIDATE_LIMIT,
+    ) -> tuple[StockIdentity, ...]:
+        """返回可交给 LLM 做语义筛选的本地股票候选集合。
+
+        创建日期：2026-05-07
+        author: sunshengxian
+        """
+
+        context = context or {}
+        stocks: list[AStockBasic] = []
+        for code in self._candidate_codes(question, context):
+            # 显式代码来自前端或用户原文，但仍必须落在本地股票表中，避免 LLM 借机扩展接口参数。
+            stock = self.db.get(AStockBasic, self._normalize_code(code))
+            if stock is not None:
+                stocks.append(stock)
+        stocks.extend(self._name_matched_stocks(question))
+        stocks.extend(self._resolve_ah_pair_name(question))
+        deduped = {stock.ts_code: stock for stock in stocks}
+        return tuple(self._identity_from_stock(stock) for stock in list(deduped.values())[:limit])
+
     def _context_ts_code(self, context: dict[str, object]) -> str | None:
         # 前端若已经选中个股，优先信任显式代码；仍要回查本地基础表，避免用户传入任意接口参数。
         for key in ("ts_code", "a_ts_code", "stock_code", "symbol"):
@@ -92,6 +140,20 @@ class StockIdentityResolver:
             if isinstance(value, str) and value.strip():
                 return self._normalize_code(value.strip())
         return None
+
+    def _candidate_codes(self, question: str, context: dict[str, object]) -> tuple[str, ...]:
+        # 候选抽取要覆盖前端选中、完整 Tushare 代码和用户常写的六位代码；后续统一回查本地表。
+        codes: list[str] = []
+        context_code = self._context_ts_code(context)
+        if context_code:
+            codes.append(context_code)
+        codes.extend(
+            f"{match.group('symbol')}.{match.group('exchange').upper()}"
+            for match in TS_CODE_PATTERN.finditer(question)
+        )
+        for match in SIX_DIGIT_PATTERN.finditer(question):
+            codes.append(self._normalize_code(match.group("symbol")))
+        return tuple(dict.fromkeys(codes))
 
     def _explicit_ts_code(self, question: str) -> str | None:
         match = TS_CODE_PATTERN.search(question)
@@ -126,6 +188,13 @@ class StockIdentityResolver:
 
     def _resolve_name(self, question: str) -> StockResolveResult:
         # 先做股票简称的包含匹配，只有唯一命中才触发补数；“平安”“银行”等模糊词会进入歧义分支。
+        matched = self._name_matched_stocks(question)
+        if not matched:
+            matched = self._resolve_ah_pair_name(question)
+        return self._result_from_stocks(matched, "名称匹配到多只股票，已停止自动补数")
+
+    def _name_matched_stocks(self, question: str) -> list[AStockBasic]:
+        # 本地股票名称表是歧义处理的候选来源；这里只做召回，不在此处替 LLM 做语义取舍。
         stocks = list(
             self.db.scalars(
                 select(AStockBasic)
@@ -140,14 +209,11 @@ class StockIdentityResolver:
                 .limit(5000)
             ).all()
         )
-        matched = [
+        return [
             stock
             for stock in stocks
             if stock.name and self._name_matches(stock.name, question)
         ]
-        if not matched:
-            matched = self._resolve_ah_pair_name(question)
-        return self._result_from_stocks(matched, "名称匹配到多只股票，已停止自动补数")
 
     def _name_matches(self, stock_name: str, question: str) -> bool:
         # 中文简称经常和“怎么看/投资报告”等问法混在一起；先剥离问法词再做片段匹配。
@@ -157,7 +223,20 @@ class StockIdentityResolver:
         for suffix in ("怎么看", "投资报告", "分析报告", "深度报告", "估值", "财报", "分红"):
             cleaned = cleaned.replace(suffix, "")
         cleaned = cleaned.strip()
-        return len(cleaned) >= 2 and cleaned in stock_name
+        if len(cleaned) >= 2 and cleaned in stock_name:
+            return True
+        return self._meaningful_name_fragment_matches(stock_name, question)
+
+    def _meaningful_name_fragment_matches(self, stock_name: str, question: str) -> bool:
+        # 对比问题常把股票名简称化为“平安、招商、宁德”等片段；过滤行业泛词后再召回候选。
+        for start in range(len(stock_name)):
+            for end in range(start + 2, min(len(stock_name), start + 4) + 1):
+                fragment = stock_name[start:end]
+                if fragment in GENERIC_NAME_FRAGMENTS:
+                    continue
+                if fragment in question:
+                    return True
+        return False
 
     def _resolve_ah_pair_name(self, question: str) -> list[AStockBasic]:
         # AH 场景下用户可能说港股简称，这里只把 AH 配对表映射回 A 股代码，仍不触碰港股补数接口。

@@ -26,6 +26,7 @@ from app.services.llm_service import (
     LlmService,
     QuestionRoute,
 )
+from app.services.market_data_orchestrator import MAX_MARKET_DATA_STOCKS
 
 
 def test_llm_service_rejects_non_investment_question_before_api_call() -> None:
@@ -221,6 +222,34 @@ def test_route_from_payload_accepts_market_data_demands() -> None:
 
     assert route.data_demands[0].ts_code == "600036.SH"
     assert route.data_demands[0].packages == ("quote_valuation", "financial_statement")
+
+
+def test_route_from_payload_accepts_up_to_five_market_data_demands() -> None:
+    """确认前置路由最多接收 5 只股票的白名单补数需求。
+
+    创建日期：2026-05-07
+    author: sunshengxian
+    """
+
+    service = LlmService(
+        Mock(),
+        settings=Settings(llm_api_key="test-key", llm_api_key_file=None, llm_model="test-model"),
+    )
+
+    route = service._route_from_payload(
+        {
+            "is_answerable": True,
+            "needs_sql": False,
+            "use_knowledge": False,
+            "data_demands": [
+                {"ts_code": f"00000{index}.SZ", "packages": ["quote_valuation"]}
+                for index in range(1, 7)
+            ],
+        }
+    )
+
+    assert len(route.data_demands) == MAX_MARKET_DATA_STOCKS
+    assert route.data_demands[-1].ts_code == "000005.SZ"
 
 
 def test_answer_prompt_includes_market_data_context_and_report_instruction() -> None:
