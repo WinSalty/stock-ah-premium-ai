@@ -159,24 +159,6 @@ export interface SyncBatchCreate {
   end_date?: string;
 }
 
-export interface TencentUnadjustedSyncBatchCreate {
-  start_date?: string;
-  end_date?: string;
-}
-
-export interface TencentUnadjustedSyncBatchResponse {
-  start_date: string;
-  end_date: string;
-  pending_pair_count: number;
-  quote_rows: number;
-  backfill_pair_count: number;
-  candidate_rows: number;
-  inserted_rows: number;
-  skipped_existing_rows: number;
-  replaced_baidu_rows: number;
-  skipped_invalid_rows: number;
-}
-
 export interface SyncRunFilters {
   dataset?: string;
   status?: string;

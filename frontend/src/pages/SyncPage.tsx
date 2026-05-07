@@ -23,7 +23,6 @@ import PageHeader from '../components/PageHeader';
 import OverflowCell from '../components/OverflowCell';
 import {
   createAhPremiumSyncBatch,
-  createTencentUnadjustedSyncBatch,
   createSyncRun,
   fetchDatasets,
   fetchSyncRuns
@@ -98,19 +97,6 @@ function SyncPage() {
     },
     onError: (error) => message.error(error instanceof Error ? error.message : '一键同步失败')
   });
-  const tencentUnadjustedMutation = useMutation({
-    mutationFn: createTencentUnadjustedSyncBatch,
-    onSuccess: (result) => {
-      message.success(
-        `腾讯不复权补数完成：待追跑 ${result.pending_pair_count} 对，` +
-          `日线 ${result.quote_rows} 行，写入 ${result.inserted_rows} 行，` +
-          `替换 Baidu ${result.replaced_baidu_rows} 行`
-      );
-      queryClient.invalidateQueries({ queryKey: ['sync-runs'] });
-    },
-    onError: (error) =>
-      message.error(error instanceof Error ? error.message : '腾讯不复权补数失败')
-  });
   const importMutation = useMutation({
     mutationFn: (values: ImportFormValues) => importCsv(values.kind, values.content),
     onSuccess: (response) => {
@@ -140,14 +126,6 @@ function SyncPage() {
       end_date: values.range?.[1]?.format('YYYY-MM-DD')
     };
     batchMutation.mutate(payload);
-  };
-
-  const runTencentUnadjustedSync = () => {
-    const range = batchForm.getFieldValue('range');
-    tencentUnadjustedMutation.mutate({
-      start_date: range?.[0]?.format('YYYY-MM-DD'),
-      end_date: range?.[1]?.format('YYYY-MM-DD')
-    });
   };
 
   const onFilterFinish = (values: RunFilterValues) => {
@@ -214,13 +192,6 @@ function SyncPage() {
                             loading={batchMutation.isPending}
                           >
                             一键同步 AH 所需数据
-                          </Button>
-                          <Button
-                            icon={<Play size={16} />}
-                            loading={tencentUnadjustedMutation.isPending}
-                            onClick={runTencentUnadjustedSync}
-                          >
-                            腾讯不复权补数
                           </Button>
                         </Space>
                       </Form.Item>

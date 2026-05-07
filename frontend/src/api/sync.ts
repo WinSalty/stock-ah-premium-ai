@@ -1,8 +1,6 @@
 import { requestJson } from './client';
 import type {
   DatasetInfo,
-  TencentUnadjustedSyncBatchCreate,
-  TencentUnadjustedSyncBatchResponse,
   SyncBatchCreate,
   SyncRun,
   SyncRunCreate,
@@ -35,14 +33,4 @@ export function createAhPremiumSyncBatch(payload: SyncBatchCreate) {
     method: 'POST',
     body: JSON.stringify(payload)
   });
-}
-
-export function createTencentUnadjustedSyncBatch(payload: TencentUnadjustedSyncBatchCreate) {
-  return requestJson<TencentUnadjustedSyncBatchResponse>(
-    '/api/sync/batches/tencent-unadjusted',
-    {
-      method: 'POST',
-      body: JSON.stringify(payload)
-    }
-  );
 }
