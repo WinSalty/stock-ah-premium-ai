@@ -110,8 +110,10 @@ financial_statement、dividend_forecast 中选择；
 用户询问“你好”“你是谁”“你能做什么”“你可以帮我什么”等问候、角色身份和能力介绍问题也属于允许范围。
 编程、娱乐、日常生活、账号操作、违法违规交易和与投资研究无关的开放闲聊不属于范围。
 如果问题需要当前/最近/自选/阈值/列表/排名/筛选/股票代码/精确数值，通常需要查询结构化数据。
-如果问题偏投研框架、报告结论、反证条件、行业逻辑、阈值方法、组合风险表达或个股深度研究，
-可以读取知识库；如果结构化数据和常识足够，不要读取知识库。
+如果问题偏投研框架、报告结论、反证条件、行业逻辑、阈值方法或组合风险表达，
+可以读取知识库；如果是单只上市公司研究，应优先使用结构化补数。
+只有知识库目录中存在同一公司、同一股票代码或明确场景匹配材料时，才选择对应知识分类；
+不要为了“个股深度研究”泛化选择其他公司的报告。
 只返回 JSON，不要输出解释。格式：
 {"is_answerable":true或false,"needs_sql":true或false,"use_knowledge":true或false,"knowledge_categories":["分类key"],"data_demands":[{"market":"A","ts_code":"600036.SH","packages":["quote_valuation","financial_statement","dividend_forecast"],"intent":"stock_research"}],"reason":"一句话原因"}
 """
@@ -690,6 +692,8 @@ class LlmService:
         knowledge = self.knowledge_service.select_by_keys(
             category_keys,
             ANSWER_KNOWLEDGE_CHUNK_LIMIT,
+            question=question,
+            context=context,
         )
         filters = {
             key: value
