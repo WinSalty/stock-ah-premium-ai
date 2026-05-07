@@ -22,6 +22,7 @@ UNADJUSTED_BACKFILL_SOURCE = "TENCENT_UNADJUSTED_BACKFILL"
 BAIDU_BACKFILL_SOURCE = "BAIDU_HISTORY_BACKFILL"
 HKD_CNY_PAIR = "HKDCNY"
 WATERSTOCK_FX_SOURCE = "WATER_STOCK_BAIDU_FX"
+SKIP_AUTO_BACKFILL_STATUSES = {"RUNNING", "COMPLETED"}
 
 
 @dataclass(frozen=True)
@@ -280,14 +281,89 @@ class UnadjustedAhBackfillService:
         return run
 
     def _is_completed(self, a_ts_code: str, hk_ts_code: str) -> bool:
-        status = self.db.scalar(
-            select(HistoricalAhUnadjustedBackfillRun.status).where(
-                HistoricalAhUnadjustedBackfillRun.a_ts_code == a_ts_code,
-                HistoricalAhUnadjustedBackfillRun.hk_ts_code == hk_ts_code,
+        status = self.get_pair_status(a_ts_code, hk_ts_code)
+        return status == "COMPLETED"
+
+    def is_pair_waiting_for_backfill(self, a_ts_code: str, hk_ts_code: str) -> bool:
+        """判断股票对是否需要触发腾讯不复权追跑。
+
+        创建日期：2026-05-07
+        author: sunshengxian
+        """
+
+        # RUNNING 说明已有后台任务或人工同步正在处理，COMPLETED 说明历史区间已追跑完成；
+        # FAILED 或没有记录的股票对允许再次触发，便于关注新标的或重试失败标的。
+        status = self.get_pair_status(a_ts_code, hk_ts_code)
+        return status not in SKIP_AUTO_BACKFILL_STATUSES
+
+    def reserve_pair_for_backfill(self, a_ts_code: str, hk_ts_code: str) -> bool:
+        """为关注触发的后台追跑预占股票对执行记录。
+
+        创建日期：2026-05-07
+        author: sunshengxian
+        """
+
+        # 新关注触发是在请求返回后的后台任务中执行；先把记录置为 RUNNING，
+        # 可以避免用户连续点击保存或多端同时关注时重复拉取腾讯多年历史 K 线。
+        normalized_a_code = a_ts_code.upper()
+        normalized_hk_code = hk_ts_code.upper()
+        run = self.db.scalar(
+            select(HistoricalAhUnadjustedBackfillRun).where(
+                HistoricalAhUnadjustedBackfillRun.a_ts_code == normalized_a_code,
+                HistoricalAhUnadjustedBackfillRun.hk_ts_code == normalized_hk_code,
                 HistoricalAhUnadjustedBackfillRun.data_source == UNADJUSTED_BACKFILL_SOURCE,
             )
         )
-        return status == "COMPLETED"
+        if run is not None and run.status in SKIP_AUTO_BACKFILL_STATUSES:
+            return False
+        if run is None:
+            run = HistoricalAhUnadjustedBackfillRun(
+                a_ts_code=normalized_a_code,
+                hk_ts_code=normalized_hk_code,
+                data_source=UNADJUSTED_BACKFILL_SOURCE,
+                status="RUNNING",
+            )
+            self.db.add(run)
+        run.status = "RUNNING"
+        run.started_at = datetime.now(UTC).replace(tzinfo=None)
+        run.last_error = None
+        self.db.commit()
+        return True
+
+    def mark_pair_failed(self, a_ts_code: str, hk_ts_code: str, error: str) -> None:
+        """标记关注触发的单票追跑失败，保留后续重试入口。
+
+        创建日期：2026-05-07
+        author: sunshengxian
+        """
+
+        run = self.db.scalar(
+            select(HistoricalAhUnadjustedBackfillRun).where(
+                HistoricalAhUnadjustedBackfillRun.a_ts_code == a_ts_code.upper(),
+                HistoricalAhUnadjustedBackfillRun.hk_ts_code == hk_ts_code.upper(),
+                HistoricalAhUnadjustedBackfillRun.data_source == UNADJUSTED_BACKFILL_SOURCE,
+            )
+        )
+        if run is None:
+            return
+        run.status = "FAILED"
+        run.last_error = error[:512]
+        self.db.commit()
+
+    def get_pair_status(self, a_ts_code: str, hk_ts_code: str) -> str | None:
+        """查询股票对的腾讯不复权追跑状态。
+
+        创建日期：2026-05-07
+        author: sunshengxian
+        """
+
+        return self.db.scalar(
+            select(HistoricalAhUnadjustedBackfillRun.status).where(
+                HistoricalAhUnadjustedBackfillRun.a_ts_code == a_ts_code.upper(),
+                HistoricalAhUnadjustedBackfillRun.hk_ts_code == hk_ts_code.upper(),
+                HistoricalAhUnadjustedBackfillRun.data_source == UNADJUSTED_BACKFILL_SOURCE,
+            )
+        )
 
     def list_pending_watchlist_pairs(self) -> list[tuple[str, str]]:
         """查询启用自选股中尚未完成腾讯不复权追跑的 A/H 股票对。
@@ -297,7 +373,7 @@ class UnadjustedAhBackfillService:
         """
 
         pairs = self._list_pairs(None, None)
-        return [pair for pair in pairs if not self._is_completed(pair[0], pair[1])]
+        return [pair for pair in pairs if self.is_pair_waiting_for_backfill(pair[0], pair[1])]
 
     def _list_pairs(
         self,

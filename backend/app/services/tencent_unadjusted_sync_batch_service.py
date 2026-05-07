@@ -79,6 +79,43 @@ class TencentUnadjustedSyncBatchService:
             self.db.commit()
             raise
 
+    def sync_pair_if_needed(
+        self,
+        a_ts_code: str,
+        hk_ts_code: str,
+        start_date: date | None = None,
+        end_date: date | None = None,
+    ) -> TencentUnadjustedSyncBatchResult:
+        """关注新股票后按单个 A/H 股票对触发腾讯不复权追跑。
+
+        创建日期：2026-05-07
+        author: sunshengxian
+        """
+
+        resolved_start_date = start_date or TENCENT_UNADJUSTED_DEFAULT_START_DATE
+        resolved_end_date = end_date or date.today()
+        pair = (a_ts_code.upper(), hk_ts_code.upper())
+        backfill_service = UnadjustedAhBackfillService(self.db)
+        if not backfill_service.reserve_pair_for_backfill(pair[0], pair[1]):
+            return self._empty_result(resolved_start_date, resolved_end_date)
+        run = self._create_run(resolved_start_date, resolved_end_date, pairs=[pair])
+        try:
+            result = self._sync_pairs(resolved_start_date, resolved_end_date, [pair])
+            run.status = "SUCCESS"
+            run.row_count = result.inserted_rows
+            run.finished_at = datetime.now(UTC).replace(tzinfo=None)
+            self.db.commit()
+            return result
+        except Exception as exc:
+            self.db.rollback()
+            run = self.db.merge(run)
+            run.status = "FAILED"
+            run.error_message = str(exc)[:4000]
+            run.finished_at = datetime.now(UTC).replace(tzinfo=None)
+            self.db.commit()
+            backfill_service.mark_pair_failed(pair[0], pair[1], str(exc))
+            raise
+
     def _sync_pending_watchlist(
         self,
         resolved_start_date: date,
@@ -89,33 +126,47 @@ class TencentUnadjustedSyncBatchService:
         pending_pairs = backfill_service.list_pending_watchlist_pairs()
         if not pending_pairs:
             return self._empty_result(resolved_start_date, resolved_end_date)
-        # 同步阶段只请求 watchlist_stock 中启用且追跑记录未 COMPLETED 的股票对，
-        # 避免重复打公开 K 线端点。
+        return self._sync_pairs(resolved_start_date, resolved_end_date, pending_pairs)
+
+    def _sync_pairs(
+        self,
+        resolved_start_date: date,
+        resolved_end_date: date,
+        pairs: list[tuple[str, str]],
+    ) -> TencentUnadjustedSyncBatchResult:
+        # 同步阶段只请求指定的待追跑股票对，避免重复打腾讯公开 K 线端点；
+        # 该方法同时服务同步页批量补数和关注新标的后的单票后台补数。
+        backfill_service = UnadjustedAhBackfillService(self.db)
         quote_result = UnadjustedQuoteSyncService(self.db).sync_watchlist_quotes(
             start_date=resolved_start_date,
             end_date=resolved_end_date,
-            pairs=pending_pairs,
+            pairs=pairs,
         )
         # 追跑阶段继续使用相同股票对集合；只取 A/H/汇率同日交集，且仅替换 Baidu 前复权行。
         backfill_result = backfill_service.backfill_watchlist(
             start_date=resolved_start_date,
             end_date=resolved_end_date,
-            pairs=pending_pairs,
+            pairs=pairs,
         )
         return self._merge_result(
             resolved_start_date,
             resolved_end_date,
             quote_result,
             backfill_result,
-            pending_pair_count=len(pending_pairs),
+            pending_pair_count=len(pairs),
         )
 
-    def _create_run(self, start_date: date, end_date: date) -> SyncRun:
+    def _create_run(
+        self,
+        start_date: date,
+        end_date: date,
+        pairs: list[tuple[str, str]] | None = None,
+    ) -> SyncRun:
         # 合并补数不是 Tushare 数据集同步，但仍写 sync_run，方便同步页查看执行窗口和失败原因。
         run = SyncRun(
             dataset="tencent_unadjusted_backfill",
             params_json=json.dumps(
-                {"start_date": start_date, "end_date": end_date},
+                {"start_date": start_date, "end_date": end_date, "pairs": pairs or None},
                 ensure_ascii=False,
                 default=str,
             ),

@@ -18,6 +18,9 @@ from app.services.unadjusted_ah_backfill_service import (
     UNADJUSTED_BACKFILL_SOURCE,
     UnadjustedAhBackfillService,
 )
+from app.services.watchlist_unadjusted_backfill_trigger_service import (
+    WatchlistUnadjustedBackfillTriggerService,
+)
 
 
 def test_unadjusted_backfill_replaces_baidu_without_overwriting_tushare() -> None:
@@ -182,3 +185,34 @@ def test_unadjusted_pending_pairs_skip_completed_watchlist_pair() -> None:
         pairs = UnadjustedAhBackfillService(db).list_pending_watchlist_pairs()
 
     assert pairs == [("000001.SZ", "00001.HK")]
+
+
+def test_watchlist_backfill_trigger_reserves_running_pair_and_allows_failed_retry() -> None:
+    """确认关注触发会预占 RUNNING 记录，失败后允许后续重试。
+
+    创建日期：2026-05-07
+    author: sunshengxian
+    """
+
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    with Session(engine) as db:
+        service = UnadjustedAhBackfillService(db)
+
+        assert WatchlistUnadjustedBackfillTriggerService(db).should_trigger(
+            "600036.SH",
+            "03968.HK",
+        )
+        assert service.reserve_pair_for_backfill("600036.SH", "03968.HK")
+        assert not WatchlistUnadjustedBackfillTriggerService(db).should_trigger(
+            "600036.SH",
+            "03968.HK",
+        )
+        assert not service.reserve_pair_for_backfill("600036.SH", "03968.HK")
+
+        service.mark_pair_failed("600036.SH", "03968.HK", "腾讯接口临时失败")
+
+        assert WatchlistUnadjustedBackfillTriggerService(db).should_trigger(
+            "600036.SH",
+            "03968.HK",
+        )
