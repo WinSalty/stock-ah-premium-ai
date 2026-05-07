@@ -1,6 +1,6 @@
 # 单机服务器部署记录
 
-更新日期：2026-05-06
+更新日期：2026-05-07
 
 本文记录项目首次部署到单台云服务器时的实际方案和排障结论。敏感连接信息、数据库密码、Token 和 API Key 不写入仓库，按需维护在工作区未入库文档或服务器本机配置中。
 
@@ -70,7 +70,8 @@ STOCK_AH_DB_URL=mysql+pymysql://<user>:<url-encoded-password>@127.0.0.1:3306/sto
 TUSHARE_TOKEN_FILE=/home/ubuntu/stock-ah-premium-ai/secrets/tushare-token.txt
 LLM_API_KEY_FILE=/home/ubuntu/stock-ah-premium-ai/secrets/deepseek-apikey.txt
 QWEN_API_KEY_FILE=/home/ubuntu/stock-ah-premium-ai/secrets/qwen-apikey.txt
-PUSHPLUS_CONFIG_FILE=/home/ubuntu/stock-ah-premium-ai/secrets/pushplus.txt
+PUSHPLUS_TOKEN_FILE=/home/ubuntu/stock-ah-premium-ai/secrets/pushplus.txt
+PUSHPLUS_SECRET_KEY_FILE=/home/ubuntu/stock-ah-premium-ai/secrets/pushplus.txt
 APP_CORS_ORIGINS=["http://<server-ip>:5173","http://<server-ip>:8000","http://localhost:5173","http://127.0.0.1:5173"]
 DEFAULT_ADMIN_USERNAME=<admin-user>
 DEFAULT_ADMIN_PASSWORD=<admin-password>
@@ -79,8 +80,27 @@ DEFAULT_ADMIN_PASSWORD=<admin-password>
 注意事项：
 
 - 数据库密码如果包含 `@`、`#`、`:` 等特殊字符，必须在 URL 中编码，例如 `@` 写成 `%40`。
-- 密钥文件建议统一放在服务器项目目录的 `secrets/` 下，权限设置为 `600`。
+- 密钥文件建议统一放在服务器项目目录的 `secrets/` 下，目录权限设置为 `700`，文件权限设置为 `600`，属主应与后端 systemd 运行用户一致。
+- 首次部署或服务器提示 `llmConfigured=false`、`tushareConfigured=false`、`qwenConfigured=false`、`pushplusConfigured=false` 时，优先确认 `secrets/` 目录和四个凭据文件是否已经从本机未入库文档同步到服务器：
+
+```bash
+mkdir -p /home/ubuntu/stock-ah-premium-ai/secrets
+chmod 700 /home/ubuntu/stock-ah-premium-ai/secrets
+scp /Users/salty/codeProject/ai/doc/tushare-token.txt ubuntu@<server-ip>:/home/ubuntu/stock-ah-premium-ai/secrets/tushare-token.txt
+scp /Users/salty/codeProject/ai/doc/deepseek-apikey.txt ubuntu@<server-ip>:/home/ubuntu/stock-ah-premium-ai/secrets/deepseek-apikey.txt
+scp /Users/salty/codeProject/ai/doc/qwen-apikey.txt ubuntu@<server-ip>:/home/ubuntu/stock-ah-premium-ai/secrets/qwen-apikey.txt
+scp /Users/salty/codeProject/ai/doc/pushplus.txt ubuntu@<server-ip>:/home/ubuntu/stock-ah-premium-ai/secrets/pushplus.txt
+chmod 600 /home/ubuntu/stock-ah-premium-ai/secrets/*.txt
+```
+
 - `APP_CORS_ORIGINS` 在 Pydantic JSON 解析下可以使用 JSON 数组形式，服务器公网前端地址必须在列表中。
+
+配置完成后重启后端，并用公开配置接口确认前端会看到已配置状态：
+
+```bash
+sudo systemctl restart stock-ah-backend
+curl -sS http://127.0.0.1:8000/api/settings/public
+```
 
 ## 5. 数据库初始化
 
@@ -232,4 +252,3 @@ http://<server-ip>:5173
 - `sync_run` 中关键任务存在后续成功记录。
 - 一次历史失败记录不代表当前不可用，重点看同一数据集是否已有后续 `SUCCESS`。
 - 统一查询页能查看基础清单、交易日历、官方 AH 比价、A 股日线和同步任务。
-
