@@ -749,6 +749,107 @@ class AFinancialIndicator(TimestampMixin, Base):
     raw_payload_json: Mapped[str | None] = mapped_column(Text)
 
 
+class HKFinancialIndicator(TimestampMixin, Base):
+    """港股财务指标摘要表。
+
+    创建日期：2026-05-08
+    author: sunshengxian
+    """
+
+    __tablename__ = "hk_financial_indicator"
+    __table_args__ = (
+        UniqueConstraint("ts_code", "end_date", "report_type", name="uk_hk_financial_indicator"),
+        Index("idx_hk_fin_indicator_code_period", "ts_code", "end_date"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    ts_code: Mapped[str] = mapped_column(String(16), nullable=False)
+    name: Mapped[str | None] = mapped_column(String(128))
+    end_date: Mapped[date] = mapped_column(Date, nullable=False)
+    report_type: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    std_report_date: Mapped[date | None] = mapped_column(Date)
+    start_date: Mapped[date | None] = mapped_column(Date)
+    fiscal_year: Mapped[int | None] = mapped_column(Integer)
+    currency: Mapped[str | None] = mapped_column(String(16))
+    org_type: Mapped[str | None] = mapped_column(String(64))
+    per_netcash_operate: Mapped[Decimal | None] = mapped_column(DECIMAL(20, 8))
+    per_oi: Mapped[Decimal | None] = mapped_column(DECIMAL(20, 8))
+    bps: Mapped[Decimal | None] = mapped_column(DECIMAL(20, 8))
+    basic_eps: Mapped[Decimal | None] = mapped_column(DECIMAL(20, 8))
+    diluted_eps: Mapped[Decimal | None] = mapped_column(DECIMAL(20, 8))
+    operate_income: Mapped[Decimal | None] = mapped_column(DECIMAL(24, 6))
+    operate_income_yoy: Mapped[Decimal | None] = mapped_column(DECIMAL(20, 8))
+    gross_profit: Mapped[Decimal | None] = mapped_column(DECIMAL(24, 6))
+    gross_profit_yoy: Mapped[Decimal | None] = mapped_column(DECIMAL(20, 8))
+    holder_profit: Mapped[Decimal | None] = mapped_column(DECIMAL(24, 6))
+    holder_profit_yoy: Mapped[Decimal | None] = mapped_column(DECIMAL(20, 8))
+    gross_profit_ratio: Mapped[Decimal | None] = mapped_column(DECIMAL(20, 8))
+    eps_ttm: Mapped[Decimal | None] = mapped_column(DECIMAL(20, 8))
+    operate_income_qoq: Mapped[Decimal | None] = mapped_column(DECIMAL(20, 8))
+    net_profit_ratio: Mapped[Decimal | None] = mapped_column(DECIMAL(20, 8))
+    roe_avg: Mapped[Decimal | None] = mapped_column(DECIMAL(20, 8))
+    gross_profit_qoq: Mapped[Decimal | None] = mapped_column(DECIMAL(20, 8))
+    roa: Mapped[Decimal | None] = mapped_column(DECIMAL(20, 8))
+    holder_profit_qoq: Mapped[Decimal | None] = mapped_column(DECIMAL(20, 8))
+    roe_yearly: Mapped[Decimal | None] = mapped_column(DECIMAL(20, 8))
+    roic_yearly: Mapped[Decimal | None] = mapped_column(DECIMAL(20, 8))
+    total_assets: Mapped[Decimal | None] = mapped_column(DECIMAL(24, 6))
+    total_liabilities: Mapped[Decimal | None] = mapped_column(DECIMAL(24, 6))
+    tax_ebt: Mapped[Decimal | None] = mapped_column(DECIMAL(20, 8))
+    ocf_sales: Mapped[Decimal | None] = mapped_column(DECIMAL(20, 8))
+    total_parent_equity: Mapped[Decimal | None] = mapped_column(DECIMAL(24, 6))
+    debt_asset_ratio: Mapped[Decimal | None] = mapped_column(DECIMAL(20, 8))
+    operate_profit: Mapped[Decimal | None] = mapped_column(DECIMAL(24, 6))
+    pretax_profit: Mapped[Decimal | None] = mapped_column(DECIMAL(24, 6))
+    netcash_operate: Mapped[Decimal | None] = mapped_column(DECIMAL(24, 6))
+    netcash_invest: Mapped[Decimal | None] = mapped_column(DECIMAL(24, 6))
+    netcash_finance: Mapped[Decimal | None] = mapped_column(DECIMAL(24, 6))
+    end_cash: Mapped[Decimal | None] = mapped_column(DECIMAL(24, 6))
+    divi_ratio: Mapped[Decimal | None] = mapped_column(DECIMAL(20, 8))
+    dividend_rate: Mapped[Decimal | None] = mapped_column(DECIMAL(20, 8))
+    current_ratio: Mapped[Decimal | None] = mapped_column(DECIMAL(20, 8))
+    currentdebt_debt: Mapped[Decimal | None] = mapped_column(DECIMAL(20, 8))
+    total_market_cap: Mapped[Decimal | None] = mapped_column(DECIMAL(24, 6))
+    hksk_market_cap: Mapped[Decimal | None] = mapped_column(DECIMAL(24, 6))
+    pe_ttm: Mapped[Decimal | None] = mapped_column(DECIMAL(20, 8))
+    pb_ttm: Mapped[Decimal | None] = mapped_column(DECIMAL(20, 8))
+    dps_hkd: Mapped[Decimal | None] = mapped_column(DECIMAL(20, 8))
+    dps_hkd_ly: Mapped[Decimal | None] = mapped_column(DECIMAL(20, 8))
+    equity_multiplier: Mapped[Decimal | None] = mapped_column(DECIMAL(20, 8))
+    equity_ratio: Mapped[Decimal | None] = mapped_column(DECIMAL(20, 8))
+    raw_payload_json: Mapped[str | None] = mapped_column(Text)
+
+
+class HKFinancialStatementItem(TimestampMixin, Base):
+    """港股三大财务报表项目明细表。
+
+    创建日期：2026-05-08
+    author: sunshengxian
+    """
+
+    __tablename__ = "hk_financial_statement_item"
+    __table_args__ = (
+        UniqueConstraint(
+            "ts_code",
+            "end_date",
+            "statement_type",
+            "ind_name",
+            name="uk_hk_fin_statement_item",
+        ),
+        Index("idx_hk_fin_statement_code_period", "ts_code", "end_date"),
+        Index("idx_hk_fin_statement_type", "statement_type", "ind_name"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    ts_code: Mapped[str] = mapped_column(String(16), nullable=False)
+    name: Mapped[str | None] = mapped_column(String(128))
+    end_date: Mapped[date] = mapped_column(Date, nullable=False)
+    statement_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    ind_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    ind_value: Mapped[Decimal | None] = mapped_column(DECIMAL(24, 6))
+    raw_payload_json: Mapped[str | None] = mapped_column(Text)
+
+
 class ADividend(TimestampMixin, Base):
     """A 股分红送股表。
 

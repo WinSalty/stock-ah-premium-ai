@@ -646,6 +646,112 @@ LEFT JOIN v_stock_moneyflow_recent mf
    WHERE mf2.ts_code = b.ts_code
  );
 
+
+-- LLM 港股个股报告使用的只读视图：仅开放 15000 积分权限内的港股财务摘要和报表项目。
+CREATE OR REPLACE VIEW v_hk_financial_period_summary AS
+SELECT
+  fi.ts_code,
+  COALESCE(fi.name, b.name) AS name,
+  b.market,
+  fi.end_date,
+  fi.report_type,
+  fi.std_report_date,
+  fi.currency,
+  fi.org_type,
+  fi.basic_eps,
+  fi.diluted_eps,
+  fi.bps,
+  fi.operate_income,
+  fi.operate_income_yoy,
+  fi.operate_income_qoq,
+  fi.gross_profit,
+  fi.gross_profit_yoy,
+  fi.gross_profit_qoq,
+  fi.holder_profit,
+  fi.holder_profit_yoy,
+  fi.holder_profit_qoq,
+  fi.net_profit_ratio,
+  fi.roe_avg,
+  fi.roe_yearly,
+  fi.roa,
+  fi.roic_yearly,
+  fi.total_assets,
+  fi.total_liabilities,
+  fi.total_parent_equity,
+  fi.debt_asset_ratio,
+  fi.current_ratio,
+  fi.currentdebt_debt,
+  fi.netcash_operate,
+  fi.netcash_invest,
+  fi.netcash_finance,
+  fi.end_cash,
+  fi.ocf_sales,
+  fi.per_netcash_operate,
+  fi.divi_ratio,
+  fi.dividend_rate,
+  fi.dps_hkd,
+  fi.total_market_cap,
+  fi.hksk_market_cap,
+  fi.pe_ttm,
+  fi.pb_ttm,
+  fi.equity_multiplier,
+  fi.equity_ratio
+FROM hk_financial_indicator fi
+LEFT JOIN hk_stock_basic b
+  ON b.ts_code = fi.ts_code;
+
+CREATE OR REPLACE VIEW v_hk_financial_statement_item_summary AS
+SELECT
+  si.ts_code,
+  COALESCE(si.name, b.name) AS name,
+  b.market,
+  si.end_date,
+  si.statement_type,
+  si.ind_name,
+  si.ind_value
+FROM hk_financial_statement_item si
+LEFT JOIN hk_stock_basic b
+  ON b.ts_code = si.ts_code;
+
+CREATE OR REPLACE VIEW v_hk_stock_research_context_latest AS
+SELECT
+  b.ts_code,
+  SUBSTRING_INDEX(b.ts_code, '.', 1) AS symbol,
+  b.name,
+  b.fullname,
+  b.market,
+  b.curr_type,
+  fi.end_date AS latest_report_period,
+  fi.report_type AS latest_report_type,
+  fi.currency,
+  fi.operate_income AS latest_operate_income,
+  fi.operate_income_yoy,
+  fi.holder_profit AS latest_holder_profit,
+  fi.holder_profit_yoy,
+  fi.roe_avg,
+  fi.roa,
+  fi.total_assets,
+  fi.total_liabilities,
+  fi.debt_asset_ratio,
+  fi.netcash_operate,
+  fi.netcash_invest,
+  fi.netcash_finance,
+  fi.end_cash,
+  fi.dividend_rate AS latest_dividend_rate,
+  fi.dps_hkd,
+  fi.pe_ttm AS latest_pe_ttm,
+  fi.pb_ttm AS latest_pb_ttm,
+  fi.total_market_cap,
+  fi.hksk_market_cap
+FROM hk_stock_basic b
+LEFT JOIN hk_financial_indicator fi
+  ON fi.ts_code = b.ts_code
+ AND fi.end_date = (
+   SELECT MAX(fi2.end_date)
+   FROM hk_financial_indicator fi2
+   WHERE fi2.ts_code = b.ts_code
+ );
+
 CREATE OR REPLACE VIEW v_market_data_fetch_health AS
 SELECT
   r.id,

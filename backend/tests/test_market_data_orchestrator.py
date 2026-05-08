@@ -6,7 +6,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 from app.db.base import Base
-from app.db.models.market import ADailyBasic, AStockBasic
+from app.db.models.market import ADailyBasic, AStockBasic, HKFinancialIndicator, HKStockBasic
 from app.services.market_data_orchestrator import MarketDataDemand, MarketDataOrchestrator
 
 
@@ -160,3 +160,64 @@ def test_orchestrator_report_question_requests_enhanced_research_packages() -> N
         "shareholder_governance",
         "capital_flow_light",
     )
+
+
+def test_orchestrator_allows_hk_financial_demand(monkeypatch) -> None:
+    """确认港股研究问题可触发港股财务包，并按港股市场范围写审计上下文。
+
+    创建日期：2026-05-08
+    author: sunshengxian
+    """
+
+    db = _session()
+    db.add(HKStockBasic(ts_code="02380.HK", name="中国电力", list_status="L"))
+    db.commit()
+    fetcher = RecordingFetcher()
+    service = MarketDataOrchestrator(db, fetcher=fetcher)  # type: ignore[arg-type]
+    monkeypatch.setattr(
+        service,
+        "_build_context",
+        lambda ts_code, packages: {"ts_code": ts_code, "financial_periods": []},
+    )
+
+    result = service.ensure_for_question(
+        "中国电力 02380.HK 财务质量怎么看",
+        {},
+        (MarketDataDemand("02380.HK", ("financial_statement",), market="HK"),),
+    )
+
+    assert result.status == "COMPLETED"
+    assert result.context["scope"] == "HK_STOCK_SINGLE"
+    assert fetcher.calls == [("02380.HK", "financial_statement")]
+
+
+def test_orchestrator_uses_hk_financial_cache(monkeypatch) -> None:
+    """确认港股财务指标足够新时不会重复请求 Tushare。
+
+    创建日期：2026-05-08
+    author: sunshengxian
+    """
+
+    db = _session()
+    db.add(HKStockBasic(ts_code="02380.HK", name="中国电力", list_status="L"))
+    db.add(
+        HKFinancialIndicator(
+            ts_code="02380.HK",
+            name="中国电力",
+            end_date=date(2026, 3, 31),
+            report_type="2026年一季报",
+        )
+    )
+    db.commit()
+    fetcher = RecordingFetcher()
+    service = MarketDataOrchestrator(db, fetcher=fetcher)  # type: ignore[arg-type]
+    monkeypatch.setattr(service, "_build_context", lambda ts_code, packages: {"ts_code": ts_code})
+
+    result = service.ensure_for_question(
+        "中国电力 02380.HK 财务质量怎么看",
+        {},
+        (MarketDataDemand("02380.HK", ("financial_statement",), market="HK"),),
+    )
+
+    assert result.cache_hit is True
+    assert fetcher.calls == []

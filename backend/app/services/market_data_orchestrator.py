@@ -19,6 +19,7 @@ from app.db.models.market import (
     AMoneyflow,
     APledgeStat,
     ATop10Holder,
+    HKFinancialIndicator,
     LlmMarketDataFetchRun,
 )
 from app.services.stock_identity_resolver import StockIdentity, StockIdentityResolver
@@ -52,7 +53,7 @@ MAX_MARKET_DATA_STOCKS = 5
 
 @dataclass(frozen=True)
 class MarketDataDemand:
-    """LLM 按需补数请求，限定为单只 A 股和固定数据包。
+    """LLM 按需补数请求，限定为单只股票和固定数据包。
 
     创建日期：2026-05-07
     author: sunshengxian
@@ -60,6 +61,7 @@ class MarketDataDemand:
 
     ts_code: str
     packages: tuple[str, ...]
+    market: str = "A"
     intent: str = "stock_research"
 
 
@@ -123,7 +125,7 @@ class MarketDataOrchestrator:
                 0,
                 True,
                 "SKIPPED",
-                "未识别到 A 股研究需求",
+                "未识别到股票研究需求",
             )
         stock_demands = self._validated_stock_demands(demands)
         if not stock_demands:
@@ -131,11 +133,11 @@ class MarketDataOrchestrator:
                 None,
                 (),
                 tuple({package for demand in demands for package in demand.packages}),
-                {"resolve_reason": "数据需求中的股票代码未命中本地 A 股基础表"},
+                {"resolve_reason": "数据需求中的股票代码未命中本地基础表"},
                 0,
                 True,
                 "SKIPPED",
-                "数据需求中的股票代码未命中本地 A 股基础表",
+                "数据需求中的股票代码未命中本地基础表",
             )
         stocks = tuple(stock for stock, _demand, _packages in stock_demands)
         all_packages = self._merged_packages(
@@ -226,6 +228,7 @@ class MarketDataOrchestrator:
             MarketDataDemand(
                 ts_code=stock_result.identity.ts_code,
                 packages=self._packages_for_question(question),
+                market=self._market_from_ts_code(stock_result.identity.ts_code),
             ),
         )
 
@@ -242,20 +245,28 @@ class MarketDataOrchestrator:
         validated: list[tuple[StockIdentity, MarketDataDemand, tuple[str, ...]]] = []
         seen: set[str] = set()
         for demand in demands:
-            # LLM 只能提交 ts_code，真正是否存在、是否属于本地 A 股，由 resolver 再做一次权威校验。
+            # LLM 只能提交 ts_code，真正是否存在、市场是否匹配本地基础表，
+            # 由 resolver 再做一次权威校验，防止任意代码触发外部接口。
             stock_result = self.resolver.resolve_code(demand.ts_code)
             if not stock_result.resolved or stock_result.identity is None:
                 continue
             if stock_result.identity.ts_code in seen:
                 continue
             seen.add(stock_result.identity.ts_code)
+            market = self._market_from_ts_code(stock_result.identity.ts_code)
             validated.append(
-                (stock_result.identity, demand, self._normalize_packages(demand.packages))
+                (stock_result.identity, demand, self._normalize_packages(demand.packages, market))
             )
         return tuple(validated[:MAX_MARKET_DATA_STOCKS])
 
     def _looks_like_stock_research(self, question: str, context: dict[str, Any]) -> bool:
-        has_stock_code = bool(re.search(r"\b\d{6}(\.(SH|SZ|BJ))?\b", question, re.IGNORECASE))
+        has_stock_code = bool(
+            re.search(
+                r"\b\d{6}(\.(SH|SZ|BJ))?\b|\b\d{5}\.HK\b",
+                question,
+                re.IGNORECASE,
+            )
+        )
         has_context_code = any(
             context.get(key) for key in ("ts_code", "a_ts_code", "stock_code", "symbol")
         )
@@ -285,7 +296,7 @@ class MarketDataOrchestrator:
             packages.append(CAPITAL_FLOW_PACKAGE)
         return tuple(packages)
 
-    def _normalize_packages(self, packages: tuple[str, ...]) -> tuple[str, ...]:
+    def _normalize_packages(self, packages: tuple[str, ...], market: str = "A") -> tuple[str, ...]:
         allowed = (
             QUOTE_VALUATION_PACKAGE,
             FINANCIAL_STATEMENT_PACKAGE,
@@ -294,8 +305,14 @@ class MarketDataOrchestrator:
             SHAREHOLDER_GOVERNANCE_PACKAGE,
             CAPITAL_FLOW_PACKAGE,
         )
+        if market == "HK":
+            # 港股自动补数目前只开放财务指标和三大报表；行情、股东治理、分红等仍沿用
+            # 本地已有 AH/港股通数据或后续单独扩展，避免路由模型误触未沉淀的数据域。
+            allowed = (FINANCIAL_STATEMENT_PACKAGE,)
         normalized = tuple(package for package in allowed if package in set(packages))
-        return normalized or (QUOTE_VALUATION_PACKAGE,)
+        if normalized:
+            return normalized
+        return (FINANCIAL_STATEMENT_PACKAGE,) if market == "HK" else (QUOTE_VALUATION_PACKAGE,)
 
     def _merged_packages(self, package_groups: tuple[tuple[str, ...], ...]) -> tuple[str, ...]:
         # 批次审计表只记录本轮问答涉及的包合集，逐股实际包仍保留在 market_data_context.items 中。
@@ -318,6 +335,13 @@ class MarketDataOrchestrator:
             )
             return latest_date is None or latest_date < today - timedelta(days=7)
         if package == FINANCIAL_STATEMENT_PACKAGE:
+            if self._market_from_ts_code(ts_code) == "HK":
+                latest_period = self.db.scalar(
+                    select(func.max(HKFinancialIndicator.end_date)).where(
+                        HKFinancialIndicator.ts_code == ts_code
+                    )
+                )
+                return latest_period is None or latest_period < today - timedelta(days=220)
             latest_period = self.db.scalar(
                 select(func.max(AFinancialIndicator.end_date)).where(
                     AFinancialIndicator.ts_code == ts_code
@@ -367,6 +391,34 @@ class MarketDataOrchestrator:
 
     def _build_context(self, ts_code: str, packages: tuple[str, ...]) -> dict[str, Any]:
         # 视图输出是给 LLM 的事实材料，控制条数和字段可以避免上下文被低价值历史明细淹没。
+        if self._market_from_ts_code(ts_code) == "HK":
+            return {
+                "ts_code": ts_code,
+                "market": "HK",
+                "packages": packages,
+                "latest": self._query_view(
+                    (
+                        "select * from v_hk_stock_research_context_latest "
+                        "where ts_code = :ts_code limit 1"
+                    ),
+                    ts_code,
+                ),
+                "financial_periods": self._query_view(
+                    (
+                        "select * from v_hk_financial_period_summary "
+                        "where ts_code = :ts_code order by end_date desc limit 24"
+                    ),
+                    ts_code,
+                ),
+                "statement_items": self._query_view(
+                    (
+                        "select * from v_hk_financial_statement_item_summary "
+                        "where ts_code = :ts_code "
+                        "order by end_date desc, statement_type, ind_name limit 80"
+                    ),
+                    ts_code,
+                ),
+            }
         return {
             "ts_code": ts_code,
             "packages": packages,
@@ -423,15 +475,17 @@ class MarketDataOrchestrator:
         if len(items) == 1:
             context_payload = dict(items[0]["context"])
             context_payload["scope"] = "A_STOCK_SINGLE"
+            if items[0]["stock"].ts_code.endswith(".HK"):
+                context_payload["scope"] = "HK_STOCK_SINGLE"
             context_payload["items"] = items
             context_payload["stocks"] = [items[0]["stock"]]
             return context_payload
         return {
-            "scope": "A_STOCK_MULTI",
+            "scope": self._market_scope(tuple(item["stock"] for item in items)),
             "stocks": [item["stock"] for item in items],
             "items": items,
             "limit_policy": (
-                f"单轮最多补充 {MAX_MARKET_DATA_STOCKS} 只 A 股，"
+                f"单轮最多补充 {MAX_MARKET_DATA_STOCKS} 只股票，"
                 "逐只保留完整报告上下文。"
             ),
         }
@@ -450,15 +504,16 @@ class MarketDataOrchestrator:
     ) -> LlmMarketDataFetchRun:
         # Tushare 积分在本项目中代表接口权限门槛，不是按次扣减制；这里的边界强调接口范围和批量规模。
         stock_codes = [stock.ts_code for stock in stocks]
+        market_scope = self._market_scope(stocks)
         run = LlmMarketDataFetchRun(
             question_id=question_id,
             user_id=user_id,
             session_id=session_id,
             intent="stock_research",
-            market_scope="A_STOCK_SINGLE" if len(stocks) == 1 else "A_STOCK_MULTI",
+            market_scope=market_scope,
             symbols_json=json.dumps(stock_codes, ensure_ascii=False),
             data_packages_json=json.dumps(list(packages), ensure_ascii=False),
-            period_policy="A_STOCK_EXTENDED_SINGLE_STOCK_15000_PERMISSION",
+            period_policy=f"{market_scope}_EXTENDED_15000_PERMISSION",
             start_date=date.today() - timedelta(days=365 * 8),
             end_date=date.today(),
             status="RUNNING",
@@ -485,3 +540,26 @@ class MarketDataOrchestrator:
         run.finished_at = datetime.now(UTC).replace(tzinfo=None)
         run.updated_at = datetime.now(UTC).replace(tzinfo=None)
         self.db.commit()
+
+    def _market_from_ts_code(self, ts_code: str) -> str:
+        """按 Tushare 代码后缀判断补数市场，供缓存和白名单分流。
+
+        创建日期：2026-05-08
+        author: sunshengxian
+        """
+
+        return "HK" if ts_code.upper().endswith(".HK") else "A"
+
+    def _market_scope(self, stocks: tuple[StockIdentity, ...]) -> str:
+        """生成补数审计市场范围，明确区分 A 股、港股和混合对比。
+
+        创建日期：2026-05-08
+        author: sunshengxian
+        """
+
+        markets = {self._market_from_ts_code(stock.ts_code) for stock in stocks}
+        if markets == {"HK"}:
+            return "HK_STOCK_SINGLE" if len(stocks) == 1 else "HK_STOCK_MULTI"
+        if markets == {"A"}:
+            return "A_STOCK_SINGLE" if len(stocks) == 1 else "A_STOCK_MULTI"
+        return "CROSS_MARKET_MULTI"

@@ -1,6 +1,6 @@
 # LLM 按需补齐 Tushare 股票数据通用开发方案
 
-文档日期：2026-05-07
+文档日期：2026-05-08
 
 ## 1. 背景与目标
 
@@ -8,7 +8,7 @@
 
 本方案把能力抽象成通用的“股票问答数据需求编排器”：LLM 只表达投资研究意图和数据需求，后端判断本地是否已有缓存；本地缺数时，按白名单受控调用 Tushare，先幂等落库和审计，再把小规模、可解释、可复核的数据摘要交给 LLM。
 
-用户当前只有 Tushare 15000 积分权限，这是接口可用范围的门槛，不是按次扣费制。本方案把它作为硬边界：系统默认只做少量股票、短区间、低频、缓存优先的按需补齐；单股研究优先走结构化补数，多股对比最多允许 5 只 A 股逐只补齐，不允许 LLM 自动触发全市场、大长周期批量拉取。个股投资分析报告是第一优先级优化场景：我们给 LLM 足够完整的数据和分析方法，但不过度约束输出模板，让模型保留专业判断、推理链组织和表达自由度。
+用户当前只有 Tushare 15000 积分权限，这是接口可用范围的门槛，不是按次扣费制。本方案把它作为硬边界：系统默认只做少量股票、短区间、低频、缓存优先的按需补齐；单股研究优先走结构化补数，多股对比最多允许 5 只股票逐只补齐。A 股可按白名单补行情估值、财务、主营业务、分红预告、股东治理和资金流；港股当前只开放 15000 积分权限内已实测可用的财务包，不允许 LLM 自动触发港股行情、全市场、大长周期批量拉取。个股投资分析报告是第一优先级优化场景：我们给 LLM 足够完整的数据和分析方法，但不过度约束输出模板，让模型保留专业判断、推理链组织和表达自由度。
 
 ## 2. 总体抽象
 
@@ -57,9 +57,9 @@ class MarketDataDemand:
 
 自动补数默认策略：
 
-- 单轮问答默认优先识别单只股票；若用户明确对比多个股票，最多允许 5 只 A 股逐只自动补数。
+- 单轮问答默认优先识别单只股票；若用户明确对比多个股票，最多允许 5 只股票逐只自动补数。A 股按完整白名单数据包处理，港股只允许 `financial_statement`。
 - 单只股票最多触发 3 个数据包；多股对比按股票逐只判断缓存，只补缺口，不做全市场扫描。
-- 财务类默认最近 12 个上下文报告期、底层补数最多扩展到最近 8 年，24 小时缓存；这样保留 LLM 上下文精简度，同时让历史趋势、周期性和异常年份有可回看余量。
+- 财务类默认最近 24 个上下文报告期、底层补数最多扩展到最近 8 年，24 小时缓存；这样保留 LLM 上下文精简度，同时让历史趋势、周期性和异常年份有可回看余量。港股财务上下文同样保留最近 24 期摘要，并额外提供三大报表项目窄表摘要。
 - 行情估值类默认最近 120 个上下文交易日、底层补数最近 180 个自然日，12 小时缓存。
 - 个股资金流默认最近 20 个上下文交易日、底层补数最近 60 个自然日，2 小时缓存；资金流只辅助解释短期交易情绪，不替代基本面判断。
 - 主营业务构成和股东治理类默认最近 5 到 8 年或公告期，7 天缓存。
@@ -71,7 +71,7 @@ class MarketDataDemand:
 - 不自动多股大范围财务对比；超过 5 只股票时要求用户缩小范围或使用预热后的候选宽表。
 - 不自动长历史回测。
 - 不自动抓取大批公告全文或新闻全文。
-- 不自动请求当前项目已知无权限或不稳定的数据，例如当前 token 下的 `hk_daily`。
+- 不自动请求当前项目已知无权限或不稳定的数据，例如当前 token 下的 `hk_daily`；港股问答如需行情、资金流、分红或股东治理，先明确材料缺口，后续单独接入再开放。
 - 不让 LLM 直接指定任意 Tushare `api_name`、字段和参数。
 
 当用户问题需要超出权限边界的数据，例如“比较所有银行谁最稳”“筛全市场现金流改善股票”“回测十年低估值策略”，系统应提示需要管理员预热、缩小范围或使用已有候选宽表，不由 LLM 自动拉取。
@@ -82,9 +82,9 @@ class MarketDataDemand:
 
 | 数据包 | 典型问题 | 代表接口 | 默认范围 | 自动触发 |
 | --- | --- | --- | --- | --- |
-| `stock_identity` | “这家公司代码是什么”“平安是哪只” | 本地 `a_stock_basic`、`ah_stock_pair` | 本地候选解析和 LLM 语义消歧 | 是 |
+| `stock_identity` | “这家公司代码是什么”“平安是哪只”“中国电力是哪只” | 本地 `a_stock_basic`、`hk_stock_basic`、`ah_stock_pair` | 本地候选解析和 LLM 语义消歧 | 是 |
 | `quote_valuation` | “现在贵不贵”“股价趋势如何” | `daily`、`daily_basic` | 单股或 5 只以内对比，最近 120 交易日 | 是 |
-| `financial_statement` | “最新财报质量如何” | `income`、`balancesheet`、`cashflow`、`fina_indicator` | 单股或 5 只以内对比，底层最近 8 年，上下文最近 24 期 | 是 |
+| `financial_statement` | “最新财报质量如何” | A 股：`income`、`balancesheet`、`cashflow`、`fina_indicator`；港股：`hk_income`、`hk_balancesheet`、`hk_cashflow`、`hk_fina_indicator` | 单股或 5 只以内对比，底层最近 8 年，上下文最近 24 期 | 是 |
 | `business_profile` | “主营业务靠什么赚钱”“收入结构稳不稳” | `fina_mainbz`、`fina_audit`、`express` | 单股或 5 只以内对比，主营/审计最近 8 年，快报最近 5 年 | 是 |
 | `dividend_forecast` | “分红稳定吗”“业绩预告怎样” | `dividend`、`forecast` | 单股或 5 只以内对比，分红最近 8 年，预告最近 5 年 | 是 |
 | `capital_flow_light` | “资金在流入还是流出” | `moneyflow` | 单股最近 20 个上下文交易日，底层最近 60 个自然日 | 谨慎 |
@@ -126,11 +126,33 @@ class MarketDataDemand:
 }
 ```
 
+港股路由示例：
+
+```json
+{
+  "is_answerable": true,
+  "needs_sql": false,
+  "use_knowledge": false,
+  "knowledge_categories": [],
+  "data_demands": [
+    {
+      "intent": "stock_research",
+      "market": "HK",
+      "ts_code": "02380.HK",
+      "packages": ["financial_statement"],
+      "reason": "用户要求分析港股中国电力，需要港股财务指标和三大报表摘要"
+    }
+  ],
+  "reason": "问题属于单只港股财务分析，可在 15000 积分权限边界内补齐财务包"
+}
+```
+
 后端二次校验规则：
 
-- 股票代码必须命中本地 `a_stock_basic`；名称歧义时先从本地股票名称表召回候选，再让 LLM 在候选内按用户语义选择具体 `ts_code`。
-- `data_demands` 最多 5 只 A 股；超过 5 只时只接受前 5 只或提示缩小范围。
+- 股票代码必须命中本地 `a_stock_basic` 或 `hk_stock_basic`；名称歧义时先从本地股票名称表召回候选，再让 LLM 在候选内按用户语义选择具体 `ts_code`。
+- `data_demands` 最多 5 只股票；超过 5 只时只接受前 5 只或提示缩小范围。
 - `data_packages` 必须在白名单内。
+- 港股 `data_packages` 必须收敛为 `financial_statement`；即便路由模型误报港股行情、资金流或股东治理，后端也会统一降级到港股财务包。
 - 所有数据包都要先检查本地缓存和只读视图。
 - 超过 15000 积分权限边界的接口或批量范围直接降级为“需要缩小范围或管理员预热”。
 
@@ -230,6 +252,7 @@ class DataPackageFetcher(Protocol):
 领域表优先，通用窄表兜底：
 
 - 财务：`a_income_statement`、`a_balance_sheet`、`a_cashflow_statement`、`a_financial_indicator`。
+- 港股财务：`hk_financial_indicator` 保存 `hk_fina_indicator` 指标摘要；`hk_financial_statement_item` 保存 `hk_income`、`hk_balancesheet`、`hk_cashflow` 的指标名/指标值窄表明细。两张表均按股票、报告期和业务口径幂等写入，重跑不会重复插入。
 - 行情估值：复用 `a_daily_quote`，新增或扩展 `a_daily_basic`。
 - 资金流：新增 `a_stock_moneyflow_daily`。
 - 股东治理：新增 `a_top10_holder_snapshot`、`a_holder_number_snapshot`、`a_share_pledge_snapshot`。
@@ -248,6 +271,9 @@ class DataPackageFetcher(Protocol):
 - `v_stock_shareholder_governance_summary`：股东、质押和户数摘要。
 - `v_stock_market_event_summary`：龙虎榜、涨跌停、异动摘要。
 - `v_market_data_fetch_health`：补数健康度。
+- `v_hk_stock_research_context_latest`：港股最新综合财务摘要。
+- `v_hk_financial_period_summary`：港股最近 24 期财务指标摘要。
+- `v_hk_financial_statement_item_summary`：港股三大报表项目明细摘要。
 
 所有视图必须进入 SQL Guard 白名单，但 LLM 回答中不得暴露视图名、SQL、Tushare 接口名和内部数据处理细节。
 
@@ -286,6 +312,7 @@ class DataPackageFetcher(Protocol):
 - 用户问“帮我写一份招商银行投资分析报告”，系统触发个股报告数据包组合，回答能自主组织研究判断、证据、风险和反证条件，而不是机械套模板。
 - 用户问“招商银行和平安银行谁更适合长期持有”，系统在本地股票表召回候选并语义确认具体股票，最多对 5 只股票逐只补齐估值、财务和分红摘要，再交给 LLM 做横向比较。
 - 用户问“A/H 溢价机会是否有基本面支撑”，系统先查现有 AH 视图，再按单股或 5 只以内股票补齐财务摘要，不重复拉全市场数据。
+- 用户问“帮我分析一下中国电力”，系统从 `hk_stock_basic` 解析为 `02380.HK`，只触发港股 `financial_statement`，回答基于最近 24 期港股财务指标和三大报表项目摘要，并明确港股行情等未接入材料缺口。
 - 用户问“比较所有银行谁最稳”，系统不自动全市场补数，提示需要管理员预热或缩小到少数股票。
 - Tushare 权限不足或接口无数据时，补数审计可见，LLM 回答不虚构数值。
 
@@ -310,3 +337,4 @@ class DataPackageFetcher(Protocol):
 - Tushare 现金流量表 `cashflow`：https://tushare.pro/document/2?doc_id=44
 - Tushare 财务指标 `fina_indicator`：https://tushare.pro/document/2?doc_id=79
 - Tushare 每日指标 `daily_basic`：https://tushare.pro/document/2?doc_id=32
+- Tushare 港股数据分类：https://tushare.pro/document/2?doc_id=190

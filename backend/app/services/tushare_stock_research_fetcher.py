@@ -26,6 +26,8 @@ from app.db.models.market import (
     AMoneyflow,
     APledgeStat,
     ATop10Holder,
+    HKFinancialIndicator,
+    HKFinancialStatementItem,
     LlmMarketDataFetchItem,
 )
 from app.services.date_utils import format_tushare_date, parse_tushare_date
@@ -696,6 +698,151 @@ class TushareStockResearchFetcher:
         ),
     }
 
+    hk_specs: dict[str, tuple[FetchApiSpec, ...]] = {
+        FINANCIAL_STATEMENT_PACKAGE: (
+            FetchApiSpec(
+                package_name=FINANCIAL_STATEMENT_PACKAGE,
+                api_name="hk_fina_indicator",
+                model=HKFinancialIndicator,
+                fields=(
+                    "ts_code",
+                    "name",
+                    "end_date",
+                    "report_type",
+                    "std_report_date",
+                    "per_netcash_operate",
+                    "per_oi",
+                    "bps",
+                    "basic_eps",
+                    "diluted_eps",
+                    "operate_income",
+                    "operate_income_yoy",
+                    "gross_profit",
+                    "gross_profit_yoy",
+                    "holder_profit",
+                    "holder_profit_yoy",
+                    "gross_profit_ratio",
+                    "eps_ttm",
+                    "operate_income_qoq",
+                    "net_profit_ratio",
+                    "roe_avg",
+                    "gross_profit_qoq",
+                    "roa",
+                    "holder_profit_qoq",
+                    "roe_yearly",
+                    "roic_yearly",
+                    "total_assets",
+                    "total_liabilities",
+                    "tax_ebt",
+                    "ocf_sales",
+                    "total_parent_equity",
+                    "debt_asset_ratio",
+                    "operate_profit",
+                    "pretax_profit",
+                    "netcash_operate",
+                    "netcash_invest",
+                    "netcash_finance",
+                    "end_cash",
+                    "divi_ratio",
+                    "dividend_rate",
+                    "current_ratio",
+                    "currentdebt_debt",
+                    "total_market_cap",
+                    "hksk_market_cap",
+                    "pe_ttm",
+                    "pb_ttm",
+                    "dps_hkd",
+                    "start_date",
+                    "fiscal_year",
+                    "currency",
+                    "dps_hkd_ly",
+                    "org_type",
+                    "equity_multiplier",
+                    "equity_ratio",
+                ),
+                date_fields=("end_date", "std_report_date", "start_date"),
+                decimal_fields=(
+                    "per_netcash_operate",
+                    "per_oi",
+                    "bps",
+                    "basic_eps",
+                    "diluted_eps",
+                    "operate_income",
+                    "operate_income_yoy",
+                    "gross_profit",
+                    "gross_profit_yoy",
+                    "holder_profit",
+                    "holder_profit_yoy",
+                    "gross_profit_ratio",
+                    "eps_ttm",
+                    "operate_income_qoq",
+                    "net_profit_ratio",
+                    "roe_avg",
+                    "gross_profit_qoq",
+                    "roa",
+                    "holder_profit_qoq",
+                    "roe_yearly",
+                    "roic_yearly",
+                    "total_assets",
+                    "total_liabilities",
+                    "tax_ebt",
+                    "ocf_sales",
+                    "total_parent_equity",
+                    "debt_asset_ratio",
+                    "operate_profit",
+                    "pretax_profit",
+                    "netcash_operate",
+                    "netcash_invest",
+                    "netcash_finance",
+                    "end_cash",
+                    "divi_ratio",
+                    "dividend_rate",
+                    "current_ratio",
+                    "currentdebt_debt",
+                    "total_market_cap",
+                    "hksk_market_cap",
+                    "pe_ttm",
+                    "pb_ttm",
+                    "dps_hkd",
+                    "dps_hkd_ly",
+                    "equity_multiplier",
+                    "equity_ratio",
+                ),
+                default_years=8,
+            ),
+            FetchApiSpec(
+                package_name=FINANCIAL_STATEMENT_PACKAGE,
+                api_name="hk_income",
+                model=HKFinancialStatementItem,
+                fields=("ts_code", "end_date", "name", "ind_name", "ind_value"),
+                date_fields=("end_date",),
+                decimal_fields=("ind_value",),
+                default_years=8,
+                static_fields={"statement_type": "INCOME"},
+            ),
+            FetchApiSpec(
+                package_name=FINANCIAL_STATEMENT_PACKAGE,
+                api_name="hk_balancesheet",
+                model=HKFinancialStatementItem,
+                fields=("ts_code", "end_date", "name", "ind_name", "ind_value"),
+                date_fields=("end_date",),
+                decimal_fields=("ind_value",),
+                default_years=8,
+                static_fields={"statement_type": "BALANCE"},
+            ),
+            FetchApiSpec(
+                package_name=FINANCIAL_STATEMENT_PACKAGE,
+                api_name="hk_cashflow",
+                model=HKFinancialStatementItem,
+                fields=("ts_code", "end_date", "name", "ind_name", "ind_value"),
+                date_fields=("end_date",),
+                decimal_fields=("ind_value",),
+                default_years=8,
+                static_fields={"statement_type": "CASHFLOW"},
+            ),
+        ),
+    }
+
     def __init__(
         self,
         db: Session,
@@ -720,7 +867,10 @@ class TushareStockResearchFetcher:
         author: sunshengxian
         """
 
-        specs = self.specs.get(package_name)
+        # 港股财务接口是独立 API，字段形态也与 A 股不同；按代码后缀分流到港股白名单，
+        # 保证 LLM 仍只能触发单股、固定包、固定字段的受控补数。
+        spec_catalog = self.hk_specs if ts_code.upper().endswith(".HK") else self.specs
+        specs = spec_catalog.get(package_name)
         if specs is None:
             raise ValueError(f"不支持的数据包：{package_name}")
         row_count = 0
@@ -790,6 +940,15 @@ class TushareStockResearchFetcher:
         if spec.api_name in {"income", "balancesheet", "cashflow"}:
             normalized["report_type"] = str(normalized.get("report_type") or "")
             normalized["update_flag"] = str(normalized.get("update_flag") or "")
+        if spec.api_name == "hk_fina_indicator":
+            normalized["report_type"] = str(normalized.get("report_type") or "")
+            fiscal_year = normalized.get("fiscal_year")
+            normalized["fiscal_year"] = int(fiscal_year) if fiscal_year not in (None, "") else None
+        if spec.api_name in {"hk_income", "hk_balancesheet", "hk_cashflow"}:
+            # 港股三大报表是“指标名/指标值”窄表，statement_type 来自白名单固定参数；
+            # ind_name 为空的汇总/异常行不可复核，直接跳过，重跑仍不会产生脏数据。
+            normalized["statement_type"] = str(normalized.get("statement_type") or "")
+            normalized["ind_name"] = str(normalized.get("ind_name") or "")
         if spec.api_name == "dividend":
             normalized["div_proc"] = str(normalized.get("div_proc") or "")
         if spec.api_name == "forecast":

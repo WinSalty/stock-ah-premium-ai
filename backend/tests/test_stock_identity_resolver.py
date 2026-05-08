@@ -4,7 +4,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 from app.db.base import Base
-from app.db.models.market import AHStockPair, AStockBasic
+from app.db.models.market import AHStockPair, AStockBasic, HKStockBasic
 from app.services.stock_identity_resolver import StockIdentityResolver
 
 
@@ -111,3 +111,38 @@ def test_resolver_maps_ah_hk_name_to_a_code() -> None:
     assert result.resolved is True
     assert result.identity is not None
     assert result.identity.ts_code == "600036.SH"
+
+
+def test_resolver_resolves_explicit_hk_code() -> None:
+    """确认显式港股代码可以回查港股基础表并触发港股补数候选。
+
+    创建日期：2026-05-08
+    author: sunshengxian
+    """
+
+    db = _session()
+    db.add(HKStockBasic(ts_code="02380.HK", name="中国电力", list_status="L"))
+    db.commit()
+
+    result = StockIdentityResolver(db).resolve("帮我分析 02380.HK 中国电力")
+
+    assert result.resolved is True
+    assert result.identity is not None
+    assert result.identity.ts_code == "02380.HK"
+    assert result.identity.source == "HK_STOCK_BASIC"
+
+
+def test_resolver_returns_hk_name_candidate_for_semantic_selection() -> None:
+    """确认港股名称可进入语义消歧候选，避免被 A 股基础表边界排除。
+
+    创建日期：2026-05-08
+    author: sunshengxian
+    """
+
+    db = _session()
+    db.add(HKStockBasic(ts_code="02380.HK", name="中国电力", list_status="L"))
+    db.commit()
+
+    candidates = StockIdentityResolver(db).resolve_candidates("中国电力怎么看")
+
+    assert [candidate.ts_code for candidate in candidates] == ["02380.HK"]

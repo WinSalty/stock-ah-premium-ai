@@ -239,6 +239,68 @@ def test_route_from_payload_accepts_market_data_demands() -> None:
     assert route.knowledge_category_keys == ("ah_premium",)
 
 
+def test_route_from_payload_accepts_hk_financial_demand_only() -> None:
+    """确认港股路由需求只能保留港股财务包，避免触发未接入的数据域。
+
+    创建日期：2026-05-08
+    author: sunshengxian
+    """
+
+    service = LlmService(
+        Mock(),
+        settings=Settings(llm_api_key="test-key", llm_api_key_file=None, llm_model="test-model"),
+    )
+
+    route = service._route_from_payload(
+        {
+            "is_answerable": True,
+            "needs_sql": False,
+            "use_knowledge": False,
+            "data_demands": [
+                {
+                    "market": "HK",
+                    "ts_code": "02380.HK",
+                    "packages": ["quote_valuation", "financial_statement", "capital_flow_light"],
+                }
+            ],
+        }
+    )
+
+    assert route.data_demands[0].ts_code == "02380.HK"
+    assert route.data_demands[0].market == "HK"
+    assert route.data_demands[0].packages == ("financial_statement",)
+
+
+def test_route_from_payload_downgrades_hk_non_financial_packages() -> None:
+    """确认港股路由即便误报非财务包，也会在本地降级为受控财务包。
+
+    创建日期：2026-05-08
+    author: sunshengxian
+    """
+
+    service = LlmService(
+        Mock(),
+        settings=Settings(llm_api_key="test-key", llm_api_key_file=None, llm_model="test-model"),
+    )
+
+    route = service._route_from_payload(
+        {
+            "is_answerable": True,
+            "needs_sql": False,
+            "use_knowledge": False,
+            "data_demands": [
+                {
+                    "market": "HK",
+                    "ts_code": "02380.HK",
+                    "packages": ["quote_valuation", "capital_flow_light"],
+                }
+            ],
+        }
+    )
+
+    assert route.data_demands[0].packages == ("financial_statement",)
+
+
 def test_route_from_payload_accepts_up_to_five_market_data_demands() -> None:
     """确认前置路由最多接收 5 只股票的白名单补数需求。
 
@@ -292,6 +354,38 @@ def test_answer_prompt_includes_market_data_context_and_report_instruction() -> 
     assert "经营现金流覆盖" in prompt
     assert "主营业务构成" in prompt
     assert "资金流只用于解释短期交易情绪" in prompt
+    assert "最近 24 期" in prompt
+
+
+def test_data_only_answer_shows_24_financial_periods() -> None:
+    """确认财务问数会展示 24 期上下文，不再被旧的 20 行展示上限截断。
+
+    创建日期：2026-05-08
+    author: sunshengxian
+    """
+
+    service = LlmService(
+        Mock(),
+        settings=Settings(llm_api_key="test-key", llm_api_key_file=None, llm_model="test-model"),
+    )
+    rows = [
+        {
+            "ts_code": "601225.SH",
+            "name": "陕西煤业",
+            "end_date": f"202{i // 4}-{((i % 4) + 1) * 3:02d}-30",
+            "roe": i,
+        }
+        for i in range(24)
+    ]
+
+    answer = service._data_only_answer(
+        "给我展示陕西煤业最近 24 期财务摘要数据",
+        rows=[],
+        market_data_context={"context": {"financial_periods": rows}},
+    )
+
+    assert answer.count("| 601225.SH |") == 24
+    assert "前 20 行" not in answer
 
 
 def test_report_analysis_question_prefers_structured_stock_data() -> None:

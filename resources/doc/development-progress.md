@@ -79,7 +79,7 @@
   - 自选股提醒新增消息推送开关，默认开启；用户关闭后保留提醒条件但不发送 PushPlus 消息，也不强制绑定。
   - 后端新增交易日提醒扫描任务，阈值提醒要求 A/H 共同交易日，股价提醒要求对应市场交易日；非交易日不推送。
   - 提醒扫描已改为交易时段实时判断：调度器默认在 `ALERT_SCAN_HOURS=9-16` 内每秒执行一次，服务层再按 A 股 `09:30-11:30`、`13:00-15:00` 与港股 `09:30-12:00`、`13:00-16:00` 过滤；A/H 溢价阈值只在两地重叠时段触发。
-  - 阈值提醒和股价提醒均读取 `realtime_quote_snapshot` 最新有效快照；阈值提醒允许 A/H 报价实时且汇率实时或 `STALE_FX`，股价提醒要求对应市场报价质量为 `REALTIME`。
+  - 阈值提醒和股价提醒均读取 `realtime_quote_snapshot` 最新有效快照；实时 A/H 溢价计算要求 A 股、H 股和 `HKD/CNY` 汇率快照日期均等于本轮扫描日/东八区当天，任一日期错配都会返回 `STALE`，不计算指标、不写回官方 AH 主表，也不触发阈值提醒；股价提醒要求对应市场报价质量为 `REALTIME`。
   - PushPlus 提醒频率已改为按偏离档位触发：首次达到条件推送一次；阈值提醒每多偏离 1 个百分点新增一档，股价提醒每多偏离目标价 2% 新增一档；同一用户同一交易日同类提醒累计最多 5 次。
   - PushPlus 绑定流程已调整为扫码回调自动绑定：二维码归属管理员 PushPlus 账号，`content` 仅作为短格式带签名的系统用户绑定票据；好友列表和全量绑定列表仅管理员可查看。
   - PushPlus 绑定入口新增显著说明：扫码关注公众号后，微信收到“好友增加成功”即代表绑定成功，无需点击链接进行付费或实名认证；绑定成功展示优先使用好友备注或昵称，不再把好友 ID 当作昵称展示。
@@ -268,3 +268,13 @@
 - 后端新增阈值推荐确定性计算器，按 `threshold-recommendation-logic.md` 的 `median + 0.65 * (p80 - median)`、当前分位高于 80% 取 `max(base, current)`、历史分位缺失时给 2 到 5 个百分点缓冲等规则稳定生成建议阈值；LLM 只解释这个紧凑结果，避免相同页面输入下答案大幅漂移。
 - 阈值推荐支持流式调用和专用耗时阶段：`threshold_answer`、`threshold_answer_stream`、`threshold_answer_stream_first_chunk`、`threshold_done`、`threshold_stream_done`，管理员可在 LLM 耗时页面直接区分阈值快路径和通用问答链路。
 - 模型未配置时，阈值推荐会返回本地确定性 Markdown 兜底答案，避免固定场景因外部模型不可用完全无法使用；模型配置正常时仍由 LLM 补充推荐理由和执行条件。
+
+## 2026-05-08 港股财务问答与 24 期财务上下文优化
+
+- 追踪 ID `336c51e8e24f41278255c60ad611866c` 排查结论：用户问“中国电力”时，前置路由仍按旧 A 股边界处理，明确回复“港股不在 A 股数据范围内”，导致未触发 Tushare 补数，最终只能生成无结构化数据支撑的泛化回答。已将路由、股票解析和补数编排从 A 股单市场扩展为 A 股/港股双市场。
+- 港股自动补数首批只开放 `financial_statement`：新增 `hk_financial_indicator` 和 `hk_financial_statement_item` 两张表，分别承接 `hk_fina_indicator` 与 `hk_income`、`hk_balancesheet`、`hk_cashflow`。港股三大报表按“指标名/指标值”窄表落库，所有接口仍由后端白名单固定字段、固定周期和单股参数控制，LLM 不能直接指定 Tushare API。
+- 新增港股只读视图 `v_hk_stock_research_context_latest`、`v_hk_financial_period_summary` 和 `v_hk_financial_statement_item_summary`，并纳入 SQL Guard 白名单、只读用户授权模板和完整注释版 DDL。港股上下文默认提供最近 24 期财务指标摘要与最多 80 条三大报表项目摘要；行情、资金流、股东治理和分红等港股数据域暂不自动补数，回答中需作为材料缺口说明。
+- 股票解析器已支持完整港股代码和五位港股代码，例如 `02380.HK`、`02380`；名称召回新增 `hk_stock_basic`，可把“中国电力”解析为本地港股候选，再由 LLM 语义消歧或唯一命中后进入港股财务补数。
+- 追踪 ID `eb1464aceafe446a8bd884a5ee7bc6db` 排查结论：陕西煤业问题的 Tushare 补数已成功，财务、主营、分红等数据行进入上下文；回答偏重近两年不是数据缺失，而是提示词和答案组织没有强制先检查完整 20/24 期覆盖期。已在回答 payload 增加 `financial_context_contract`，并在报告提示词中要求先概括完整覆盖期趋势，再单独点评最近两年；问数模式财务数据展示上限同步调整为 24 行。
+- 本地 MySQL 真实验证：使用临时库和真实 Tushare Token 调用 `02380.HK` 港股财务包，成功写入 1934 行，其中港股财务指标 16 行、三大报表项目 1918 行，最新报告期为 2025-12-31；再通过 `MarketDataOrchestrator.ensure_for_question` 验证“中国电力 02380.HK 财务质量怎么看”可完成补数、构造港股 latest/financial_periods/statement_items 上下文。
+- 后端专项检查已通过：`pytest tests/test_stock_identity_resolver.py tests/test_market_data_orchestrator.py tests/test_tushare_stock_research_fetcher.py tests/test_llm_service.py` 共 47 个用例通过，`ruff check app tests` 通过。完整空库 Alembic 回放仍受旧迁移中 MySQL 专用语句和历史视图依赖影响，本轮新增迁移在现有本地库继续升级的路径需要单独验证。

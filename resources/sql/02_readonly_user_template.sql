@@ -15,6 +15,9 @@ GRANT SELECT ON stock_ah_ai.v_stock_business_profile_summary TO '<readonly_user>
 GRANT SELECT ON stock_ah_ai.v_stock_shareholder_governance_summary TO '<readonly_user>'@'localhost';
 GRANT SELECT ON stock_ah_ai.v_stock_moneyflow_recent TO '<readonly_user>'@'localhost';
 GRANT SELECT ON stock_ah_ai.v_stock_research_context_latest TO '<readonly_user>'@'localhost';
+GRANT SELECT ON stock_ah_ai.v_hk_financial_period_summary TO '<readonly_user>'@'localhost';
+GRANT SELECT ON stock_ah_ai.v_hk_financial_statement_item_summary TO '<readonly_user>'@'localhost';
+GRANT SELECT ON stock_ah_ai.v_hk_stock_research_context_latest TO '<readonly_user>'@'localhost';
 GRANT SELECT ON stock_ah_ai.v_market_data_fetch_health TO '<readonly_user>'@'localhost';
 GRANT SELECT ON stock_ah_ai.v_sync_health TO '<readonly_user>'@'localhost';
 GRANT SELECT ON stock_ah_ai.v_data_quality_issues TO '<readonly_user>'@'localhost';

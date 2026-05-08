@@ -1,6 +1,6 @@
 # 数据库表结构说明
 
-更新日期：2026-05-07
+更新日期：2026-05-08
 
 ## 维护口径
 
@@ -65,10 +65,12 @@ LLM 按需个股研究数据：
 - `a_holder_number`：单股股东户数，保存 Tushare `stk_holdernumber`，用于观察筹码集中或分散趋势。
 - `a_pledge_stat`：单股质押统计，保存 Tushare `pledge_stat`，用于识别控股股东质押压力和潜在流动性风险。
 - `a_moneyflow`：单股资金流向，保存 Tushare `moneyflow` 的大小单买卖额和净流入，用于解释短期交易情绪，不作为基本面替代证据。
+- `hk_financial_indicator`：港股财务指标摘要表，保存 Tushare `hk_fina_indicator` 的收入、股东应占利润、ROE、资产负债、现金流、估值和分红等字段，用于港股单股研究；按 `ts_code + end_date + report_type` 幂等写入。
+- `hk_financial_statement_item`：港股三大报表项目明细表，保存 Tushare `hk_income`、`hk_balancesheet`、`hk_cashflow` 的指标名/指标值窄表明细；按 `ts_code + end_date + statement_type + ind_name` 幂等写入，便于回答核对利润表、资产负债表和现金流量表的具体项目。
 - `llm_market_data_fetch_run`：LLM 按需市场数据抓取批次审计，记录问题追踪 ID、股票代码列表、数据包、缓存命中、状态和行数。
 - `llm_market_data_fetch_item`：LLM 按需市场数据抓取明细审计，记录每个白名单 Tushare 接口的参数、字段、耗时和错误摘要。
 
-按需补数硬边界：当前仅面向 15000 积分 Tushare 权限门槛设计，积分表示接口可用范围，不是按次扣费制。自动流程只允许 A 股、短区间、低频、缓存优先的数据包补齐；单股研究优先，明确多股对比时单轮最多 5 只股票。LLM 不得任意选择 Tushare 接口、字段或全市场批量拉取。LLM 读取时只通过 `v_stock_quote_valuation_trend`、`v_stock_financial_period_summary`、`v_stock_business_profile_summary`、`v_stock_shareholder_governance_summary`、`v_stock_moneyflow_recent`、`v_stock_research_context_latest` 和 `v_market_data_fetch_health` 等只读视图消费整理后的上下文。
+按需补数硬边界：当前仅面向 15000 积分 Tushare 权限门槛设计，积分表示接口可用范围，不是按次扣费制。自动流程只允许 A 股/港股、短区间、低频、缓存优先的数据包补齐；单股研究优先，明确多股对比时单轮最多 5 只股票。A 股可补行情估值、财务、主营、分红预告、股东治理和资金流；港股当前只补 `financial_statement`，即 `hk_fina_indicator`、`hk_income`、`hk_balancesheet` 和 `hk_cashflow`。LLM 不得任意选择 Tushare 接口、字段或全市场批量拉取。LLM 读取时只通过 `v_stock_quote_valuation_trend`、`v_stock_financial_period_summary`、`v_stock_business_profile_summary`、`v_stock_shareholder_governance_summary`、`v_stock_moneyflow_recent`、`v_stock_research_context_latest`、`v_hk_stock_research_context_latest`、`v_hk_financial_period_summary`、`v_hk_financial_statement_item_summary` 和 `v_market_data_fetch_health` 等只读视图消费整理后的上下文。
 
 任务、质量与问答：
 

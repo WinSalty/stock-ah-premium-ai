@@ -122,12 +122,13 @@ QUESTION_ROUTER_SYSTEM_PROMPT = """你是问答前置路由器。
 是否需要读取本地投研知识库，以及需要读取哪些知识分类。
 通用知识、翻译、改写、解释概念、写作润色和普通问答也属于允许范围；
 这类问题不需要 SQL、不需要知识库、不需要市场数据，直接由 LLM 回答。
-如果用户是在问 A 股的估值、财报、分红、投资分析报告、“怎么看”或多只股票对比，
+如果用户是在问 A 股或港股的估值、财报、分红、投资分析报告、“怎么看”或多只股票对比，
 还要判断是否需要按需补充市场数据。
-按需补充市场数据最多输出 5 只 A 股，数据包只能从 quote_valuation、
+按需补充市场数据最多输出 5 只股票。A 股数据包可以从 quote_valuation、
 financial_statement、business_profile、dividend_forecast、shareholder_governance、
-capital_flow_light 中选择；
-不要输出港股、指数、全市场或任意 Tushare 接口名。
+capital_flow_light 中选择；港股当前只允许 financial_statement 数据包，
+代码必须是 5 位港股 Tushare 代码，例如 02380.HK，不要输出港股行情、指数、
+全市场或任意 Tushare 接口名。
 Tushare 15000 积分在这里是接口权限门槛，不是按次扣费制；
 因此路由重点是控制接口范围、股票数量和时间窗口。
 投资研究范围包括股票、基金、指数、行业、估值、财报、红利、仓位、风险、
@@ -141,7 +142,7 @@ Tushare 15000 积分在这里是接口权限门槛，不是按次扣费制；
 只有知识库目录中存在明确场景匹配材料时，才选择对应知识分类；
 不要为了“个股深度研究”泛化选择知识库材料。
 只返回 JSON，不要输出解释。格式：
-{"is_answerable":true或false,"needs_sql":true或false,"use_knowledge":true或false,"knowledge_categories":["分类key"],"data_demands":[{"market":"A","ts_code":"600036.SH","packages":["quote_valuation","financial_statement","business_profile","dividend_forecast","shareholder_governance","capital_flow_light"],"intent":"stock_research"}],"reason":"一句话原因"}
+{"is_answerable":true或false,"needs_sql":true或false,"use_knowledge":true或false,"knowledge_categories":["分类key"],"data_demands":[{"market":"A或HK","ts_code":"600036.SH或02380.HK","packages":["quote_valuation","financial_statement","business_profile","dividend_forecast","shareholder_governance","capital_flow_light"],"intent":"stock_research"}],"reason":"一句话原因"}
 """
 
 OUT_OF_SCOPE_MESSAGE = (
@@ -411,6 +412,12 @@ DATA_FIELD_LABELS = {
     "industry": "行业",
     "area": "地区",
     "market": "市场",
+    "currency": "币种",
+    "report_type": "报告类型",
+    "std_report_date": "标准报告期",
+    "statement_type": "报表类型",
+    "ind_name": "指标名称",
+    "ind_value": "指标值",
     "user_id": "用户ID",
     "watchlist_id": "自选ID",
     "holding_market": "持有市场",
@@ -446,6 +453,11 @@ DATA_FIELD_LABELS = {
     "latest_express_yoy_sales": "快报营收同比%",
     "latest_express_yoy_dedu_np": "快报扣非同比%",
     "latest_express_summary": "快报摘要",
+    "latest_holder_profit": "最新股东应占利润",
+    "latest_operate_income": "最新营业收入",
+    "latest_dividend_rate": "最新股息率",
+    "latest_pe_ttm": "最新PE TTM",
+    "latest_pb_ttm": "最新PB TTM",
     "section_type": "股东分组",
     "sort_date": "排序日期",
     "ranking": "排名",
@@ -494,14 +506,20 @@ DATA_FIELD_LABELS = {
     "pe": "PE",
     "pe_ttm": "PE TTM",
     "pb": "PB",
+    "pb_ttm": "PB TTM",
     "ps_ttm": "PS TTM",
     "dividend_yield_ttm": "股息率",
     "total_mv": "总市值",
+    "total_market_cap": "总市值",
+    "hksk_market_cap": "港股市值",
     "circ_mv": "流通市值",
     "eps": "每股收益",
     "roe": "ROE",
     "roe_waa": "加权ROE",
+    "roe_avg": "平均ROE",
     "roe_dt": "扣非ROE",
+    "roe_yearly": "年度ROE",
+    "roic_yearly": "年度ROIC",
     "roa": "ROA",
     "grossprofit_margin": "毛利率",
     "netprofit_margin": "净利率",
@@ -517,11 +535,17 @@ DATA_FIELD_LABELS = {
     "netprofit_yoy": "净利同比%",
     "q_netprofit_yoy": "单季净利同比%",
     "ocf_to_revenue": "经营现金/营收",
+    "ocf_sales": "经营现金/收入",
     "ocfps": "每股经营现金流",
+    "per_netcash_operate": "每股经营现金流",
+    "per_oi": "每股营业收入",
     "bps": "每股净资产",
     "profit_dedt": "扣非净利润",
     "total_revenue": "营业总收入",
     "revenue": "营业收入",
+    "operate_income": "营业收入",
+    "operate_income_yoy": "营业收入同比%",
+    "operate_income_qoq": "营业收入环比%",
     "total_cogs": "营业总成本",
     "oper_cost": "营业成本",
     "biz_tax_surchg": "税金及附加",
@@ -534,6 +558,12 @@ DATA_FIELD_LABELS = {
     "oth_income": "其他收益",
     "asset_disp_income": "资产处置收益",
     "operate_profit": "营业利润",
+    "gross_profit": "毛利",
+    "gross_profit_yoy": "毛利同比%",
+    "gross_profit_qoq": "毛利环比%",
+    "holder_profit": "股东应占利润",
+    "holder_profit_yoy": "股东应占利润同比%",
+    "holder_profit_qoq": "股东应占利润环比%",
     "non_oper_income": "营业外收入",
     "non_oper_exp": "营业外支出",
     "total_profit": "利润总额",
@@ -577,6 +607,7 @@ DATA_FIELD_LABELS = {
     "total_cur_assets": "流动资产合计",
     "total_nca": "非流动资产合计",
     "total_assets": "资产总计",
+    "total_liabilities": "负债合计",
     "st_borr": "短期借款",
     "notes_payable": "应付票据",
     "acct_payable": "应付账款",
@@ -588,6 +619,15 @@ DATA_FIELD_LABELS = {
     "total_liab": "负债合计",
     "total_hldr_eqy_inc_min_int": "所有者权益合计",
     "total_hldr_eqy_exc_min_int": "归母权益合计",
+    "total_parent_equity": "母公司股东权益",
+    "debt_asset_ratio": "资产负债率",
+    "netcash_operate": "经营现金流净额",
+    "netcash_invest": "投资现金流净额",
+    "netcash_finance": "筹资现金流净额",
+    "end_cash": "期末现金",
+    "divi_ratio": "派息比例",
+    "dividend_rate": "股息率",
+    "dps_hkd": "每股股息HKD",
     "cap_rese": "资本公积",
     "surplus_rese": "盈余公积",
     "undistr_porfit": "未分配利润",
@@ -1376,6 +1416,11 @@ class LlmService:
             "market_observations": rows[:ANSWER_MARKET_ROW_LIMIT],
             "supplemental_market_observations": self._supporting_data(question, context),
             "market_data_context": market_data_context,
+            "financial_context_contract": (
+                "若 market_data_context.context.financial_periods 存在，"
+                "最多包含最近 24 期财务摘要；"
+                "回答必须先概括完整覆盖期趋势，再点评最近两年，不得只读取前几行。"
+            ),
             "knowledge_categories": knowledge.categories,
             "reference_materials": knowledge.chunks,
         }
@@ -1436,9 +1481,11 @@ class LlmService:
             "reason": result.reason,
             "stocks": result.stocks,
             "data_boundary": (
-                f"仅按 A 股、白名单数据包和最多 {MAX_MARKET_DATA_STOCKS} 只股票补充有限区间数据；"
+                f"仅按 A 股/港股、白名单数据包和最多 {MAX_MARKET_DATA_STOCKS} "
+                "只股票补充有限区间数据；"
                 "Tushare 15000 积分是接口权限门槛，不代表随查询减少的余额；"
-                "财务、主营、股东治理和资金流均为单股受控补数，材料缺口需要在结论中说明。"
+                "A 股可补行情估值、财务、主营、股东治理和资金流；港股当前只补财务指标和三大报表，"
+                "材料缺口需要在结论中说明。"
             ),
         }
 
@@ -1476,7 +1523,10 @@ class LlmService:
             "第九，根据公司类型调整重点，银行看息差、资产质量和拨备，支付/金融科技看交易规模、费率、"
             "支付业务收入、科技服务收入和合规成本，制造业看毛利率、存货、应收和资本开支；"
             "第十，事实、推断和假设要分清楚，材料没有覆盖的指标要直接列为数据缺口，"
-            "并给出后续最该跟踪的 3 到 6 个指标以及推翻当前判断的反证条件。"
+            "并给出后续最该跟踪的 3 到 6 个指标以及推翻当前判断的反证条件；"
+            "第十一，如果 market_data_context 提供了最近 24 期或多年财务数据，"
+            "必须先横向检查完整覆盖期的收入、利润、ROE、现金流、负债和分红趋势，"
+            "再单独点评最近两年变化；不要只因为最新两年数据最靠前就忽略更早报告期。"
             "不要机械套模板，也不要因为表面估值低就自动给乐观结论。"
         )
 
@@ -1554,11 +1604,14 @@ class LlmService:
             else rows[:20]
         ) or context_rows
         lines = ["## 数据结果", ""]
+        display_limit = 24 if self._prefer_context_rows_for_data_question(question) else 20
         if normalized_rows:
-            lines.append(self._markdown_table(normalized_rows[:20]))
+            lines.append(self._markdown_table(normalized_rows[:display_limit]))
             lines.append("")
-            if len(normalized_rows) > 20:
-                lines.append(f"已先展示前 20 行，本次共命中 {len(normalized_rows)} 行。")
+            if len(normalized_rows) > display_limit:
+                lines.append(
+                    f"已先展示前 {display_limit} 行，本次共命中 {len(normalized_rows)} 行。"
+                )
                 lines.append("")
         else:
             lines.append("当前没有查到可展示的数据。")
@@ -1675,23 +1728,42 @@ class LlmService:
             "trade_date",
             "end_date",
             "ann_date",
+            "report_type",
+            "currency",
             "close",
             "pct_chg",
             "pe_ttm",
+            "pb_ttm",
             "pb",
             "dividend_yield_ttm",
+            "dividend_rate",
+            "dps_hkd",
             "eps",
+            "basic_eps",
             "roe",
             "roe_waa",
+            "roe_avg",
             "total_revenue",
             "revenue",
+            "operate_income",
+            "operate_income_yoy",
             "n_income_attr_p",
+            "holder_profit",
+            "holder_profit_yoy",
             "profit_dedt",
             "invest_income",
             "fv_value_chg_gain",
             "n_cashflow_act",
+            "netcash_operate",
+            "netcash_invest",
+            "netcash_finance",
             "total_assets",
             "total_liab",
+            "total_liabilities",
+            "debt_asset_ratio",
+            "statement_type",
+            "ind_name",
+            "ind_value",
         )
         available = {key for row in rows for key, value in row.items() if value is not None}
         columns = [column for column in preferred if column in available]
@@ -2554,6 +2626,7 @@ class LlmService:
             MarketDataDemand(
                 ts_code=ts_code,
                 packages=self._packages_for_semantic_stock(question),
+                market="HK" if ts_code.endswith(".HK") else "A",
                 intent="stock_research",
             )
             for ts_code in selected_ts_codes[:MAX_MARKET_DATA_STOCKS]
@@ -2615,7 +2688,11 @@ class LlmService:
             if not isinstance(item, dict):
                 continue
             ts_code = str(item.get("ts_code") or "").upper()
-            if not re.fullmatch(r"\d{6}\.(SH|SZ|BJ)", ts_code):
+            market = str(item.get("market") or ("HK" if ts_code.endswith(".HK") else "A")).upper()
+            if market == "HK":
+                if not re.fullmatch(r"\d{5}\.HK", ts_code):
+                    continue
+            elif not re.fullmatch(r"\d{6}\.(SH|SZ|BJ)", ts_code):
                 continue
             if ts_code in seen_ts_codes:
                 continue
@@ -2628,10 +2705,16 @@ class LlmService:
                 for package in packages
                 if isinstance(package, str) and package in allowed_packages
             )
+            if market == "HK":
+                # 港股自动补数现阶段只开放 15000 积分权限内的财务包，
+                # 路由器即便只返回行情或资金流等未接入包，也统一降级为财务包，
+                # 避免后续默认补成 A 股估值包并造成审计口径混乱。
+                filtered_packages = ("financial_statement",)
             demands.append(
                 MarketDataDemand(
                     ts_code=ts_code,
                     packages=filtered_packages or ("quote_valuation",),
+                    market=market,
                     intent=str(item.get("intent") or "stock_research"),
                 )
             )
@@ -2713,11 +2796,11 @@ class LlmService:
             ],
         }
         system_prompt = (
-            "你是股票名称语义消歧器，只能从候选列表中选择 A 股 ts_code。"
+            "你是股票名称语义消歧器，只能从候选列表中选择 A 股或港股 ts_code。"
             f"如果用户在比较多只股票，最多选择 {MAX_MARKET_DATA_STOCKS} 只；"
             "如果问题语义不足以判断具体股票，返回空数组。"
             "不要输出候选之外的代码，不要解释过程，只返回 JSON："
-            '{"selected_ts_codes":["600036.SH"],"confidence":0.0到1.0,"reason":"一句话"}'
+            '{"selected_ts_codes":["600036.SH","02380.HK"],"confidence":0.0到1.0,"reason":"一句话"}'
         )
         content = self._chat_completion(
             json.dumps(payload, ensure_ascii=False, default=str),
@@ -2733,7 +2816,8 @@ class LlmService:
         selected_codes = tuple(
             str(code).upper()
             for code in raw_codes
-            if isinstance(code, str) and re.fullmatch(r"\d{6}\.(SH|SZ|BJ)", code.upper())
+            if isinstance(code, str)
+            and re.fullmatch(r"\d{6}\.(SH|SZ|BJ)|\d{5}\.HK", code.upper())
         )
         raw_confidence = parsed.get("confidence")
         confidence = raw_confidence if isinstance(raw_confidence, (int, float)) else 0.0
@@ -2751,6 +2835,8 @@ class LlmService:
         """
 
         normalized = question.lower()
+        if re.search(r"\d{5}\.hk", normalized):
+            return ("financial_statement",)
         packages = ["quote_valuation"]
         if any(
             keyword in normalized
@@ -2884,18 +2970,25 @@ class LlmService:
             "治理",
         )
         capital_flow_keywords = ("资金流", "资金流向", "大单", "特大单", "净流入")
-        if any(keyword in normalized for keyword in financial_keywords):
+        is_hk_request = any(code.endswith(".HK") for code in ts_codes)
+        if is_hk_request:
+            packages = ["financial_statement"]
+        elif any(keyword in normalized for keyword in financial_keywords):
             packages.append("financial_statement")
-        if any(keyword in normalized for keyword in dividend_keywords):
+        if not is_hk_request and any(keyword in normalized for keyword in dividend_keywords):
             packages.append("dividend_forecast")
-        if any(keyword in normalized for keyword in business_keywords):
+        if not is_hk_request and any(keyword in normalized for keyword in business_keywords):
             packages.append("business_profile")
-        if any(keyword in normalized for keyword in governance_keywords):
+        if not is_hk_request and any(keyword in normalized for keyword in governance_keywords):
             packages.append("shareholder_governance")
-        if any(keyword in normalized for keyword in capital_flow_keywords):
+        if not is_hk_request and any(keyword in normalized for keyword in capital_flow_keywords):
             packages.append("capital_flow_light")
         return tuple(
-            MarketDataDemand(ts_code=ts_code, packages=tuple(packages))
+            MarketDataDemand(
+                ts_code=ts_code,
+                packages=tuple(packages),
+                market="HK" if ts_code.endswith(".HK") else "A",
+            )
             for ts_code in ts_codes[:MAX_MARKET_DATA_STOCKS]
         )
 
@@ -2905,19 +2998,24 @@ class LlmService:
         return ts_codes[0] if ts_codes else None
 
     def _local_ts_codes(self, question: str, context: dict[str, Any]) -> tuple[str, ...]:
-        """从上下文和问题文本抽取最多 5 个本地格式 A 股代码。
+        """从上下文和问题文本抽取最多 5 个本地格式股票代码。
 
         创建日期：2026-05-07
         author: sunshengxian
         """
 
         codes: list[str] = []
-        for key in ("ts_code", "a_ts_code", "stock_code"):
+        for key in ("ts_code", "a_ts_code", "hk_ts_code", "stock_code"):
             value = context.get(key)
-            if isinstance(value, str) and re.fullmatch(r"\d{6}\.(SH|SZ|BJ)", value.upper()):
+            if isinstance(value, str) and re.fullmatch(
+                r"\d{6}\.(SH|SZ|BJ)|\d{5}\.HK",
+                value.upper(),
+            ):
                 codes.append(value.upper())
         for match in re.finditer(r"\b(\d{6})\.(SH|SZ|BJ)\b", question, re.IGNORECASE):
             codes.append(f"{match.group(1)}.{match.group(2).upper()}")
+        for match in re.finditer(r"\b(\d{5})\.HK\b", question, re.IGNORECASE):
+            codes.append(f"{match.group(1)}.HK")
         for match in re.finditer(r"(?<!\d)(\d{6})(?!\d)", question):
             symbol = match.group(1)
             suffix = "SH" if symbol.startswith(("6", "9")) else "SZ"
