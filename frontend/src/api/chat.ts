@@ -114,8 +114,9 @@ export async function sendChatMessageStream(
       } else if (event.type === 'done') {
         handlers.onDone?.(event);
       } else if (event.type === 'error') {
-        streamError = event.content || '流式响应失败';
-        handlers.onError?.(event);
+        const errorText = event.content || event.answer || '流式响应失败';
+        streamError = errorText;
+        handlers.onError?.({ ...event, content: errorText, answer: event.answer || errorText });
       }
     }
   }

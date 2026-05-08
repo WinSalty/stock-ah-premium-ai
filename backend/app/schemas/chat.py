@@ -116,7 +116,7 @@ class ChatMessageCreate(BaseModel):
     end_date: date | None = None
     ts_code: str | None = None
     only_watchlist: bool = False
-    llm_model: ChatModel = "deepseek-v4-flash"
+    llm_model: ChatModel = "qwen3.6-flash"
     threshold_recommendation: ThresholdRecommendationContext | None = None
 
 

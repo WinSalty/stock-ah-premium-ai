@@ -366,7 +366,7 @@ const markdownComponents: Components = {
 
 const PRESET_QUESTION_COUNT = 4;
 const CHAT_AUTO_SCROLL_THRESHOLD = 96;
-const DEFAULT_CHAT_MODEL: ChatModel = 'deepseek-v4-flash';
+const DEFAULT_CHAT_MODEL: ChatModel = 'qwen3.6-flash';
 const CHAT_MODEL_OPTIONS: { label: string; value: ChatModel }[] = [
   { label: 'DeepSeek Flash', value: 'deepseek-v4-flash' },
   { label: 'DeepSeek Pro', value: 'deepseek-v4-pro' },

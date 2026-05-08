@@ -9,6 +9,7 @@ from time import perf_counter
 from unittest.mock import Mock
 from zoneinfo import ZoneInfo
 
+import httpx
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
@@ -145,8 +146,8 @@ def test_investment_advisor_prompt_allows_professional_opinions() -> None:
     assert "不要输出“不构成投资建议”" in INVESTMENT_ADVISOR_SYSTEM_PROMPT
 
 
-def test_clear_investment_question_uses_unified_deepseek_router(monkeypatch) -> None:
-    """确认投资问题通过统一 DeepSeek 路由返回前置信息。
+def test_clear_investment_question_uses_unified_qwen_router(monkeypatch) -> None:
+    """确认投资问题默认通过统一 Qwen 路由返回前置信息。
 
     创建日期：2026-05-05
     author: sunshengxian
@@ -188,7 +189,7 @@ def test_clear_investment_question_uses_unified_deepseek_router(monkeypatch) -> 
     assert route.should_query_data is False
     assert route.use_knowledge is True
     assert route.knowledge_category_keys == ("ah_premium",)
-    assert captured["model"] == "deepseek-v4-flash"
+    assert captured["model"] == "qwen3.6-flash"
     assert captured["phase"] == "question_router"
     assert "knowledge_catalog" in str(captured["prompt"])
 
@@ -725,8 +726,8 @@ def test_deepseek_model_alias_uses_supported_api_name(monkeypatch) -> None:
     assert "reasoning_effort" not in captured_payload
 
 
-def test_default_chat_model_is_deepseek_flash() -> None:
-    """确认默认问答模型使用 DeepSeek Flash。
+def test_default_chat_model_is_qwen_flash() -> None:
+    """确认默认问答模型使用 Qwen Flash。
 
     创建日期：2026-05-04
     author: sunshengxian
@@ -744,8 +745,8 @@ def test_default_chat_model_is_deepseek_flash() -> None:
 
     endpoint = service._model_endpoint()
 
-    assert endpoint.provider == "DeepSeek"
-    assert endpoint.model == "deepseek-v4-flash"
+    assert endpoint.provider == "Qwen"
+    assert endpoint.model == "qwen3.6-flash"
 
 
 def test_qwen_chat_model_uses_qwen_endpoint(monkeypatch) -> None:
@@ -799,8 +800,8 @@ def test_qwen_chat_model_uses_qwen_endpoint(monkeypatch) -> None:
     assert captured["payload"]["model"] == "qwen3.6-flash"
 
 
-def test_uncertain_question_scope_uses_deepseek_flash_router(monkeypatch) -> None:
-    """确认本地规则不确定时使用 DeepSeek Flash 路由。
+def test_uncertain_question_scope_uses_qwen_router(monkeypatch) -> None:
+    """确认本地规则不确定时使用 Qwen 路由。
 
     创建日期：2026-05-04
     author: sunshengxian
@@ -855,7 +856,114 @@ def test_uncertain_question_scope_uses_deepseek_flash_router(monkeypatch) -> Non
     )
 
     assert service._is_investment_related_question("这件事是否值得继续推进")
-    assert captured_payload["model"] == "deepseek-v4-flash"
+    assert captured_payload["model"] == "qwen3.6-flash"
+
+
+def test_deepseek_busy_falls_back_to_qwen(monkeypatch) -> None:
+    """确认 DeepSeek 临时繁忙时自动切换到 Qwen。
+
+    创建日期：2026-05-08
+    author: sunshengxian
+    """
+
+    calls: list[dict[str, object]] = []
+
+    class FakeResponse:
+        def __init__(self, status_code: int, content: str) -> None:
+            self.status_code = status_code
+            self._content = content
+            self.request = httpx.Request("POST", "https://example.test/chat/completions")
+
+        @property
+        def text(self) -> str:
+            return self._content
+
+        def raise_for_status(self) -> None:
+            if self.status_code >= 400:
+                raise httpx.HTTPStatusError(
+                    "busy",
+                    request=self.request,
+                    response=httpx.Response(
+                        self.status_code,
+                        request=self.request,
+                        text=self._content,
+                    ),
+                )
+
+        def json(self) -> dict[str, object]:
+            return {"choices": [{"message": {"content": "qwen fallback ok"}}]}
+
+    class FakeClient:
+        def __init__(self, timeout: float) -> None:
+            self.timeout = timeout
+
+        def __enter__(self) -> FakeClient:
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+        def post(self, url: str, headers: dict[str, str], json: dict[str, object]) -> FakeResponse:
+            calls.append({"url": url, "headers": headers, "payload": json})
+            if json["model"] == "deepseek-v4-flash":
+                return FakeResponse(503, "Service is too busy")
+            return FakeResponse(200, "ok")
+
+    monkeypatch.setattr("app.services.llm_service.httpx.Client", FakeClient)
+    service = LlmService(
+        Mock(),
+        settings=Settings(
+            llm_api_key="deepseek-key",
+            llm_api_key_file=None,
+            qwen_api_key="qwen-key",
+            qwen_api_key_file=None,
+        ),
+    )
+
+    answer = service._chat_completion("分析招商银行", model="deepseek-v4-flash")
+
+    assert answer == "qwen fallback ok"
+    assert [call["payload"]["model"] for call in calls] == ["deepseek-v4-flash", "qwen3.6-flash"]
+
+
+def test_threshold_stream_falls_back_to_local_formula_on_model_error() -> None:
+    """确认阈值推荐流式模型失败时仍返回本地公式结果。
+
+    创建日期：2026-05-08
+    author: sunshengxian
+    """
+
+    service = LlmService(
+        Mock(),
+        settings=Settings(llm_api_key="test-key", llm_api_key_file=None, llm_model="test-model"),
+    )
+
+    def broken_chunks() -> Iterator[str]:
+        request = httpx.Request("POST", "https://example.test/chat/completions")
+        raise httpx.HTTPStatusError(
+            "busy",
+            request=request,
+            response=httpx.Response(503, request=request, text="busy"),
+        )
+        yield ""
+
+    answer = "".join(
+        service._fallback_threshold_stream(
+            broken_chunks(),
+            {
+                "threshold_recommendation": {
+                    "name": "招商银行",
+                    "direction": "HA",
+                    "metric_premium_pct": "9.8",
+                    "premium_median_60": "8.6",
+                    "premium_p80_60": "11.6",
+                }
+            },
+            "threshold-test",
+        )
+    )
+
+    assert "建议将招商银行的 H/A 目标阈值设为 10.55%" in answer
 
 
 def test_service_intro_question_skips_classifier_and_returns_role_intro(monkeypatch) -> None:

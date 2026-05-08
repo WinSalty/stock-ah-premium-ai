@@ -38,7 +38,7 @@ class Settings(BaseSettings):
         default=Path("/Users/salty/codeProject/ai/doc/deepseek-apikey.txt"),
         alias="LLM_API_KEY_FILE",
     )
-    llm_model: str | None = Field(default="deepseek-v4-flash", alias="LLM_MODEL")
+    llm_model: str | None = Field(default="qwen3.6-flash", alias="LLM_MODEL")
     llm_daily_call_limit: int = Field(default=100, alias="LLM_DAILY_CALL_LIMIT")
     qwen_base_url: str = Field(
         default="https://dashscope.aliyuncs.com/compatible-mode/v1",
@@ -50,7 +50,7 @@ class Settings(BaseSettings):
         alias="QWEN_API_KEY_FILE",
     )
     qwen_question_router_model: str = Field(
-        default="deepseek-v4-flash",
+        default="qwen3.6-flash",
         alias="QWEN_QUESTION_ROUTER_MODEL",
     )
     qwen_question_classifier_model: str | None = Field(

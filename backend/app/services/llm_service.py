@@ -48,7 +48,7 @@ LLM_EXTERNAL_CALL_PHASES = (
     "threshold_answer",
     "threshold_answer_stream",
 )
-DEFAULT_CHAT_MODEL = "deepseek-v4-flash"
+DEFAULT_CHAT_MODEL = "qwen3.6-flash"
 ANSWER_MARKET_ROW_LIMIT = 60
 ANSWER_KNOWLEDGE_CHUNK_LIMIT = 5
 DEEPSEEK_PRO_CHAT_MODEL = "deepseek-v4-pro"
@@ -56,6 +56,7 @@ QWEN_CHAT_MODEL = "qwen3.6-flash"
 SUPPORTED_CHAT_MODELS = (DEFAULT_CHAT_MODEL, DEEPSEEK_PRO_CHAT_MODEL, QWEN_CHAT_MODEL)
 LLM_METRIC_TITLE_MAX_CHARS = 48
 LLM_METRIC_USER_NAME_MAX_CHARS = 64
+LLM_FALLBACK_HTTP_STATUS_CODES = {429, 500, 502, 503, 504}
 
 INVESTMENT_ADVISOR_SYSTEM_PROMPT = """你是专业、有独立观点、注重证据链的金融投资分析顾问。
 这是用户自己的本地投资评估项目，用户需要明确、可执行、可复核的真实建议。
@@ -1113,19 +1114,28 @@ class LlmService:
                 session_id=session_id,
             )
             return ChatAnswer(answer=answer, sql=None, rows=[])
-        answer = self._chat_completion(
-            self._threshold_recommendation_prompt(question, context),
-            system_prompt=THRESHOLD_RECOMMENDATION_SYSTEM_PROMPT,
-            model=model,
-            trace=LlmCallTrace(
-                question_id=question_id,
-                phase="threshold_answer",
-                user_id=user_id,
-                session_id=session_id,
-                conversation_title=self._metric_conversation_title(question_id),
-                user_name=self._metric_user_name(question_id),
-            ),
-        )
+        try:
+            answer = self._chat_completion(
+                self._threshold_recommendation_prompt(question, context),
+                system_prompt=THRESHOLD_RECOMMENDATION_SYSTEM_PROMPT,
+                model=model,
+                trace=LlmCallTrace(
+                    question_id=question_id,
+                    phase="threshold_answer",
+                    user_id=user_id,
+                    session_id=session_id,
+                    conversation_title=self._metric_conversation_title(question_id),
+                    user_name=self._metric_user_name(question_id),
+                ),
+            )
+        except httpx.HTTPError:
+            # 阈值推荐已经有本地确定性公式，外部模型繁忙时不能让设置提醒流程整体不可用。
+            logger.error(
+                "阈值推荐模型调用失败，返回本地确定性阈值 question_id=%s",
+                question_id,
+                exc_info=True,
+            )
+            answer = self._threshold_recommendation_fallback(context)
         self._log_total_elapsed(
             "threshold_done",
             question_id,
@@ -1163,22 +1173,23 @@ class LlmService:
                 session_id=session_id,
             )
             return None, [], iter([self._threshold_recommendation_fallback(context)])
+        chunks = self._chat_completion_stream(
+            self._threshold_recommendation_prompt(question, context),
+            system_prompt=THRESHOLD_RECOMMENDATION_SYSTEM_PROMPT,
+            model=model,
+            trace=LlmCallTrace(
+                question_id=question_id,
+                phase="threshold_answer_stream",
+                user_id=user_id,
+                session_id=session_id,
+                conversation_title=self._metric_conversation_title(question_id),
+                user_name=self._metric_user_name(question_id),
+            ),
+            total_started_at=started_at,
+            total_phase="threshold_stream_done",
+        )
         return None, [], self._clean_answer_stream(
-            self._chat_completion_stream(
-                self._threshold_recommendation_prompt(question, context),
-                system_prompt=THRESHOLD_RECOMMENDATION_SYSTEM_PROMPT,
-                model=model,
-                trace=LlmCallTrace(
-                    question_id=question_id,
-                    phase="threshold_answer_stream",
-                    user_id=user_id,
-                    session_id=session_id,
-                    conversation_title=self._metric_conversation_title(question_id),
-                    user_name=self._metric_user_name(question_id),
-                ),
-                total_started_at=started_at,
-                total_phase="threshold_stream_done",
-            )
+            self._fallback_threshold_stream(chunks, context, question_id)
         )
 
     def _threshold_recommendation_context(self, context: dict[str, Any]) -> dict[str, Any] | None:
@@ -1245,6 +1256,29 @@ class LlmService:
             "港股通通道、汇率和成交活跃度。\n"
             "- 若 60 日分位明显抬升且基本面未恶化，可上调阈值；若流动性或基本面走弱，应下调阈值。"
         )
+
+    def _fallback_threshold_stream(
+        self,
+        chunks: Iterator[str],
+        context: dict[str, Any],
+        question_id: str,
+    ) -> Iterator[str]:
+        """阈值推荐流式模型失败时降级输出本地确定性阈值。
+
+        创建日期：2026-05-08
+        author: sunshengxian
+        """
+
+        try:
+            yield from chunks
+        except httpx.HTTPError:
+            # 页面设置提醒依赖这段回答，外部模型繁忙时保留本地公式结果，避免用户无法继续保存阈值。
+            logger.error(
+                "阈值推荐流式模型失败，返回本地确定性阈值 question_id=%s",
+                question_id,
+                exc_info=True,
+            )
+            yield self._threshold_recommendation_fallback(context)
 
     def _calculate_threshold_recommendation(
         self,
@@ -1807,6 +1841,48 @@ class LlmService:
         endpoint = self._model_endpoint(model)
         if not endpoint.api_key:
             raise ValueError(f"{endpoint.provider} LLM 未配置 API Key")
+        try:
+            return self._chat_completion_with_endpoint(
+                endpoint,
+                prompt,
+                system_prompt,
+                temperature,
+                trace,
+            )
+        except httpx.HTTPError as exc:
+            fallback_endpoint = self._fallback_endpoint(endpoint, exc)
+            if fallback_endpoint is None:
+                raise
+            logger.error(
+                "%s API 临时不可用，自动切换到 %s question_id=%s phase=%s",
+                endpoint.provider,
+                fallback_endpoint.provider,
+                self._trace_values(trace)[0],
+                self._trace_values(trace)[1],
+                exc_info=True,
+            )
+            return self._chat_completion_with_endpoint(
+                fallback_endpoint,
+                prompt,
+                system_prompt,
+                temperature,
+                trace,
+            )
+
+    def _chat_completion_with_endpoint(
+        self,
+        endpoint: LlmEndpoint,
+        prompt: str,
+        system_prompt: str | None,
+        temperature: float,
+        trace: LlmCallTrace | None,
+    ) -> str:
+        """按指定端点发起非流式调用，供主模型与备用模型复用。
+
+        创建日期：2026-05-08
+        author: sunshengxian
+        """
+
         self._enforce_daily_llm_call_limit(endpoint, trace)
         url = f"{endpoint.base_url.rstrip('/')}/chat/completions"
         headers = {"Authorization": f"Bearer {endpoint.api_key}"}
@@ -1842,6 +1918,80 @@ class LlmService:
         endpoint = self._model_endpoint(model)
         if not endpoint.api_key:
             raise ValueError(f"{endpoint.provider} LLM 未配置 API Key")
+        return self._chat_completion_stream_with_fallback(
+            endpoint,
+            prompt,
+            system_prompt,
+            trace,
+            total_started_at,
+            row_count,
+            total_phase,
+        )
+
+    def _chat_completion_stream_with_fallback(
+        self,
+        endpoint: LlmEndpoint,
+        prompt: str,
+        system_prompt: str | None,
+        trace: LlmCallTrace | None,
+        total_started_at: float | None,
+        row_count: int,
+        total_phase: str,
+    ) -> Iterator[str]:
+        """执行流式调用，并在主模型繁忙时切换到备用 Qwen。
+
+        创建日期：2026-05-08
+        author: sunshengxian
+        """
+
+        try:
+            yield from self._chat_completion_stream_once(
+                endpoint,
+                prompt,
+                system_prompt,
+                trace,
+                total_started_at,
+                row_count,
+                total_phase,
+            )
+        except httpx.HTTPError as exc:
+            fallback_endpoint = self._fallback_endpoint(endpoint, exc)
+            if fallback_endpoint is None:
+                raise
+            logger.error(
+                "%s 流式 API 临时不可用，自动切换到 %s question_id=%s phase=%s",
+                endpoint.provider,
+                fallback_endpoint.provider,
+                self._trace_values(trace)[0],
+                self._trace_values(trace)[1],
+                exc_info=True,
+            )
+            yield from self._chat_completion_stream_once(
+                fallback_endpoint,
+                prompt,
+                system_prompt,
+                trace,
+                total_started_at,
+                row_count,
+                total_phase,
+            )
+
+    def _chat_completion_stream_once(
+        self,
+        endpoint: LlmEndpoint,
+        prompt: str,
+        system_prompt: str | None,
+        trace: LlmCallTrace | None,
+        total_started_at: float | None,
+        row_count: int,
+        total_phase: str,
+    ) -> Iterator[str]:
+        """按指定端点发起一次流式调用，不在本层重试。
+
+        创建日期：2026-05-08
+        author: sunshengxian
+        """
+
         self._enforce_daily_llm_call_limit(endpoint, trace)
         url = f"{endpoint.base_url.rstrip('/')}/chat/completions"
         headers = {"Authorization": f"Bearer {endpoint.api_key}"}
@@ -1945,6 +2095,39 @@ class LlmService:
             api_key=self.settings.resolve_llm_api_key(),
             model=normalized,
         )
+
+    def _fallback_endpoint(
+        self,
+        endpoint: LlmEndpoint,
+        exc: httpx.HTTPError,
+    ) -> LlmEndpoint | None:
+        """在主模型临时不可用时选择备用端点。
+
+        创建日期：2026-05-08
+        author: sunshengxian
+        """
+
+        if endpoint.provider != "DeepSeek":
+            return None
+        if not self._is_retryable_llm_error(exc):
+            return None
+        fallback = self._model_endpoint(QWEN_CHAT_MODEL)
+        if not fallback.api_key:
+            return None
+        return fallback
+
+    def _is_retryable_llm_error(self, exc: httpx.HTTPError) -> bool:
+        """判断外部模型错误是否适合透明切到备用模型。
+
+        创建日期：2026-05-08
+        author: sunshengxian
+        """
+
+        if isinstance(exc, (httpx.TimeoutException, httpx.NetworkError)):
+            return True
+        if isinstance(exc, httpx.HTTPStatusError):
+            return exc.response.status_code in LLM_FALLBACK_HTTP_STATUS_CODES
+        return False
 
     def _raise_for_status(self, response: httpx.Response, provider: str) -> None:
         try:
