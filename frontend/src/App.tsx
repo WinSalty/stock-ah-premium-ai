@@ -9,6 +9,7 @@ import {
   LayoutDashboard,
   LogOut,
   MessageCircleMore,
+  RadioTower,
   TableProperties,
   UserCircle,
   Users
@@ -21,13 +22,24 @@ import DataQueryPage from './pages/DataQueryPage';
 import AuthPage from './pages/AuthPage';
 import UserAdminPage from './pages/UserAdminPage';
 import PushplusAdminPage from './pages/PushplusAdminPage';
+import LimitUpPushPage from './pages/LimitUpPushPage';
 import ProfilePage from './pages/ProfilePage';
 import LlmMetricsPage from './pages/LlmMetricsPage';
 import { fetchCurrentUser } from './api/auth';
 import { clearAuthToken, getAuthToken } from './api/client';
 import type { AuthTokenResponse, UserInfo } from './types/domain';
 
-type PageKey = 'overview' | 'sync' | 'query' | 'premium' | 'chat' | 'llm_metrics' | 'users' | 'pushplus' | 'profile';
+type PageKey =
+  | 'overview'
+  | 'sync'
+  | 'query'
+  | 'premium'
+  | 'chat'
+  | 'llm_metrics'
+  | 'users'
+  | 'pushplus'
+  | 'limit_up_push'
+  | 'profile';
 
 const allMenuItems = [
   { key: 'overview', icon: <LayoutDashboard size={18} />, label: '总览' },
@@ -38,6 +50,7 @@ const allMenuItems = [
   { key: 'llm_metrics', icon: <Activity size={18} />, label: 'LLM 耗时' },
   { key: 'users', icon: <Users size={18} />, label: '用户管理' },
   { key: 'pushplus', icon: <MessageCircleMore size={18} />, label: 'PushPlus' },
+  { key: 'limit_up_push', icon: <RadioTower size={18} />, label: '打板推送' },
   { key: 'profile', icon: <UserCircle size={18} />, label: '个人信息' }
 ];
 
@@ -60,6 +73,7 @@ function App() {
     llm_metrics: <LlmMetricsPage />,
     users: user ? <UserAdminPage currentUser={user} onUserUpdated={setUser} /> : null,
     pushplus: <PushplusAdminPage />,
+    limit_up_push: <LimitUpPushPage />,
     profile: user ? <ProfilePage user={user} onUserUpdated={setUser} /> : null
   };
   const menuItems = useMemo(() => {

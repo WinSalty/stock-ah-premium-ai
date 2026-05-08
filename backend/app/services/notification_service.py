@@ -954,6 +954,23 @@ class NotificationService:
 
         return self._active_binding(user_id) is not None or self._is_default_admin_user(user_id)
 
+    def send_pushplus_message(
+        self,
+        user_id: int,
+        title: str,
+        content: str,
+        alert_event_id: int | None = None,
+    ) -> str:
+        """发送通用 PushPlus 消息并写入推送流水。
+
+        创建日期：2026-05-08
+        author: sunshengxian
+        """
+
+        # 打板报告等非阈值提醒场景复用同一条 PushPlus 发送链路，保证绑定解析、
+        # 默认管理员个人通道、失败落库和搜索流水的口径与既有提醒完全一致。
+        return self._send_pushplus_message(user_id, title, content, alert_event_id)
+
     def _send_pushplus_message(
         self,
         user_id: int,

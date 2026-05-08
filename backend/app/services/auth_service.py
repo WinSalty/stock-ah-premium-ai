@@ -32,6 +32,7 @@ ALL_MENU_PERMISSIONS: dict[str, str] = {
     "llm_metrics": "LLM 耗时",
     "users": "用户管理",
     "pushplus": "PushPlus",
+    "limit_up_push": "打板推送",
     "profile": "个人信息",
 }
 
@@ -45,6 +46,7 @@ DEFAULT_ROLE_PERMISSIONS: dict[str, list[str]] = {
         "llm_metrics",
         "users",
         "pushplus",
+        "limit_up_push",
         "profile",
     ],
     ROLE_USER: ["overview", "premium", "chat", "profile"],

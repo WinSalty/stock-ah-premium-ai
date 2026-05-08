@@ -12,6 +12,7 @@ PHASE_LABELS: dict[str, str] = {
     "threshold_answer": "阈值推荐回答",
     "threshold_answer_stream_first_chunk": "阈值推荐首包",
     "threshold_answer_stream": "阈值推荐流式回答",
+    "limit_up_analysis": "打板报告分析",
     "threshold_done": "阈值推荐总耗时",
     "threshold_stream_done": "阈值推荐流式总耗时",
     "stream_done": "流式总耗时",
@@ -42,6 +43,7 @@ PHASE_DESCRIPTIONS: dict[str, str] = {
     "threshold_answer_stream": (
         "AI 阈值推荐快路径的流式回答主体完成记录，不经过通用路由、补数和辅助视图查询。"
     ),
+    "limit_up_analysis": "打板报告生成阶段，使用 KPL 与涨停专题数据生成完整 HTML 推送报告。",
     "threshold_done": "AI 阈值推荐快路径非流式总耗时；来源 Internal 表示系统内部汇总。",
     "threshold_stream_done": "AI 阈值推荐快路径流式总耗时；来源 Internal 表示系统内部汇总。",
     "stream_done": "整轮流式问答总耗时汇总；来源 Internal 表示系统内部汇总，不是外部 LLM 调用。",

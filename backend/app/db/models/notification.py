@@ -15,6 +15,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
 )
+from sqlalchemy.dialects.mysql import LONGTEXT
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base, TimestampMixin
@@ -105,5 +106,91 @@ class PushplusMessageLog(TimestampMixin, Base):
     push_channel: Mapped[str] = mapped_column(String(32), nullable=False, default="PUSHPLUS")
     push_status: Mapped[str] = mapped_column(String(16), nullable=False, default="PENDING")
     push_message_id: Mapped[str | None] = mapped_column(String(128))
+    error_message: Mapped[str | None] = mapped_column(Text)
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime)
+
+
+class LimitUpAnalysisCache(TimestampMixin, Base):
+    """打板 LLM 分析报告缓存表。
+
+    创建日期：2026-05-08
+    author: sunshengxian
+    """
+
+    __tablename__ = "limit_up_analysis_cache"
+    __table_args__ = (
+        UniqueConstraint(
+            "trade_date",
+            "model",
+            "prompt_version",
+            "data_snapshot_hash",
+            name="uk_limit_up_analysis_snapshot",
+        ),
+        Index("idx_limit_up_analysis_trade_status", "trade_date", "status"),
+        Index("idx_limit_up_analysis_generated", "generated_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    trade_date: Mapped[date] = mapped_column(Date, nullable=False)
+    model: Mapped[str] = mapped_column(String(64), nullable=False)
+    prompt_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    data_snapshot_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="PENDING")
+    title: Mapped[str] = mapped_column(String(160), nullable=False)
+    content_html: Mapped[str | None] = mapped_column(Text().with_variant(LONGTEXT, "mysql"))
+    content_markdown: Mapped[str | None] = mapped_column(Text().with_variant(LONGTEXT, "mysql"))
+    context_json: Mapped[str | None] = mapped_column(Text().with_variant(LONGTEXT, "mysql"))
+    data_quality_json: Mapped[str | None] = mapped_column(Text().with_variant(LONGTEXT, "mysql"))
+    error_message: Mapped[str | None] = mapped_column(Text)
+    generated_at: Mapped[datetime | None] = mapped_column(DateTime)
+
+
+class LimitUpPushRecipient(TimestampMixin, Base):
+    """打板报告 PushPlus 接收人配置。
+
+    创建日期：2026-05-08
+    author: sunshengxian
+    """
+
+    __tablename__ = "limit_up_push_recipient"
+    __table_args__ = (
+        UniqueConstraint("user_id", name="uk_limit_up_push_recipient_user"),
+        Index("idx_limit_up_push_recipient_enabled", "enabled"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("app_user.id"), nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("app_user.id"))
+    updated_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("app_user.id"))
+
+
+class LimitUpPushDelivery(TimestampMixin, Base):
+    """打板报告业务推送计划与结果表。
+
+    创建日期：2026-05-08
+    author: sunshengxian
+    """
+
+    __tablename__ = "limit_up_push_delivery"
+    __table_args__ = (
+        UniqueConstraint(
+            "analysis_id",
+            "scheduled_kind",
+            "scheduled_at",
+            "user_id",
+            name="uk_limit_up_push_delivery_once",
+        ),
+        Index("idx_limit_up_push_delivery_status", "status", "scheduled_at"),
+        Index("idx_limit_up_push_delivery_user", "user_id", "scheduled_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    analysis_id: Mapped[int] = mapped_column(ForeignKey("limit_up_analysis_cache.id"), nullable=False)
+    user_id: Mapped[int] = mapped_column(ForeignKey("app_user.id"), nullable=False)
+    scheduled_kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    scheduled_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="PENDING")
+    pushplus_message_log_id: Mapped[int | None] = mapped_column(ForeignKey("pushplus_message_log.id"))
     error_message: Mapped[str | None] = mapped_column(Text)
     sent_at: Mapped[datetime | None] = mapped_column(DateTime)

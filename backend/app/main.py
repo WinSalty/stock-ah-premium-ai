@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes_auth import router as auth_router
 from app.api.routes_chat import router as chat_router
+from app.api.routes_limit_up_push import router as limit_up_push_router
 from app.api.routes_llm_metrics import router as llm_metrics_router
 from app.api.routes_market import router as market_router
 from app.api.routes_notifications import router as notifications_router
@@ -20,6 +21,7 @@ from app.core.config import Settings, get_settings
 from app.core.logging import configure_logging
 from app.db.session import SessionLocal
 from app.jobs.alert_jobs import register_alert_jobs
+from app.jobs.limit_up_push_jobs import register_limit_up_push_jobs
 from app.jobs.scheduler import create_scheduler
 from app.jobs.sync_jobs import register_incremental_sync_jobs
 from app.services.auth_service import AuthService
@@ -39,12 +41,18 @@ def build_lifespan(settings: Settings):
         scheduler = None
         with SessionLocal() as db:
             AuthService(db, settings).ensure_default_admin()
-        if settings.sync_scheduler_enabled or settings.alert_scheduler_enabled:
+        if (
+            settings.sync_scheduler_enabled
+            or settings.alert_scheduler_enabled
+            or settings.limit_up_push_scheduler_enabled
+        ):
             scheduler = create_scheduler(settings.sync_scheduler_timezone)
             if settings.sync_scheduler_enabled:
                 register_incremental_sync_jobs(scheduler)
             if settings.alert_scheduler_enabled:
                 register_alert_jobs(scheduler, settings)
+            if settings.limit_up_push_scheduler_enabled:
+                register_limit_up_push_jobs(scheduler, settings)
             scheduler.start()
             app.state.scheduler = scheduler
             logger.info("同步调度器已启动 timezone=%s", settings.sync_scheduler_timezone)
@@ -88,6 +96,7 @@ def create_app() -> FastAPI:
     app.include_router(query_router, prefix="/api", tags=["query"])
     app.include_router(chat_router, prefix="/api", tags=["chat"])
     app.include_router(llm_metrics_router, prefix="/api", tags=["llm-metrics"])
+    app.include_router(limit_up_push_router, prefix="/api", tags=["limit-up-push"])
     return app
 
 

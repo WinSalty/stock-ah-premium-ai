@@ -29,7 +29,14 @@ from app.db.models.market import (
     WatchlistStock,
     WaterstockFxRateDaily,
 )
-from app.db.models.notification import AlertEvent, PushplusBinding, PushplusMessageLog
+from app.db.models.notification import (
+    AlertEvent,
+    LimitUpAnalysisCache,
+    LimitUpPushDelivery,
+    LimitUpPushRecipient,
+    PushplusBinding,
+    PushplusMessageLog,
+)
 from app.db.models.sync import DataQualityIssue, SyncCheckpoint, SyncRun
 
 __all__ = [
@@ -62,6 +69,9 @@ __all__ = [
     "LlmChatSession",
     "LlmMarketDataFetchItem",
     "LlmMarketDataFetchRun",
+    "LimitUpAnalysisCache",
+    "LimitUpPushDelivery",
+    "LimitUpPushRecipient",
     "OfficialAHComparison",
     "PushplusBinding",
     "PushplusMessageLog",

@@ -564,6 +564,64 @@ export interface PushplusMessageLog {
   updated_at: string;
 }
 
+export interface LimitUpRecipientItem {
+  user_id: number;
+  username: string;
+  display_name: string | null;
+  enabled: boolean;
+  can_push: boolean;
+  binding_name: string | null;
+}
+
+export interface LimitUpRecipientUpdateRequest {
+  recipients: Array<{ user_id: number; enabled: boolean }>;
+}
+
+export interface LimitUpReportListItem {
+  id: number;
+  trade_date: string;
+  title: string;
+  status: string;
+  model: string;
+  prompt_version: string;
+  data_snapshot_hash: string;
+  generated_at: string | null;
+  created_at: string;
+  updated_at: string;
+  error_message: string | null;
+}
+
+export interface LimitUpReportDetail extends LimitUpReportListItem {
+  content_html: string | null;
+  content_markdown: string | null;
+  context: Record<string, unknown> | null;
+  data_quality: Array<Record<string, unknown>>;
+}
+
+export interface LimitUpDeliveryItem {
+  id: number;
+  analysis_id: number;
+  trade_date: string | null;
+  user_id: number;
+  username: string | null;
+  display_name: string | null;
+  scheduled_kind: string;
+  scheduled_at: string;
+  status: string;
+  pushplus_message_log_id: number | null;
+  error_message: string | null;
+  sent_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface LimitUpActionResponse {
+  ok: boolean;
+  message: string;
+  report_id: number | null;
+  delivery_count: number;
+}
+
 export interface AlertEvent {
   id: number;
   user_id: number;
