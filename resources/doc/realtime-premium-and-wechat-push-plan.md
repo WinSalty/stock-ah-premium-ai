@@ -193,7 +193,7 @@ GET /api/ah-premiums/realtime
 - 同一标的可保留多条快照，系统按 `quote_time desc, id desc` 读取最新的 `is_active=1` 记录。
 - `water-stock` 已新增本地实时喂数模块：通过独立 `stock-ah.datasource` 连接 `stock_ah_ai`，读取 `a_trade_calendar`、`hk_trade_calendar` 和 `watchlist_stock`，仅在 A/H 共同交易日且 `stock-ah.realtime.trade-time-ranges` 内，每秒抓取一次用户自选 AH 标的和 `HKD/CNY`，写入 `realtime_quote_snapshot`。交易时间默认按港股结束时间覆盖 `09:30-12:00`、`13:00-16:00`；调度使用非重入保护，上一轮未完成时跳过本轮。调 Baidu 接口前会把 `600036.SH`、`000333.SZ`、`03968.HK` 转为 water-stock 使用的纯数字编号，其中港股保留 5 位补零。
 - 本项目提醒扫描已改为读取 `realtime_quote_snapshot`：调度器默认 `ALERT_SCAN_SECONDS=1`、`ALERT_SCAN_HOURS=9-16`，每秒进入一次扫描；服务层再按市场交易日和交易时段过滤，A 股 `09:30-11:30`、`13:00-15:00`，港股 `09:30-12:00`、`13:00-16:00`，A/H 溢价阈值只在两地重叠时段判断。
-- 阈值提醒要求 A/H 实时报价可用，汇率允许 `REALTIME` 或 `STALE_FX` 口径；股价提醒要求对应 A/H 快照质量为 `REALTIME`。提醒事件仍按 `用户 + 自选股 + 条件 + 交易日` 去重，同一条件当天最多推送一次。
+- 阈值提醒要求 A 股、H 股和 `HKD/CNY` 汇率三类快照日期均等于本轮扫描日/东八区当天；任一快照日期错配时实时溢价返回 `STALE`，不计算指标、不写回 `official_ah_comparison`，也不进入阈值提醒后续推送。股价提醒要求对应 A/H 快照质量为 `REALTIME`。提醒事件仍按 `用户 + 自选股 + 条件 + 交易日` 去重，同一条件当天最多推送一次。
 
 ### 5.1 新增实时行情快照表
 
@@ -216,7 +216,7 @@ GET /api/ah-premiums/realtime
 
 当前不再新增独立实时溢价快照表。实时行情先进入 `realtime_quote_snapshot`，后端用 A 股、H 股和 HKD/CNY 最新有效快照计算 AH/H/A 口径，再写回主展示表 `official_ah_comparison`：
 
-- `trade_date` 使用 A/H 报价自身的 `quote_time` 推导，且只有 A/H 报价日期一致并等于东八区当天时才允许写回官方主表，避免历史快照被标记为实时。
+- `trade_date` 使用 A/H 报价自身的 `quote_time` 推导，且只有 A 股、H 股和 `HKD/CNY` 汇率快照日期均一致并等于东八区当天时才允许计算并写回官方主表，避免历史快照或历史汇率被标记为实时。
 - `a_close`、`hk_close` 写入实时最新价。
 - `ah_comparison`、`ah_premium`、`ha_comparison`、`ha_premium` 按官方 AH 比价表口径写入，其中 H/A 继续由两位小数的 `ah_comparison` 反推。
 - `is_realtime` 标记为 `1`，`data_source` 写为 `REALTIME_CALC`，`source_updated_at` 记录实时计算完成时间。

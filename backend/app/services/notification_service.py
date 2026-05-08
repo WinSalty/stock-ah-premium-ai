@@ -345,9 +345,11 @@ class NotificationService:
             self.db,
             local_scan_time.date(),
         )
+        # 提醒扫描按本轮扫描日校验 A/H/汇率快照日期，避免测试回放或补扫时误用机器当天。
         self.realtime_premium_service = RealtimePremiumService(
             self.db,
             market_data_service=self.realtime_market_data_service,
+            local_today=local_scan_time.date(),
         )
         for item in watchlist_items:
             if not item.push_enabled:

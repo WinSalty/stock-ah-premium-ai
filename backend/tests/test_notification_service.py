@@ -450,6 +450,80 @@ def test_threshold_alert_pushes_once_per_deviation_level() -> None:
     assert {log.alert_event_id for log in logs} == {event.id for event in total_events}
 
 
+def test_threshold_alert_skips_when_fx_quote_date_is_stale() -> None:
+    """确认历史汇率快照不会参与实时阈值提醒。
+
+    创建日期：2026-05-08
+    author: sunshengxian
+    """
+
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    target_day = date(2026, 5, 5)
+    fake_client = FakePushplusClient()
+    with Session(engine) as db:
+        user = add_user_with_binding(db)
+        add_joint_trade_day(db, target_day)
+        db.add(
+            WatchlistStock(
+                user_id=user.id,
+                a_ts_code="600036.SH",
+                hk_ts_code="03968.HK",
+                display_name="招商银行",
+                preferred_direction="HA",
+                target_premium_pct=Decimal("10"),
+                is_active=True,
+            )
+        )
+        # A/H 报价为本轮扫描日，但 HKD/CNY 汇率仍停留在历史日期时，
+        # 即使价格组合会超过阈值，也必须整条实时阈值链路停止。
+        db.add_all(
+            [
+                RealtimeQuoteSnapshot(
+                    market="A",
+                    symbol="600036.SH",
+                    last_price=Decimal("37.95"),
+                    currency="CNY",
+                    quote_time=datetime(2026, 5, 5, 14, 5, 34),
+                    source="TEST",
+                    quality="REALTIME",
+                ),
+                RealtimeQuoteSnapshot(
+                    market="HK",
+                    symbol="03968.HK",
+                    last_price=Decimal("47.22"),
+                    currency="HKD",
+                    quote_time=datetime(2026, 5, 5, 14, 5, 34),
+                    source="TEST",
+                    quality="REALTIME",
+                ),
+                RealtimeQuoteSnapshot(
+                    market="FX",
+                    symbol="HKD/CNY",
+                    last_price=Decimal("0.9115"),
+                    currency="CNY",
+                    quote_time=datetime(2024, 10, 14, 14, 5, 34),
+                    source="TEST",
+                    quality="REALTIME",
+                ),
+            ]
+        )
+        db.commit()
+
+        events = NotificationService(db, pushplus_client=fake_client).scan_alerts_for_day(
+            target_day,
+            user.id,
+            datetime(2026, 5, 5, 14, 5, 35, tzinfo=LOCAL_TEST_TZ),
+        )
+        total_events = list(db.scalars(select(AlertEvent)).all())
+        logs = list(db.scalars(select(PushplusMessageLog)).all())
+
+    assert events == []
+    assert total_events == []
+    assert logs == []
+    assert fake_client.sent == []
+
+
 def test_admin_can_list_pushplus_message_logs() -> None:
     """确认管理员可查看 PushPlus 推送流水。
 

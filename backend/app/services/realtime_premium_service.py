@@ -47,9 +47,11 @@ class RealtimePremiumService:
         self,
         db: Session,
         market_data_service: RealtimeMarketDataService | None = None,
+        local_today: date | None = None,
     ) -> None:
         self.db = db
         self.market_data_service = market_data_service or RealtimeMarketDataService.from_db(db)
+        self.local_today = local_today
 
     def list_realtime_premiums(
         self,
@@ -91,11 +93,16 @@ class RealtimePremiumService:
             a_ts_code,
             hk_ts_code,
         )
-        ah_ratio, ah_premium_pct, ha_ratio, ha_premium_pct = self._premium_values(
-            a_quote,
-            hk_quote,
-            fx_quote,
-        )
+        quality = self._quote_quality(a_quote, hk_quote, fx_quote)
+        # 实时溢价只接受 A 股、H 股和汇率三类当天快照，任一日期错配都不产出指标。
+        if self._all_quotes_from_local_today(a_quote, hk_quote, fx_quote):
+            ah_ratio, ah_premium_pct, ha_ratio, ha_premium_pct = self._premium_values(
+                a_quote,
+                hk_quote,
+                fx_quote,
+            )
+        else:
+            ah_ratio, ah_premium_pct, ha_ratio, ha_premium_pct = None, None, None, None
         direction = self._normalize_direction(watchlist.preferred_direction if watchlist else "HA")
         metric_premium = ah_premium_pct if direction == "AH" else ha_premium_pct
         target = watchlist.target_premium_pct if watchlist else None
@@ -104,7 +111,6 @@ class RealtimePremiumService:
             if target is not None and metric_premium is not None
             else None
         )
-        quality = self._quote_quality(a_quote, hk_quote, fx_quote)
         result = RealtimePremiumResponse(
             a_ts_code=a_ts_code,
             hk_ts_code=hk_ts_code,
@@ -251,6 +257,8 @@ class RealtimePremiumService:
             or fx_quote.last_price is None
         ):
             return PARTIAL_QUALITY
+        if not self._all_quotes_from_local_today(a_quote, hk_quote, fx_quote):
+            return STALE_QUALITY
         qualities = {
             (a_quote.quality or DEFAULT_QUOTE_QUALITY).upper(),
             (hk_quote.quality or DEFAULT_QUOTE_QUALITY).upper(),
@@ -267,7 +275,7 @@ class RealtimePremiumService:
         return REALTIME_QUALITY
 
     def _opportunity_status(self, distance: Decimal | None, quality: str) -> str:
-        if quality in {PARTIAL_QUALITY, UNAVAILABLE_QUALITY}:
+        if quality in {PARTIAL_QUALITY, UNAVAILABLE_QUALITY, STALE_QUALITY}:
             return "DATA_UNAVAILABLE"
         if quality == DELAYED_QUALITY:
             return "DELAYED_ONLY"
@@ -291,6 +299,33 @@ class RealtimePremiumService:
             source=quote.source,
             quality=quote.quality,
         )
+
+    def _all_quotes_from_local_today(self, *quotes: RealtimeQuote | None) -> bool:
+        """校验实时计算三要素均为本地当天数据。
+
+        创建日期：2026-05-08
+        author: sunshengxian
+        """
+
+        # A 股、H 股和 HKD/CNY 任一快照缺失或日期不是当天时，直接拒绝计算，
+        # 避免历史汇率/历史报价被误标 REALTIME 后继续触发阈值提醒或写回主表。
+        quote_dates = [self._quote_local_date(quote) for quote in quotes]
+        return len(quote_dates) == len(quotes) and all(
+            item == self._local_today() for item in quote_dates
+        )
+
+    def _quote_local_date(self, quote: RealtimeQuote | RealtimeQuoteItem | None) -> date | None:
+        """按东八区解析报价日期，用于实时计算的数据新鲜度校验。
+
+        创建日期：2026-05-08
+        author: sunshengxian
+        """
+
+        if quote is None or quote.quote_time is None:
+            return None
+        if quote.quote_time.tzinfo is None:
+            return quote.quote_time.date()
+        return quote.quote_time.astimezone(LOCAL_TZ).date()
 
     def _persist_realtime_result(self, result: RealtimePremiumResponse) -> None:
         """将可用实时计算结果写回官方 AH 比价表，供页面统一读取主口径。
@@ -373,18 +408,14 @@ class RealtimePremiumService:
         return valid_dates[0]
 
     def _local_today(self) -> date:
-        return datetime.now(LOCAL_TZ).date()
+        return self.local_today or datetime.now(LOCAL_TZ).date()
 
     def _is_ah_overlap_realtime_session(self) -> bool:
         current_time = datetime.now(LOCAL_TZ).time()
         return any(start <= current_time <= end for start, end in A_H_OVERLAP_REALTIME_SESSIONS)
 
     def _quote_data_date(self, quote: RealtimeQuoteItem | None) -> date | None:
-        if quote is None or quote.quote_time is None:
-            return None
-        if quote.quote_time.tzinfo is None:
-            return quote.quote_time.date()
-        return quote.quote_time.astimezone(LOCAL_TZ).date()
+        return self._quote_local_date(quote)
 
     def _watchlist_for_pair(
         self,
