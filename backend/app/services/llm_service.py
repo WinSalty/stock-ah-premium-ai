@@ -1008,7 +1008,12 @@ class LlmService:
             user_id,
             session_id,
         )
-        if route.should_query_data:
+        # 路由已经明确给出个股按需补数需求，并且编排器已产出市场上下文时，
+        # 直接以结构化补数上下文回答；不再额外生成通用 SQL，避免港股问题误查 A 股视图。
+        should_run_sql = route.should_query_data and not (
+            route.data_demands and market_data_context
+        )
+        if should_run_sql:
             try:
                 sql = self._default_sql_for_question(question, context) or self._generate_sql(
                     question,

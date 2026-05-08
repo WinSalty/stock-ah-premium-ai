@@ -27,7 +27,7 @@ from app.services.llm_service import (
     LlmService,
     QuestionRoute,
 )
-from app.services.market_data_orchestrator import MAX_MARKET_DATA_STOCKS
+from app.services.market_data_orchestrator import MAX_MARKET_DATA_STOCKS, MarketDataDemand
 
 
 def test_llm_service_rejects_unsafe_question_before_api_call() -> None:
@@ -403,6 +403,54 @@ def test_report_analysis_question_prefers_structured_stock_data() -> None:
     question = "寒武纪 688256 深度价值投资怎么看？"
 
     assert service._should_query_data(question, {}) is True
+
+
+def test_prepare_answer_skips_sql_when_market_data_context_exists(monkeypatch) -> None:
+    """确认个股按需补数成功后不会再额外生成通用 SQL。
+
+    创建日期：2026-05-08
+    author: sunshengxian
+    """
+
+    service = LlmService(
+        Mock(),
+        settings=Settings(llm_api_key="test-key", llm_api_key_file=None, llm_model="test-model"),
+    )
+    monkeypatch.setattr(
+        service,
+        "_ensure_market_data_context",
+        lambda *args, **kwargs: {
+            "scope": "HK_STOCK_SINGLE",
+            "financial_periods": [{"ts_code": "00700.HK", "end_date": "2025-12-31"}],
+        },
+    )
+
+    def fail_generate_sql(*args, **kwargs):
+        raise AssertionError("已有按需补数上下文时不应生成通用 SQL")
+
+    monkeypatch.setattr(service, "_generate_sql", fail_generate_sql)
+
+    sql, rows, prompt = service._prepare_answer(
+        "分析一下腾讯",
+        {},
+        QuestionRoute(
+            is_answerable=True,
+            should_query_data=True,
+            use_knowledge=False,
+            data_demands=(
+                MarketDataDemand("00700.HK", ("financial_statement",), market="HK"),
+            ),
+        ),
+        "test-model",
+        "trace-test",
+        None,
+        None,
+    )
+
+    payload = json.loads(prompt.split("\n", 1)[1])
+    assert sql is None
+    assert rows == []
+    assert payload["market_data_context"]["scope"] == "HK_STOCK_SINGLE"
 
 
 def test_llm_trace_id_is_unique_for_each_question_turn() -> None:
