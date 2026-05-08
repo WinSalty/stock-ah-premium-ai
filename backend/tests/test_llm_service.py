@@ -359,6 +359,8 @@ def test_answer_prompt_includes_market_data_context_and_report_instruction() -> 
     assert "不得据此判断没有财务数据" in prompt
     assert "第二块必须先给关键财务趋势表" in prompt
     assert "A 股和港股都要优先选取收入" in prompt
+    assert "15000 积分" not in prompt
+    assert "随查询减少的余额" not in prompt
 
 
 def test_data_only_answer_shows_24_financial_periods() -> None:

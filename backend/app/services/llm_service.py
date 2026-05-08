@@ -129,8 +129,7 @@ financial_statement、business_profile、dividend_forecast、shareholder_governa
 capital_flow_light 中选择；港股当前只允许 financial_statement 数据包，
 代码必须是 5 位港股 Tushare 代码，例如 02380.HK，不要输出港股行情、指数、
 全市场或任意 Tushare 接口名。
-Tushare 15000 积分在这里是接口权限门槛，不是按次扣费制；
-因此路由重点是控制接口范围、股票数量和时间窗口。
+路由重点是控制接口范围、股票数量和时间窗口。
 投资研究范围包括股票、基金、指数、行业、估值、财报、红利、仓位、风险、
 组合配置、A/H 溢价、港股通、宏观与投资策略相关问题；股票代码、公司投研、
 阈值建议和投资报告写作也属于范围。
@@ -1494,7 +1493,6 @@ class LlmService:
             "data_boundary": (
                 f"仅按 A 股/港股、白名单数据包和最多 {MAX_MARKET_DATA_STOCKS} "
                 "只股票补充有限区间数据；"
-                "Tushare 15000 积分是接口权限门槛，不代表随查询减少的余额；"
                 "A 股可补行情估值、财务、主营、股东治理和资金流；港股当前只补财务指标和三大报表，"
                 "材料缺口需要在结论中说明。"
             ),
@@ -2717,7 +2715,7 @@ class LlmService:
                 if isinstance(package, str) and package in allowed_packages
             )
             if market == "HK":
-                # 港股自动补数现阶段只开放 15000 积分权限内的财务包，
+                # 港股自动补数现阶段只开放已接入的财务包，
                 # 路由器即便只返回行情或资金流等未接入包，也统一降级为财务包，
                 # 避免后续默认补成 A 股估值包并造成审计口径混乱。
                 filtered_packages = ("financial_statement",)
