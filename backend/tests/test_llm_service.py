@@ -355,6 +355,8 @@ def test_answer_prompt_includes_market_data_context_and_report_instruction() -> 
     assert "主营业务构成" in prompt
     assert "资金流只用于解释短期交易情绪" in prompt
     assert "最近 24 期" in prompt
+    assert "market_data_context，请优先使用其中的补数上下文作为主证据" in prompt
+    assert "不得据此判断没有财务数据" in prompt
 
 
 def test_data_only_answer_shows_24_financial_periods() -> None:
