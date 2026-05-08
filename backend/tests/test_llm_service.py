@@ -133,6 +133,60 @@ def test_preamble_cleaner_removes_json_process_language() -> None:
     assert cleaned.startswith("## 结论")
 
 
+def test_threshold_recommendation_markdown_normalizer_breaks_stuck_headings() -> None:
+    """确认阈值推荐会把粘在正文后的二级标题拆成独立段落。
+
+    创建日期：2026-05-08
+    author: sunshengxian
+    """
+
+    service = LlmService(
+        Mock(),
+        settings=Settings(llm_api_key="test-key", llm_api_key_file=None, llm_model="test-model"),
+    )
+
+    cleaned = service._normalize_threshold_recommendation_markdown(
+        "## 最终答案\n\n"
+        "建议将 H/A 目标阈值设为 -44.35%。 ## 推荐理由\n"
+        "1. 历史分位锁定。 ## 执行条件\n"
+        "- 触发条件：价差回归。"
+    )
+
+    assert "。 ## 推荐理由" not in cleaned
+    assert "。 ## 执行条件" not in cleaned
+    assert "设为 -44.35%。\n\n## 推荐理由\n\n1. 历史分位锁定。" in cleaned
+    assert "历史分位锁定。\n\n## 执行条件\n\n- 触发条件：价差回归。" in cleaned
+
+
+def test_threshold_recommendation_prompt_requires_standalone_headings() -> None:
+    """确认阈值推荐提示词明确要求小节标题单独占行。
+
+    创建日期：2026-05-08
+    author: sunshengxian
+    """
+
+    service = LlmService(
+        Mock(),
+        settings=Settings(llm_api_key="test-key", llm_api_key_file=None, llm_model="test-model"),
+    )
+
+    prompt = service._threshold_recommendation_prompt(
+        "为招商银行推荐 H/A 目标阈值",
+        {
+            "threshold_recommendation": {
+                "name": "招商银行",
+                "direction": "HA",
+                "metric_premium_pct": "-46.81",
+                "premium_median_60": "-44.75",
+                "premium_p80_60": "-44.13",
+            }
+        },
+    )
+
+    assert "不要把二级标题接在正文同一行" in prompt
+    assert "三个标题都要单独占一行，标题前后空一行" in prompt
+
+
 def test_investment_advisor_prompt_allows_professional_opinions() -> None:
     """确认投资顾问提示词允许输出明确研究判断。
 
@@ -143,11 +197,12 @@ def test_investment_advisor_prompt_allows_professional_opinions() -> None:
     assert "评级口径" in INVESTMENT_ADVISOR_SYSTEM_PROMPT
     assert "配置倾向" in INVESTMENT_ADVISOR_SYSTEM_PROMPT
     assert "阈值和触发条件" in INVESTMENT_ADVISOR_SYSTEM_PROMPT
+    assert "不要把整条结论或多句长文本全部加粗" in INVESTMENT_ADVISOR_SYSTEM_PROMPT
     assert "不要输出“不构成投资建议”" in INVESTMENT_ADVISOR_SYSTEM_PROMPT
 
 
-def test_clear_investment_question_uses_unified_qwen_router(monkeypatch) -> None:
-    """确认投资问题默认通过统一 Qwen 路由返回前置信息。
+def test_clear_investment_question_uses_default_deepseek_router(monkeypatch) -> None:
+    """确认投资问题默认跟随 DeepSeek 问答模型做前置路由。
 
     创建日期：2026-05-05
     author: sunshengxian
@@ -158,9 +213,7 @@ def test_clear_investment_question_uses_unified_qwen_router(monkeypatch) -> None
         settings=Settings(
             llm_api_key="test-key",
             llm_api_key_file=None,
-            qwen_api_key="qwen-key",
-            qwen_api_key_file=None,
-            llm_model="test-model",
+            llm_model="deepseek-v4-flash",
         ),
     )
 
@@ -189,7 +242,7 @@ def test_clear_investment_question_uses_unified_qwen_router(monkeypatch) -> None
     assert route.should_query_data is False
     assert route.use_knowledge is True
     assert route.knowledge_category_keys == ("ah_premium",)
-    assert captured["model"] == "qwen3.6-flash"
+    assert captured["model"] == "deepseek-v4-flash"
     assert captured["phase"] == "question_router"
     assert "knowledge_catalog" in str(captured["prompt"])
 
@@ -726,8 +779,8 @@ def test_deepseek_model_alias_uses_supported_api_name(monkeypatch) -> None:
     assert "reasoning_effort" not in captured_payload
 
 
-def test_default_chat_model_is_qwen_flash() -> None:
-    """确认默认问答模型使用 Qwen Flash。
+def test_default_chat_model_is_deepseek_flash() -> None:
+    """确认默认问答模型仍使用 DeepSeek Flash。
 
     创建日期：2026-05-04
     author: sunshengxian
@@ -738,15 +791,13 @@ def test_default_chat_model_is_qwen_flash() -> None:
         settings=Settings(
             llm_api_key="test-key",
             llm_api_key_file=None,
-            qwen_api_key="qwen-key",
-            qwen_api_key_file=None,
         ),
     )
 
     endpoint = service._model_endpoint()
 
-    assert endpoint.provider == "Qwen"
-    assert endpoint.model == "qwen3.6-flash"
+    assert endpoint.provider == "DeepSeek"
+    assert endpoint.model == "deepseek-v4-flash"
 
 
 def test_qwen_chat_model_uses_qwen_endpoint(monkeypatch) -> None:
@@ -800,8 +851,8 @@ def test_qwen_chat_model_uses_qwen_endpoint(monkeypatch) -> None:
     assert captured["payload"]["model"] == "qwen3.6-flash"
 
 
-def test_uncertain_question_scope_uses_qwen_router(monkeypatch) -> None:
-    """确认本地规则不确定时使用 Qwen 路由。
+def test_uncertain_question_scope_uses_default_deepseek_router(monkeypatch) -> None:
+    """确认本地规则不确定时默认使用 DeepSeek 路由。
 
     创建日期：2026-05-04
     author: sunshengxian
@@ -856,7 +907,91 @@ def test_uncertain_question_scope_uses_qwen_router(monkeypatch) -> None:
     )
 
     assert service._is_investment_related_question("这件事是否值得继续推进")
-    assert captured_payload["model"] == "qwen3.6-flash"
+    assert captured_payload["model"] == "deepseek-v4-flash"
+
+
+def test_question_router_falls_back_to_qwen_when_deepseek_busy(monkeypatch) -> None:
+    """确认问题路由遇到 DeepSeek 临时繁忙时透明切换到 Qwen。
+
+    创建日期：2026-05-08
+    author: sunshengxian
+    """
+
+    calls: list[dict[str, object]] = []
+
+    class FakeResponse:
+        def __init__(self, status_code: int, content: str) -> None:
+            self.status_code = status_code
+            self._content = content
+            self.request = httpx.Request("POST", "https://example.test/chat/completions")
+
+        @property
+        def text(self) -> str:
+            return self._content
+
+        def raise_for_status(self) -> None:
+            if self.status_code >= 400:
+                raise httpx.HTTPStatusError(
+                    "busy",
+                    request=self.request,
+                    response=httpx.Response(
+                        self.status_code,
+                        request=self.request,
+                        text=self._content,
+                    ),
+                )
+
+        def json(self) -> dict[str, object]:
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "content": (
+                                '{"is_answerable":true,"needs_sql":false,'
+                                '"use_knowledge":true,"knowledge_categories":["ah_premium"],'
+                                '"reason":"备用模型路由成功"}'
+                            )
+                        }
+                    }
+                ]
+            }
+
+    class FakeClient:
+        def __init__(self, timeout: float) -> None:
+            self.timeout = timeout
+
+        def __enter__(self) -> FakeClient:
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+        def post(self, url: str, headers: dict[str, str], json: dict[str, object]) -> FakeResponse:
+            calls.append({"url": url, "headers": headers, "payload": json})
+            if json["model"] == "deepseek-v4-flash":
+                return FakeResponse(503, "Service is too busy")
+            return FakeResponse(200, "ok")
+
+    monkeypatch.setattr("app.services.llm_service.httpx.Client", FakeClient)
+    service = LlmService(
+        Mock(),
+        settings=Settings(
+            llm_api_key="deepseek-key",
+            llm_api_key_file=None,
+            qwen_api_key="qwen-key",
+            qwen_api_key_file=None,
+        ),
+    )
+
+    route = service._route_question("招商银行现在估值怎么看")
+
+    assert route.is_answerable is True
+    assert route.use_knowledge is True
+    assert route.knowledge_category_keys == ("ah_premium",)
+    assert [call["payload"]["model"] for call in calls] == [
+        "deepseek-v4-flash",
+        "qwen3.6-flash",
+    ]
 
 
 def test_deepseek_busy_falls_back_to_qwen(monkeypatch) -> None:

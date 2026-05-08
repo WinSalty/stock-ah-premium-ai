@@ -38,7 +38,7 @@ class Settings(BaseSettings):
         default=Path("/Users/salty/codeProject/ai/doc/deepseek-apikey.txt"),
         alias="LLM_API_KEY_FILE",
     )
-    llm_model: str | None = Field(default="qwen3.6-flash", alias="LLM_MODEL")
+    llm_model: str | None = Field(default="deepseek-v4-flash", alias="LLM_MODEL")
     llm_daily_call_limit: int = Field(default=100, alias="LLM_DAILY_CALL_LIMIT")
     qwen_base_url: str = Field(
         default="https://dashscope.aliyuncs.com/compatible-mode/v1",
@@ -49,8 +49,8 @@ class Settings(BaseSettings):
         default=Path("/Users/salty/codeProject/ai/doc/qwen-apikey.txt"),
         alias="QWEN_API_KEY_FILE",
     )
-    qwen_question_router_model: str = Field(
-        default="qwen3.6-flash",
+    qwen_question_router_model: str | None = Field(
+        default=None,
         alias="QWEN_QUESTION_ROUTER_MODEL",
     )
     qwen_question_classifier_model: str | None = Field(
@@ -155,16 +155,20 @@ class Settings(BaseSettings):
             return self.qwen_api_key.strip()
         return None
 
-    def resolve_question_router_model(self) -> str:
-        """读取问答前置路由模型，兼容旧 Qwen 分类器环境变量名。
+    def resolve_question_router_model(self) -> str | None:
+        """读取问答前置路由模型，未单独配置时跟随默认问答模型。
 
         创建日期：2026-05-05
         author: sunshengxian
         """
 
+        # 历史版本把路由器固定在 Qwen；保留旧环境变量兼容，
+        # 但默认跟随主问答模型，DeepSeek 临时不可用时由调用层统一切到备用 Qwen。
         if self.qwen_question_classifier_model:
             return self.qwen_question_classifier_model.strip()
-        return self.qwen_question_router_model.strip()
+        if self.qwen_question_router_model:
+            return self.qwen_question_router_model.strip()
+        return self.llm_model.strip() if self.llm_model else None
 
     def resolve_pushplus_token(self) -> str | None:
         """按本机文件优先、环境变量兜底的顺序读取 PushPlus 用户 Token。
