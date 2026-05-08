@@ -318,6 +318,37 @@ def test_test_push_wraps_content_as_html() -> None:
     assert logs[0].push_message_id == "msg-1"
 
 
+def test_test_push_message_uses_east8_display_time() -> None:
+    """确认测试推送正文中的发送时间按东八区展示。
+
+    创建日期：2026-05-08
+    author: sunshengxian
+    """
+
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    fake_client = FakePushplusClient()
+    with Session(engine) as db:
+        user = add_user_with_binding(db)
+        before_local = datetime.now(LOCAL_TEST_TZ).replace(tzinfo=None)
+        NotificationService(db, pushplus_client=fake_client).send_test_push(
+            user.id,
+            "时间测试",
+            "推送记录内容",
+        )
+        after_local = datetime.now(LOCAL_TEST_TZ).replace(tzinfo=None)
+
+    assert len(fake_client.sent) == 1
+    html_content = fake_client.sent[0][2]
+    local_texts = {
+        before_local.strftime("%Y-%m-%d %H:%M:%S"),
+        after_local.strftime("%Y-%m-%d %H:%M:%S"),
+    }
+    # PushPlus 正文会在微信中直接展示，不能依赖前端再做 UTC 到东八区转换；
+    # 测试允许执行过程跨秒，只要命中发送前后任一东八区秒级时间即可。
+    assert any(local_text in html_content for local_text in local_texts)
+
+
 def test_admin_test_push_uses_personal_message_without_binding() -> None:
     """确认 admin 测试推送无需好友绑定，使用一对一消息。
 

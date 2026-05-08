@@ -776,6 +776,12 @@ class NotificationService:
         )
 
     def _test_message(self, title: str, content: str) -> str:
+        """构造面向用户的 PushPlus 测试消息正文。
+
+        创建日期：2026-05-05
+        author: sunshengxian
+        """
+
         return self._html_message(
             title=title,
             badge="测试推送",
@@ -783,7 +789,9 @@ class NotificationService:
             summary=content or "PushPlus 好友消息推送已连通。",
             details=[
                 ("消息类型", "PushPlus HTML 测试消息"),
-                ("发送时间", self._now_naive().strftime("%Y-%m-%d %H:%M:%S")),
+                # PushPlus 消息正文直接给用户阅读，不经过前端 UTC->东八区格式化；
+                # 因此这里必须使用东八区当前时间，避免微信里看到的发送时间少 8 小时。
+                ("发送时间", self._now_local().strftime("%Y-%m-%d %H:%M:%S")),
                 ("结果说明", "收到本消息表示当前账号 PushPlus 好友消息链路已连通。"),
             ],
         )

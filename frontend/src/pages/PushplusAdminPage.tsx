@@ -249,7 +249,10 @@ function PushplusAdminPage() {
               title: '推送时间',
               dataIndex: 'sent_at',
               width: 180,
-              render: (_, record) => formatEast8DateTime(record.sent_at || record.created_at, { naiveAsEast8: true })
+              render: (_, record) => {
+                // 推送流水时间由后端按 UTC-naive 入库，沿用全站通用格式化规则统一转成东八区展示。
+                return formatEast8DateTime(record.sent_at || record.created_at);
+              }
             },
             {
               title: '系统用户',
