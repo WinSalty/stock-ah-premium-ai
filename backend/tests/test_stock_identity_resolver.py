@@ -113,6 +113,32 @@ def test_resolver_maps_ah_hk_name_to_a_code() -> None:
     assert result.identity.ts_code == "600036.SH"
 
 
+def test_resolver_returns_ah_pair_for_hk_connect_question() -> None:
+    """确认港股通/AH 问法会同时召回 A 股和 H 股候选。
+
+    创建日期：2026-05-08
+    author: sunshengxian
+    """
+
+    db = _session()
+    db.add(AStockBasic(ts_code="600036.SH", symbol="600036", name="招商银行", list_status="L"))
+    db.add(HKStockBasic(ts_code="03968.HK", name="招商银行", list_status="L"))
+    db.add(
+        AHStockPair(
+            a_ts_code="600036.SH",
+            hk_ts_code="03968.HK",
+            a_name="招商银行",
+            hk_name="招商银行",
+            is_active=True,
+        )
+    )
+    db.commit()
+
+    candidates = StockIdentityResolver(db).resolve_candidates("招商银行港股通和 A/H 价差怎么看")
+
+    assert {candidate.ts_code for candidate in candidates} == {"600036.SH", "03968.HK"}
+
+
 def test_resolver_resolves_explicit_hk_code() -> None:
     """确认显式港股代码可以回查港股基础表并触发港股补数候选。
 

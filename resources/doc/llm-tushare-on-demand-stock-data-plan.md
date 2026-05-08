@@ -150,6 +150,7 @@ class MarketDataDemand:
 后端二次校验规则：
 
 - 股票代码必须命中本地 `a_stock_basic` 或 `hk_stock_basic`；名称歧义时先从本地股票名称表召回候选，再让 LLM 在候选内按用户语义选择具体 `ts_code`。
+- A/H 双上市且出现“港股通、AH、A/H、H 股、两地、溢价、折价、择边”等跨市场词时，应基于 `ah_stock_pair` 同时召回 A 股和 H 股候选；例如“招商银行港股通怎么看”应形成 `600036.SH + 03968.HK` 的混合上下文，而不是只分析 A 股或只分析 H 股。
 - `data_demands` 最多 5 只股票；超过 5 只时只接受前 5 只或提示缩小范围。
 - `data_packages` 必须在白名单内。
 - 港股 `data_packages` 必须收敛为 `financial_statement`；即便路由模型误报港股行情、资金流或股东治理，后端也会统一降级到港股财务包。
@@ -274,6 +275,7 @@ class DataPackageFetcher(Protocol):
 - `v_hk_stock_research_context_latest`：港股最新综合财务摘要。
 - `v_hk_financial_period_summary`：港股最近 24 期财务指标摘要。
 - `v_hk_financial_statement_item_summary`：港股三大报表项目明细摘要。
+- A/H 混合问题额外读取 `v_latest_official_ah_premium`，补充港股通可操作性、AH/H/A 溢价、连接通道和最新官方交易日，帮助 LLM 判断“能不能通过港股通买 H 股、当前价差是否支持择边”。
 
 所有视图必须进入 SQL Guard 白名单，但 LLM 回答中不得暴露视图名、SQL、Tushare 接口名和内部数据处理细节。
 

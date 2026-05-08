@@ -221,3 +221,42 @@ def test_orchestrator_uses_hk_financial_cache(monkeypatch) -> None:
 
     assert result.cache_hit is True
     assert fetcher.calls == []
+
+
+def test_orchestrator_aggregates_ah_cross_market_context(monkeypatch) -> None:
+    """确认 A/H 混合上下文会追加港股通和官方价差信息。
+
+    创建日期：2026-05-08
+    author: sunshengxian
+    """
+
+    db = _session()
+    db.add(AStockBasic(ts_code="600036.SH", symbol="600036", name="招商银行", list_status="L"))
+    db.add(HKStockBasic(ts_code="03968.HK", name="招商银行", list_status="L"))
+    db.commit()
+    service = MarketDataOrchestrator(db, fetcher=RecordingFetcher())  # type: ignore[arg-type]
+    monkeypatch.setattr(service, "_build_context", lambda ts_code, packages: {"ts_code": ts_code})
+    monkeypatch.setattr(
+        service,
+        "_build_ah_cross_market_context",
+        lambda stocks: [
+            {
+                "a_ts_code": "600036.SH",
+                "hk_ts_code": "03968.HK",
+                "is_hk_connect": 1,
+                "ha_premium_pct": "-8.5",
+            }
+        ],
+    )
+
+    result = service.ensure_for_question(
+        "招商银行港股通和 A/H 价差怎么看",
+        {},
+        (
+            MarketDataDemand("600036.SH", ("financial_statement",), market="A"),
+            MarketDataDemand("03968.HK", ("financial_statement",), market="HK"),
+        ),
+    )
+
+    assert result.context["scope"] == "CROSS_MARKET_MULTI"
+    assert result.context["ah_cross_market"][0]["is_hk_connect"] == 1

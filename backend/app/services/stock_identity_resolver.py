@@ -13,6 +13,24 @@ HK_TS_CODE_PATTERN = re.compile(r"\b(?P<symbol>\d{5})\.HK\b", re.IGNORECASE)
 HK_FIVE_DIGIT_PATTERN = re.compile(r"(?<!\d)(?P<symbol>\d{5})(?!\d)")
 SIX_DIGIT_PATTERN = re.compile(r"(?<!\d)(?P<symbol>\d{6})(?!\d)")
 DEFAULT_CANDIDATE_LIMIT = 12
+AH_CROSS_MARKET_KEYWORDS = frozenset(
+    {
+        "AH",
+        "A/H",
+        "H/A",
+        "A股H股",
+        "港股通",
+        "沪港通",
+        "深港通",
+        "H股",
+        "港股",
+        "两地",
+        "双上市",
+        "溢价",
+        "折价",
+        "择边",
+    }
+)
 GENERIC_NAME_FRAGMENTS = frozenset(
     {
         "股份",
@@ -146,7 +164,9 @@ class StockIdentityResolver:
             if stock is not None:
                 hk_stocks.append(stock)
         stocks.extend(self._name_matched_stocks(question))
-        stocks.extend(self._resolve_ah_pair_name(question))
+        ah_pair_stocks, ah_pair_hk_stocks = self._resolve_ah_pair_name(question)
+        stocks.extend(ah_pair_stocks)
+        hk_stocks.extend(ah_pair_hk_stocks)
         hk_stocks.extend(self._hk_name_matched_stocks(question))
         deduped_a = {stock.ts_code: stock for stock in stocks}
         deduped_hk = {stock.ts_code: stock for stock in hk_stocks}
@@ -251,7 +271,7 @@ class StockIdentityResolver:
         # 先做股票简称的包含匹配，只有唯一命中才触发补数；“平安”“银行”等模糊词会进入歧义分支。
         matched = self._name_matched_stocks(question)
         if not matched:
-            matched = self._resolve_ah_pair_name(question)
+            matched, _hk_matched = self._resolve_ah_pair_name(question)
         result = self._result_from_stocks(matched, "名称匹配到多只股票，已停止自动补数")
         if result.resolved or result.ambiguous_candidates:
             return result
@@ -305,9 +325,9 @@ class StockIdentityResolver:
                     return True
         return False
 
-    def _resolve_ah_pair_name(self, question: str) -> list[AStockBasic]:
+    def _resolve_ah_pair_name(self, question: str) -> tuple[list[AStockBasic], list[HKStockBasic]]:
         # AH 场景下用户可能说港股简称；A/H 专项问题仍优先映射回 A 股配对，
-        # 非 AH 明确港股问题会在后续港股基础表中继续解析。
+        # 明确港股通、溢价、择边等跨市场问题时，同时召回 H 股，避免只看单边。
         pairs = list(
             self.db.scalars(
                 select(AHStockPair).where(
@@ -316,16 +336,47 @@ class StockIdentityResolver:
                 )
             ).all()
         )
+        wants_cross_market = self._wants_ah_cross_market(question)
         a_codes = {
             pair.a_ts_code
             for pair in pairs
             if (pair.a_name and pair.a_name in question)
             or (pair.hk_name and pair.hk_name in question)
         }
+        hk_codes = {
+            pair.hk_ts_code
+            for pair in pairs
+            if wants_cross_market
+            and (
+                (pair.a_name and pair.a_name in question)
+                or (pair.hk_name and pair.hk_name in question)
+            )
+        }
         if not a_codes:
-            return []
-        return list(
+            return [], []
+        a_stocks = list(
             self.db.scalars(select(AStockBasic).where(AStockBasic.ts_code.in_(a_codes))).all()
+        )
+        hk_stocks = (
+            list(
+                self.db.scalars(select(HKStockBasic).where(HKStockBasic.ts_code.in_(hk_codes))).all()
+            )
+            if hk_codes
+            else []
+        )
+        return a_stocks, hk_stocks
+
+    def _wants_ah_cross_market(self, question: str) -> bool:
+        """识别是否需要同时查看 A 股、H 股和港股通价差信息。
+
+        创建日期：2026-05-08
+        author: sunshengxian
+        """
+
+        normalized = question.upper().replace(" ", "")
+        return any(
+            keyword.upper().replace(" ", "") in normalized
+            for keyword in AH_CROSS_MARKET_KEYWORDS
         )
 
     def _hk_name_matched_stocks(self, question: str) -> list[HKStockBasic]:

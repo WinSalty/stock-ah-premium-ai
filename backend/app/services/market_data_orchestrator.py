@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import func, select, text
+from sqlalchemy import bindparam, func, select, text
 from sqlalchemy.orm import Session
 
 from app.db.models.market import (
@@ -484,6 +484,9 @@ class MarketDataOrchestrator:
             "scope": self._market_scope(tuple(item["stock"] for item in items)),
             "stocks": [item["stock"] for item in items],
             "items": items,
+            "ah_cross_market": self._build_ah_cross_market_context(
+                tuple(item["stock"] for item in items)
+            ),
             "limit_policy": (
                 f"单轮最多补充 {MAX_MARKET_DATA_STOCKS} 只股票，"
                 "逐只保留完整报告上下文。"
@@ -492,6 +495,36 @@ class MarketDataOrchestrator:
 
     def _query_view(self, sql: str, ts_code: str) -> list[dict[str, Any]]:
         rows = self.db.execute(text(sql), {"ts_code": ts_code}).fetchall()
+        return [dict(row._mapping) for row in rows]
+
+    def _build_ah_cross_market_context(
+        self,
+        stocks: tuple[StockIdentity, ...],
+    ) -> list[dict[str, Any]]:
+        """为 A/H 混合问题补充官方价差和港股通通道摘要。
+
+        创建日期：2026-05-08
+        author: sunshengxian
+        """
+
+        a_codes = [stock.ts_code for stock in stocks if not stock.ts_code.endswith(".HK")]
+        hk_codes = [stock.ts_code for stock in stocks if stock.ts_code.endswith(".HK")]
+        if not a_codes or not hk_codes:
+            return []
+        # 只读视图已经按最新官方 AH 比价口径整合港股通标识；这里仅按本轮股票集合过滤，
+        # 给 LLM 提供“能否走港股通、AH/H/A 价差是多少”的跨市场事实材料。
+        statement = (
+            text(
+                "select * from v_latest_official_ah_premium "
+                "where a_ts_code in :a_codes and hk_ts_code in :hk_codes"
+            )
+            .bindparams(bindparam("a_codes", expanding=True))
+            .bindparams(bindparam("hk_codes", expanding=True))
+        )
+        rows = self.db.execute(
+            statement,
+            {"a_codes": tuple(a_codes), "hk_codes": tuple(hk_codes)},
+        ).fetchall()
         return [dict(row._mapping) for row in rows]
 
     def _start_run(
