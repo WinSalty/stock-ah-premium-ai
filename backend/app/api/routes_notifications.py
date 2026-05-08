@@ -30,7 +30,7 @@ from app.services.notification_service import NotificationError, NotificationSer
 
 router = APIRouter()
 DbSession = Annotated[Session, Depends(get_db)]
-AdminUser = Annotated[AppUser, Depends(require_permission("users"))]
+PushplusAdminUser = Annotated[AppUser, Depends(require_permission("pushplus"))]
 logger = logging.getLogger(__name__)
 PUSHPLUS_CALLBACK_SUCCESS = {"code": 200, "msg": "success"}
 PUSHPLUS_CALLBACK_INVALID_PAYLOAD = {"code": 600, "msg": "invalid callback payload"}
@@ -77,7 +77,7 @@ def create_pushplus_qrcode(
 @router.get("/notifications/pushplus/friends", response_model=list[PushplusFriendResponse])
 def list_pushplus_friends(
     db: DbSession,
-    admin_user: AdminUser,
+    admin_user: PushplusAdminUser,
 ) -> list[PushplusFriendResponse]:
     """管理员查询 PushPlus 好友列表。
 
@@ -95,7 +95,7 @@ def list_pushplus_friends(
 def bind_pushplus_friend(
     payload: PushplusBindRequest,
     db: DbSession,
-    admin_user: AdminUser,
+    admin_user: PushplusAdminUser,
 ) -> PushplusBindingResponse:
     """管理员手动绑定自己的 PushPlus 好友。
 
@@ -116,7 +116,7 @@ def bind_pushplus_friend(
 def admin_bind_pushplus_friend(
     payload: AdminPushplusBindRequest,
     db: DbSession,
-    admin_user: AdminUser,
+    admin_user: PushplusAdminUser,
 ) -> PushplusBindingResponse:
     """管理员手动绑定系统用户与 PushPlus 好友。
 
@@ -213,7 +213,7 @@ def _pushplus_callback_nick_name(friend_info: dict[str, object]) -> str | None:
 )
 def list_pushplus_bindings(
     db: DbSession,
-    admin_user: AdminUser,
+    admin_user: PushplusAdminUser,
 ) -> list[AdminPushplusBindingResponse]:
     """管理员查询 PushPlus 用户绑定列表。
 
@@ -230,8 +230,11 @@ def list_pushplus_bindings(
 )
 def list_pushplus_message_logs(
     db: DbSession,
-    admin_user: AdminUser,
+    admin_user: PushplusAdminUser,
     limit: int = Query(default=100, ge=1, le=500),
+    keyword: str | None = Query(default=None, max_length=128),
+    status: str | None = Query(default=None, max_length=16),
+    user_id: int | None = Query(default=None, ge=1),
 ) -> list[PushplusMessageLogResponse]:
     """管理员查询 PushPlus 推送流水。
 
@@ -239,7 +242,12 @@ def list_pushplus_message_logs(
     author: sunshengxian
     """
 
-    return NotificationService(db).list_pushplus_message_logs(limit)
+    return NotificationService(db).list_pushplus_message_logs(
+        limit=limit,
+        keyword=keyword,
+        status=status,
+        user_id=user_id,
+    )
 
 
 @router.delete("/notifications/pushplus/binding")

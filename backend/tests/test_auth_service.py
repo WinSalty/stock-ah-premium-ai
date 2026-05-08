@@ -9,7 +9,7 @@ from app.core.config import Settings
 from app.db.base import Base
 from app.db.models.auth import AppUser
 from app.schemas.auth import OverviewChartSettings, ProfileUpdateRequest, UserUpdateRequest
-from app.services.auth_service import ROLE_USER, AuthService
+from app.services.auth_service import ROLE_ADMIN, ROLE_USER, AuthService
 
 
 def test_user_permissions_are_stored_per_user() -> None:
@@ -38,6 +38,27 @@ def test_user_permissions_are_stored_per_user() -> None:
 
         assert service.user_response(updated_user).display_name == "Alice"
         assert service.user_response(updated_user).permissions == ["chat", "profile"]
+
+
+def test_admin_default_permissions_include_pushplus_menu() -> None:
+    """确认管理员默认拥有独立 PushPlus 菜单权限。
+
+    创建日期：2026-05-08
+    author: sunshengxian
+    """
+
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    with Session(engine) as db:
+        admin = AppUser(username="admin", password_hash="hash", role=ROLE_ADMIN, is_active=True)
+        db.add(admin)
+        db.commit()
+        db.refresh(admin)
+
+        response = AuthService(db).user_response(admin)
+
+    assert "users" in response.permissions
+    assert "pushplus" in response.permissions
 
 
 def test_profile_update_only_changes_basic_fields() -> None:

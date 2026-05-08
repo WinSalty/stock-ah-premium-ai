@@ -1,6 +1,6 @@
 # 开发进度记录
 
-更新日期：2026-05-07
+更新日期：2026-05-08
 
 ## 当前状态
 
@@ -88,6 +88,7 @@
   - 默认管理员账号无法添加自己为 PushPlus 好友时，测试消息、阈值提醒和股价提醒会特殊走 PushPlus 一对一消息，继续使用原 PushPlus 用户 token；普通用户仍走好友消息和绑定校验。
   - 自选股保存提醒配置时会校验当前用户必须已有 PushPlus 绑定，未绑定时前端弹出二维码引导，后端同步拒绝未绑定提醒保存。
   - 新增 `pushplus_message_log` 推送流水表和管理员查询接口；测试推送、阈值提醒、股价提醒都会记录实际推送时间、系统用户、PushPlus 接收对象、标题、内容、状态、消息流水号和错误信息，用户管理页可直接查看。
+  - PushPlus 管理已从用户管理拆分为独立菜单，新增 `pushplus` 菜单权限并通过 `20260508_0030` 迁移给既有管理员补齐默认权限；PushPlus 推送记录支持按关键词、状态和系统用户搜索；阈值提醒 HTML 明细新增同次实时计算使用的 A 股价格、H 股价格和 `HKD/CNY` 汇率。
 - LLM 问答：
   - OpenAI-compatible Chat API 封装支持 DeepSeek 和阿里 Qwen，问答页面可在 `deepseek-v4-flash`、`deepseek-v4-pro` 与 `qwen3.6-flash` 间选择，默认使用 `deepseek-v4-flash`；兼容历史配置 `deepseek-v4-pro[1m]` 到 DeepSeek API 支持的模型名，当前不额外传 `reasoning_effort`。
   - DeepSeek API Key 优先读取 `/Users/salty/codeProject/ai/doc/deepseek-apikey.txt`，`LLM_API_KEY` 仅作兜底；Qwen API Key 优先读取 `/Users/salty/codeProject/ai/doc/qwen-apikey.txt`，`QWEN_API_KEY` 仅作兜底，不把密钥暴露给前端。
@@ -218,6 +219,7 @@
 - 拆分个人绑定、提醒弹窗绑定、用户管理页 PushPlus 管理，并新增消息推送开关后，`alembic upgrade head` 已应用 `20260505_0014`，`ruff check app tests` 通过，`pytest` 44 个单元测试通过，`npm run build` 通过。
 - 新增总览随机锦囊、自选卡片股价/阈值展示和用户级趋势图指标配置后，`python3 -m compileall app tests`、`ruff check app tests`、`pytest`（56 个单元测试）、`npm run build`、`npm audit --omit=dev` 和 `./scripts/check.sh` 均通过。
 - 增强启动、停止和重启脚本后，`bash -n scripts/*.sh` 通过；已分别用 `BACKEND_PORT=18000`、`FRONTEND_PORT=15173` 验证启动诊断、整项目重启和停止诊断，并确认后端 `/api/health` 返回正常。
+- 拆分 PushPlus 独立菜单、推送记录搜索和阈值提醒价格/汇率明细后，`alembic upgrade head` 已应用 `20260508_0030`，`pytest tests/test_auth_service.py tests/test_notification_service.py` 36 个单元测试通过，`ruff check` 目标文件通过，`npm run build` 通过。
 - 新增 LLM 项目级日调用限流，默认 `LLM_DAILY_CALL_LIMIT=100`，按 `llm_call_metric` 中外部模型主调用 phase 统计，不计首包、SQL 执行和总耗时等辅助指标。
 - 新增实时行情抽象接口首版落地，创建 `realtime_quote_snapshot` 表、数据库行情 provider、实时 AH/H/A 溢价计算服务和 `GET /api/ah-premiums/realtime` 读取接口；`alembic upgrade head` 已应用 `20260505_0016`，`./scripts/check.sh` 通过。
 - `water-stock` 已在 `master` 最新代码上补充 stock-ah 实时喂数模块：独立连接 `stock_ah_ai`，按 A/H 共同交易日、港股收盘口径交易时段和用户自选股每秒写入 `realtime_quote_snapshot`，并用非重入调度避免上一轮未完成时并发抓取；接口请求前将 stock-ah 的 Tushare 风格代码转换为 water-stock/Baidu 使用的纯数字代码。

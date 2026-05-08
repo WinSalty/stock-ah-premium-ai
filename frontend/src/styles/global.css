@@ -731,6 +731,19 @@ body {
   min-width: 220px;
 }
 
+.pushplus-message-search-form {
+  gap: 8px;
+  margin: 4px 0 16px;
+}
+
+.pushplus-search-select {
+  min-width: 180px;
+}
+
+.pushplus-limit-select {
+  min-width: 130px;
+}
+
 .pushplus-message-table .ant-table-cell {
   vertical-align: top;
 }
@@ -1759,6 +1772,15 @@ pre.llm-payload-viewer,
   }
 
   .pushplus-manual-bind-select {
+    width: 100%;
+  }
+
+  .pushplus-message-search-form {
+    display: grid;
+  }
+
+  .pushplus-search-select,
+  .pushplus-limit-select {
     width: 100%;
   }
 

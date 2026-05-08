@@ -8,7 +8,7 @@ from decimal import Decimal
 from html import escape
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import desc, select
+from sqlalchemy import desc, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -381,18 +381,47 @@ class NotificationService:
             ).all()
         )
 
-    def list_pushplus_message_logs(self, limit: int = 100) -> list[PushplusMessageLogResponse]:
+    def list_pushplus_message_logs(
+        self,
+        limit: int = 100,
+        keyword: str | None = None,
+        status: str | None = None,
+        user_id: int | None = None,
+    ) -> list[PushplusMessageLogResponse]:
         """管理员查询 PushPlus 推送流水。
 
         创建日期：2026-05-06
         author: sunshengxian
         """
 
+        # 推送记录搜索只覆盖运维排查需要的标题、正文、接收人和用户展示字段；
+        # 响应模型仍不返回好友 token，避免搜索接口扩大敏感字段暴露面。
+        statement = select(PushplusMessageLog, AppUser).join(
+            AppUser,
+            AppUser.id == PushplusMessageLog.user_id,
+        )
+        normalized_keyword = self._normalize_optional_text(keyword)
+        if normalized_keyword:
+            like_keyword = f"%{normalized_keyword}%"
+            statement = statement.where(
+                or_(
+                    PushplusMessageLog.message_title.like(like_keyword),
+                    PushplusMessageLog.message_content.like(like_keyword),
+                    PushplusMessageLog.recipient_name.like(like_keyword),
+                    PushplusMessageLog.push_message_id.like(like_keyword),
+                    AppUser.username.like(like_keyword),
+                    AppUser.display_name.like(like_keyword),
+                )
+            )
+        normalized_status = self._normalize_optional_text(status)
+        if normalized_status:
+            statement = statement.where(
+                PushplusMessageLog.push_status == normalized_status.upper()
+            )
+        if user_id is not None:
+            statement = statement.where(PushplusMessageLog.user_id == user_id)
         rows = self.db.execute(
-            select(PushplusMessageLog, AppUser)
-            .join(AppUser, AppUser.id == PushplusMessageLog.user_id)
-            .order_by(desc(PushplusMessageLog.id))
-            .limit(limit)
+            statement.order_by(desc(PushplusMessageLog.id)).limit(limit)
         ).all()
         return [
             PushplusMessageLogResponse(
@@ -451,7 +480,7 @@ class NotificationService:
         if threshold_count >= DAILY_EVENT_TYPE_LIMIT:
             return None
         title = f"{self._stock_label(item)} {direction} 阈值触发"
-        content = self._threshold_message(item, trading_day, direction, metric)
+        content = self._threshold_message(item, trading_day, direction, metric, realtime)
         dedupe_key = (
             f"{EVENT_THRESHOLD_REACHED}:{item.user_id}:{item.id}:{direction}:"
             f"{item.target_premium_pct}:level-{alert_level}:{trading_day.isoformat()}"
@@ -672,11 +701,22 @@ class NotificationService:
         trading_day: date,
         direction: str,
         metric: Decimal,
+        realtime: object,
     ) -> str:
         target = item.target_premium_pct or Decimal("0")
         distance = metric - target
         current_text = self._format_decimal(metric)
         target_text = self._format_decimal(target)
+        a_price = getattr(realtime, "a_last_price", None)
+        hk_price = getattr(realtime, "hk_last_price", None)
+        fx_rate = getattr(realtime, "hkd_cny_rate", None)
+        # 阈值推送中的价格和汇率来自同一次实时溢价计算，保证用户收到的
+        # A/H 股价、HKD/CNY 汇率与触发溢价口径一致。
+        quote_details = [
+            ("A 股价格", f"{self._format_decimal(a_price)} 人民币" if a_price is not None else "-"),
+            ("H 股价格", f"{self._format_decimal(hk_price)} 港币" if hk_price is not None else "-"),
+            ("HKD/CNY 汇率", self._format_decimal(fx_rate) if fx_rate is not None else "-"),
+        ]
         return self._html_message(
             title="AH 溢价阈值触发",
             badge="阈值提醒",
@@ -694,6 +734,7 @@ class NotificationService:
                 ("当前溢价", f"{current_text}%"),
                 ("目标阈值", f"{target_text}%"),
                 ("超过阈值", f"{self._format_decimal(distance)}%"),
+                *quote_details,
                 ("交易日", trading_day.isoformat()),
             ],
         )

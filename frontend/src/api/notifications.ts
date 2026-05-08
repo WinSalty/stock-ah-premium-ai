@@ -12,6 +12,13 @@ import type {
   TestPushResponse
 } from '../types/domain';
 
+export interface PushplusMessageFilters {
+  keyword?: string;
+  status?: string;
+  user_id?: number;
+  limit?: number;
+}
+
 export function fetchPushplusBinding() {
   return requestJson<PushplusBinding>('/api/notifications/pushplus/binding');
 }
@@ -31,8 +38,22 @@ export function fetchAdminPushplusBindings() {
   return requestJson<PushplusBinding[]>('/api/notifications/admin/pushplus/bindings');
 }
 
-export function fetchAdminPushplusMessages() {
-  return requestJson<PushplusMessageLog[]>('/api/notifications/admin/pushplus/messages');
+export function fetchAdminPushplusMessages(filters: PushplusMessageFilters = {}) {
+  const params = new URLSearchParams();
+  if (filters.keyword) {
+    params.set('keyword', filters.keyword);
+  }
+  if (filters.status) {
+    params.set('status', filters.status);
+  }
+  if (filters.user_id) {
+    params.set('user_id', String(filters.user_id));
+  }
+  if (filters.limit) {
+    params.set('limit', String(filters.limit));
+  }
+  const query = params.toString();
+  return requestJson<PushplusMessageLog[]>(`/api/notifications/admin/pushplus/messages${query ? `?${query}` : ''}`);
 }
 
 export function adminBindPushplusFriend(payload: AdminPushplusBindRequest) {

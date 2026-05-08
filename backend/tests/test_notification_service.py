@@ -444,6 +444,12 @@ def test_threshold_alert_pushes_once_per_deviation_level() -> None:
     assert "<table" in fake_client.sent[0][2]
     assert "当前溢价" in fake_client.sent[0][2]
     assert "目标阈值" in fake_client.sent[0][2]
+    assert "A 股价格" in fake_client.sent[0][2]
+    assert "98 人民币" in fake_client.sent[0][2]
+    assert "H 股价格" in fake_client.sent[0][2]
+    assert "10 港币" in fake_client.sent[0][2]
+    assert "HKD/CNY 汇率" in fake_client.sent[0][2]
+    assert "7" in fake_client.sent[0][2]
     with Session(engine) as db:
         logs = list(db.scalars(select(PushplusMessageLog)).all())
     assert len(logs) == 2
@@ -546,6 +552,48 @@ def test_admin_can_list_pushplus_message_logs() -> None:
     assert logs[0].recipient_name == "测试好友"
     assert logs[0].message_title == "记录测试"
     assert logs[0].push_status == "SENT"
+
+
+def test_admin_can_search_pushplus_message_logs() -> None:
+    """确认 PushPlus 推送流水支持关键词、状态和用户过滤。
+
+    创建日期：2026-05-08
+    author: sunshengxian
+    """
+
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    fake_client = FakePushplusClient()
+    with Session(engine) as db:
+        user = add_user_with_binding(db)
+        other_user = AppUser(username="other", password_hash="hash", role="USER", is_active=True)
+        db.add(other_user)
+        db.commit()
+        db.refresh(other_user)
+        service = NotificationService(db, pushplus_client=fake_client)
+        service.send_test_push(user.id, "记录测试", "推送记录内容")
+        db.add(
+            PushplusMessageLog(
+                user_id=other_user.id,
+                recipient_type="PERSONAL",
+                recipient_name="other",
+                message_title="其他消息",
+                message_content="不匹配内容",
+                push_channel="PUSHPLUS",
+                push_status="FAILED",
+            )
+        )
+        db.commit()
+
+        logs = service.list_pushplus_message_logs(
+            keyword="记录内容",
+            status="sent",
+            user_id=user.id,
+        )
+
+    assert len(logs) == 1
+    assert logs[0].username == "notify"
+    assert logs[0].message_title == "记录测试"
 
 
 def test_threshold_alert_limits_daily_event_type_to_five_per_user() -> None:

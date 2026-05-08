@@ -8,6 +8,7 @@ import {
   DatabaseZap,
   LayoutDashboard,
   LogOut,
+  MessageCircleMore,
   TableProperties,
   UserCircle,
   Users
@@ -19,13 +20,14 @@ import ChatPage from './pages/ChatPage';
 import DataQueryPage from './pages/DataQueryPage';
 import AuthPage from './pages/AuthPage';
 import UserAdminPage from './pages/UserAdminPage';
+import PushplusAdminPage from './pages/PushplusAdminPage';
 import ProfilePage from './pages/ProfilePage';
 import LlmMetricsPage from './pages/LlmMetricsPage';
 import { fetchCurrentUser } from './api/auth';
 import { clearAuthToken, getAuthToken } from './api/client';
 import type { AuthTokenResponse, UserInfo } from './types/domain';
 
-type PageKey = 'overview' | 'sync' | 'query' | 'premium' | 'chat' | 'llm_metrics' | 'users' | 'profile';
+type PageKey = 'overview' | 'sync' | 'query' | 'premium' | 'chat' | 'llm_metrics' | 'users' | 'pushplus' | 'profile';
 
 const allMenuItems = [
   { key: 'overview', icon: <LayoutDashboard size={18} />, label: '总览' },
@@ -35,6 +37,7 @@ const allMenuItems = [
   { key: 'chat', icon: <Bot size={18} />, label: '问答' },
   { key: 'llm_metrics', icon: <Activity size={18} />, label: 'LLM 耗时' },
   { key: 'users', icon: <Users size={18} />, label: '用户管理' },
+  { key: 'pushplus', icon: <MessageCircleMore size={18} />, label: 'PushPlus' },
   { key: 'profile', icon: <UserCircle size={18} />, label: '个人信息' }
 ];
 
@@ -56,6 +59,7 @@ function App() {
     chat: <ChatPage />,
     llm_metrics: <LlmMetricsPage />,
     users: user ? <UserAdminPage currentUser={user} onUserUpdated={setUser} /> : null,
+    pushplus: <PushplusAdminPage />,
     profile: user ? <ProfilePage user={user} onUserUpdated={setUser} /> : null
   };
   const menuItems = useMemo(() => {
