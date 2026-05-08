@@ -1424,7 +1424,10 @@ class LlmService:
             "financial_context_contract": (
                 "若 market_data_context.context.financial_periods 存在，"
                 "最多包含最近 24 期财务摘要；"
-                "回答必须先概括完整覆盖期趋势，再点评最近两年，不得只读取前几行。"
+                "回答必须先概括完整覆盖期趋势，再点评最近两年，不得只读取前几行；"
+                "若存在 3 期及以上财务摘要，第二个二级标题必须先输出关键财务趋势表，"
+                "A 股和港股都要优先选取收入、归母或净利润、扣非或利润质量指标、"
+                "经营现金流、ROE、负债率或估值等可用列，缺失列可省略但不得省略表格。"
             ),
             "knowledge_categories": knowledge.categories,
             "reference_materials": knowledge.chunks,
@@ -1444,7 +1447,8 @@ class LlmService:
             "请直接给出结论、投资逻辑、配置建议、执行条件、反证条件和跟踪项。"
             f"{stock_report_instruction}"
             "第一块 `## 一、核心结论` 必须使用项目符号列表，不要使用表格。"
-            "如需表格，只能从第二块开始使用，并确保表格前后空行、表头、分隔行和列数完全合法。"
+            "若市场数据上下文中存在 3 期及以上财务摘要，第二块必须先给关键财务趋势表；"
+            "其他表格只能从第二块开始使用，并确保表格前后空行、表头、分隔行和列数完全合法。"
             "不要输出模板化免责句或泛泛风险警告。\n"
             f"{json.dumps(payload, ensure_ascii=False, default=str)}"
         )
