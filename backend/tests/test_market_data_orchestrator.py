@@ -137,6 +137,45 @@ def test_orchestrator_limits_multi_stock_demands_to_five(monkeypatch) -> None:
     assert len(fetcher.calls) == 5
 
 
+def test_orchestrator_corrects_wrong_routed_code_by_local_name(monkeypatch) -> None:
+    """确认路由模型给错股票代码时，本地唯一名称命中优先生效。
+
+    创建日期：2026-05-08
+    author: sunshengxian
+    """
+
+    db = _session()
+    db.add_all(
+        [
+            AStockBasic(ts_code="600188.SH", symbol="600188", name="兖矿能源", list_status="L"),
+            AStockBasic(ts_code="601225.SH", symbol="601225", name="陕西煤业", list_status="L"),
+        ]
+    )
+    db.commit()
+    fetcher = RecordingFetcher()
+    service = MarketDataOrchestrator(db, fetcher=fetcher)  # type: ignore[arg-type]
+    monkeypatch.setattr(service, "_build_context", lambda ts_code, packages: {"ts_code": ts_code})
+
+    result = service.ensure_for_question(
+        "分析一下陕西煤业",
+        {},
+        (
+            MarketDataDemand(
+                "600188.SH",
+                ("quote_valuation", "financial_statement"),
+                market="A",
+            ),
+        ),
+    )
+
+    assert result.stock is not None
+    assert result.stock.ts_code == "601225.SH"
+    assert fetcher.calls == [
+        ("601225.SH", "quote_valuation"),
+        ("601225.SH", "financial_statement"),
+    ]
+
+
 def test_orchestrator_report_question_requests_enhanced_research_packages() -> None:
     """确认个股报告问题会自动带上主营、治理和资金流数据包。
 

@@ -216,7 +216,11 @@ class MarketDataOrchestrator:
         data_demands: tuple[MarketDataDemand, ...],
     ) -> tuple[MarketDataDemand, ...]:
         # 路由模型可以提出多股比较需求；后端最多接受 5 只股票，并统一走本地基础表验真。
-        routed_demands = tuple(demand for demand in data_demands if demand.ts_code)
+        routed_demands = self._correct_routed_demands_by_local_name(
+            question,
+            context,
+            tuple(demand for demand in data_demands if demand.ts_code),
+        )
         if routed_demands:
             return routed_demands[:MAX_MARKET_DATA_STOCKS]
         if not self._looks_like_stock_research(question, context):
@@ -229,6 +233,39 @@ class MarketDataOrchestrator:
                 ts_code=stock_result.identity.ts_code,
                 packages=self._packages_for_question(question),
                 market=self._market_from_ts_code(stock_result.identity.ts_code),
+            ),
+        )
+
+    def _correct_routed_demands_by_local_name(
+        self,
+        question: str,
+        context: dict[str, Any],
+        routed_demands: tuple[MarketDataDemand, ...],
+    ) -> tuple[MarketDataDemand, ...]:
+        """用本地名称解析校正路由模型给错的股票代码。
+
+        创建日期：2026-05-08
+        author: sunshengxian
+        """
+
+        if not routed_demands:
+            return routed_demands
+        # LLM 前置路由可能把公司名和同业/AH 标的混淆；如果用户文本能被本地基础表
+        # 解析成唯一股票，且与路由代码冲突，以本地名称解析为准，避免混入两家公司数据。
+        stock_result = self.resolver.resolve(question, context)
+        if not stock_result.resolved or stock_result.identity is None:
+            return routed_demands
+        local_code = stock_result.identity.ts_code
+        routed_codes = {demand.ts_code.upper() for demand in routed_demands}
+        if local_code in routed_codes:
+            return routed_demands
+        first_demand = routed_demands[0]
+        return (
+            MarketDataDemand(
+                ts_code=local_code,
+                packages=first_demand.packages or self._packages_for_question(question),
+                market=self._market_from_ts_code(local_code),
+                intent=first_demand.intent,
             ),
         )
 
