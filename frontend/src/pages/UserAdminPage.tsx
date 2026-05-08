@@ -20,6 +20,7 @@ const menuPermissionOptions = [
   { label: 'LLM 耗时', value: 'llm_metrics' },
   { label: '用户管理', value: 'users' },
   { label: 'PushPlus', value: 'pushplus' },
+  { label: '打板推送', value: 'limit_up_push' },
   { label: '个人信息', value: 'profile' }
 ];
 

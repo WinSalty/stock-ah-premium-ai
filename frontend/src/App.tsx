@@ -73,7 +73,7 @@ function App() {
     llm_metrics: <LlmMetricsPage />,
     users: user ? <UserAdminPage currentUser={user} onUserUpdated={setUser} /> : null,
     pushplus: <PushplusAdminPage />,
-    limit_up_push: <LimitUpPushPage />,
+    limit_up_push: user ? <LimitUpPushPage currentUser={user} /> : null,
     profile: user ? <ProfilePage user={user} onUserUpdated={setUser} /> : null
   };
   const menuItems = useMemo(() => {

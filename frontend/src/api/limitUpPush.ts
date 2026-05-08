@@ -2,6 +2,7 @@ import { requestJson } from './client';
 import type {
   LimitUpActionResponse,
   LimitUpDeliveryItem,
+  LimitUpPushRequest,
   LimitUpRecipientItem,
   LimitUpRecipientUpdateRequest,
   LimitUpReportDetail,
@@ -52,9 +53,10 @@ export function generateLatestLimitUpReport() {
   });
 }
 
-export function pushLimitUpReport(reportId: number) {
+export function pushLimitUpReport(reportId: number, payload: LimitUpPushRequest = { send_all: true, user_ids: [] }) {
   return requestJson<LimitUpActionResponse>(`/api/limit-up-push/reports/${reportId}/push`, {
-    method: 'POST'
+    method: 'POST',
+    body: JSON.stringify(payload)
   });
 }
 

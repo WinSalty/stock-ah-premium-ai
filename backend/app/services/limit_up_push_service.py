@@ -293,7 +293,13 @@ class LimitUpPushService:
         self.db.refresh(analysis)
         return analysis
 
-    def push_report(self, analysis_id: int, scheduled_kind: str, scheduled_at: datetime) -> int:
+    def push_report(
+        self,
+        analysis_id: int,
+        scheduled_kind: str,
+        scheduled_at: datetime,
+        target_user_ids: list[int] | None = None,
+    ) -> int:
         """向所有启用接收人推送指定报告。
 
         创建日期：2026-05-08
@@ -303,7 +309,9 @@ class LimitUpPushService:
         analysis = self.db.get(LimitUpAnalysisCache, analysis_id)
         if analysis is None or analysis.status != ANALYSIS_STATUS_READY or not analysis.content_html:
             raise LimitUpPushError("报告不存在或尚未生成完成")
-        recipients = self._enabled_recipients()
+        recipients = self._enabled_recipients(target_user_ids)
+        if target_user_ids is not None and not recipients:
+            raise LimitUpPushError("请选择已配置且启用的接收人")
         pushed = 0
         for recipient in recipients:
             delivery = self._get_or_create_delivery(
@@ -454,6 +462,7 @@ class LimitUpPushService:
             else:
                 config.enabled = enabled
                 config.updated_by_user_id = operator.id
+            self._sync_recipient_menu_permission(user, enabled)
         self.db.commit()
         return self.list_recipients()
 
@@ -1038,12 +1047,58 @@ class LimitUpPushService:
             .limit(1)
         )
 
-    def _enabled_recipients(self) -> list[LimitUpPushRecipient]:
-        return list(
-            self.db.scalars(
-                select(LimitUpPushRecipient).where(LimitUpPushRecipient.enabled.is_(True)).order_by(LimitUpPushRecipient.id)
-            ).all()
-        )
+    def _enabled_recipients(self, target_user_ids: list[int] | None = None) -> list[LimitUpPushRecipient]:
+        statement = select(LimitUpPushRecipient).where(LimitUpPushRecipient.enabled.is_(True))
+        if target_user_ids is not None:
+            unique_ids = sorted({user_id for user_id in target_user_ids if user_id > 0})
+            if not unique_ids:
+                return []
+            statement = statement.where(LimitUpPushRecipient.user_id.in_(unique_ids))
+        # 手动指定接收人也必须先由管理员配置并启用，不能绕过接收人白名单；
+        # 定时任务传 None 时仍然推送给全部启用接收人。
+        return list(self.db.scalars(statement.order_by(LimitUpPushRecipient.id)).all())
+
+    def _sync_recipient_menu_permission(self, user: AppUser, enabled: bool) -> None:
+        """同步接收人的打板推送菜单权限。
+
+        创建日期：2026-05-08
+        author: sunshengxian
+        """
+
+        from app.services.auth_service import ROLE_ADMIN
+
+        permissions = self._load_user_menu_permissions(user)
+        if enabled and "limit_up_push" not in permissions:
+            permissions.append("limit_up_push")
+        elif not enabled and user.role != ROLE_ADMIN:
+            # 接收人停用后撤销普通用户菜单入口；管理员保留管理权限，避免误操作导致管理页消失。
+            permissions = [item for item in permissions if item != "limit_up_push"]
+        user.menu_permissions_json = self._dump_ordered_menu_permissions(permissions)
+
+    def _load_user_menu_permissions(self, user: AppUser) -> list[str]:
+        """读取用户当前菜单权限并过滤未知值。
+
+        创建日期：2026-05-08
+        author: sunshengxian
+        """
+
+        from app.services.auth_service import AuthService
+
+        # 复用 AuthService 的白名单和菜单顺序，确保自动授权不会引入未知菜单；
+        # 用户尚无自定义权限时按角色默认值起步，再叠加或撤销打板推送入口。
+        return AuthService(self.db, self.settings).get_user_permissions(user)
+
+    def _dump_ordered_menu_permissions(self, permissions: list[str]) -> str:
+        """按系统菜单顺序序列化权限。
+
+        创建日期：2026-05-08
+        author: sunshengxian
+        """
+
+        from app.services.auth_service import AuthService
+
+        ordered = AuthService(self.db, self.settings).sanitize_permissions(permissions)
+        return self._json_dumps(ordered)
 
     def _get_or_create_delivery(
         self,

@@ -42,6 +42,17 @@ class LimitUpRecipientUpdateRequest(BaseModel):
     recipients: list[LimitUpRecipientUpdateItem] = Field(default_factory=list)
 
 
+class LimitUpPushRequest(BaseModel):
+    """打板报告手动推送请求。
+
+    创建日期：2026-05-08
+    author: sunshengxian
+    """
+
+    send_all: bool = True
+    user_ids: list[int] = Field(default_factory=list)
+
+
 class LimitUpReportListItem(BaseModel):
     """打板分析报告列表项。
 

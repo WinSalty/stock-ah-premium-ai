@@ -11,7 +11,9 @@ from app.db.base import Base
 from app.db.models.auth import AppUser
 from app.db.models.market import ATradeCalendar
 from app.db.models.notification import LimitUpAnalysisCache, LimitUpPushRecipient, PushplusBinding
-from app.services.limit_up_push_service import LimitUpPushService
+from app.schemas.limit_up_push import LimitUpRecipientUpdateItem, LimitUpRecipientUpdateRequest
+from app.services.auth_service import AuthService
+from app.services.limit_up_push_service import LimitUpPushError, LimitUpPushService
 from app.services.tushare_client import TushareResult
 
 
@@ -223,6 +225,91 @@ def test_limit_up_push_uses_enabled_system_users(monkeypatch) -> None:
 
     assert pushed == 1
     assert fake_notification.sent == [(user.id, "打板报告", "<h2>报告</h2>")]
+
+
+def test_limit_up_push_only_targets_configured_recipients(monkeypatch) -> None:
+    """确认手动指定推送也不能绕过启用接收人白名单。
+
+    创建日期：2026-05-08
+    author: sunshengxian
+    """
+
+    db = make_db()
+    user = add_user(db)
+    other_user = AppUser(username="other-user", password_hash="hash", role="USER", is_active=True)
+    db.add(other_user)
+    fake_notification = FakeNotificationService()
+    analysis = LimitUpAnalysisCache(
+        trade_date=date(2026, 5, 8),
+        model="deepseek-v4-pro",
+        prompt_version="limit-up-v1",
+        data_snapshot_hash="hash",
+        status="READY",
+        title="打板报告",
+        content_html="<h2>报告</h2>",
+        generated_at=datetime.now(UTC).replace(tzinfo=None),
+    )
+    db.add(analysis)
+    db.commit()
+    db.refresh(analysis)
+    service = LimitUpPushService(
+        db,
+        settings=Settings(llm_api_key="key", llm_api_key_file=None, tushare_token="token", tushare_token_file=None),
+        tushare_client=FakeTushareClient({}),
+        notification_service=fake_notification,
+    )
+    monkeypatch.setattr(service, "_latest_pushplus_log_id", lambda user_id, message_id: None)
+
+    pushed = service.push_report(
+        analysis.id,
+        "MANUAL",
+        datetime.now(UTC).replace(tzinfo=None),
+        target_user_ids=[user.id, other_user.id],
+    )
+
+    assert pushed == 1
+    assert fake_notification.sent == [(user.id, "打板报告", "<h2>报告</h2>")]
+
+
+def test_update_recipients_syncs_limit_up_menu_permission() -> None:
+    """确认管理员启停接收人时同步打板推送菜单权限。
+
+    创建日期：2026-05-08
+    author: sunshengxian
+    """
+
+    db = make_db()
+    admin = AppUser(username="admin", password_hash="hash", role="ADMIN", is_active=True)
+    user = AppUser(
+        username="receiver",
+        password_hash="hash",
+        role="USER",
+        is_active=True,
+        menu_permissions_json='["overview","profile"]',
+    )
+    db.add_all([admin, user])
+    db.commit()
+    db.refresh(user)
+    service = LimitUpPushService(
+        db,
+        settings=Settings(llm_api_key="key", llm_api_key_file=None, tushare_token="token", tushare_token_file=None),
+        tushare_client=FakeTushareClient({}),
+        notification_service=FakeNotificationService(),
+    )
+
+    service.update_recipients(
+        LimitUpRecipientUpdateRequest(recipients=[LimitUpRecipientUpdateItem(user_id=user.id, enabled=True)]),
+        admin,
+    )
+    db.refresh(user)
+    assert "limit_up_push" in AuthService(db).get_user_permissions(user)
+
+    service.update_recipients(
+        LimitUpRecipientUpdateRequest(recipients=[LimitUpRecipientUpdateItem(user_id=user.id, enabled=False)]),
+        admin,
+    )
+    db.refresh(user)
+    assert "limit_up_push" not in AuthService(db).get_user_permissions(user)
 
 
 def test_latest_analysis_push_is_idempotent_across_polling(monkeypatch) -> None:

@@ -15,7 +15,7 @@ import {
   type LimitUpDeliveryFilters,
   type LimitUpReportFilters
 } from '../api/limitUpPush';
-import type { LimitUpDeliveryItem, LimitUpRecipientItem, LimitUpReportListItem } from '../types/domain';
+import type { LimitUpDeliveryItem, LimitUpRecipientItem, LimitUpPushRequest, LimitUpReportListItem, UserInfo } from '../types/domain';
 import { formatEast8DateTime } from '../utils/datetime';
 
 interface LimitUpReportSearchForm {
@@ -25,20 +25,31 @@ interface LimitUpReportSearchForm {
   limit?: number;
 }
 
+interface LimitUpPushPageProps {
+  currentUser: UserInfo;
+}
+
 /**
  * 打板 LLM 报告推送管理页。
  * 创建日期：2026-05-08
  * author: sunshengxian
  */
-function LimitUpPushPage() {
+function LimitUpPushPage({ currentUser }: LimitUpPushPageProps) {
   const queryClient = useQueryClient();
   const [reportForm] = Form.useForm<LimitUpReportSearchForm>();
   const [deliveryForm] = Form.useForm<LimitUpDeliveryFilters>();
+  const [pushForm] = Form.useForm<LimitUpPushRequest>();
   const [selectedReportId, setSelectedReportId] = useState<number | null>(null);
   const [isReportModalOpen, setIsReportModalOpen] = useState(false);
+  const [pushTargetReportId, setPushTargetReportId] = useState<number | null>(null);
   const [reportFilters, setReportFilters] = useState<LimitUpReportFilters>({ limit: 50 });
   const [deliveryFilters, setDeliveryFilters] = useState<LimitUpDeliveryFilters>({ limit: 150 });
-  const recipients = useQuery({ queryKey: ['limit-up-recipients'], queryFn: fetchLimitUpRecipients });
+  const isAdmin = currentUser.role === 'ADMIN';
+  const recipients = useQuery({
+    queryKey: ['limit-up-recipients'],
+    queryFn: fetchLimitUpRecipients,
+    enabled: isAdmin
+  });
   const reports = useQuery({ queryKey: ['limit-up-reports', reportFilters], queryFn: () => fetchLimitUpReports(reportFilters) });
   const deliveries = useQuery({
     queryKey: ['limit-up-deliveries', deliveryFilters],
@@ -51,6 +62,10 @@ function LimitUpPushPage() {
   });
   const enabledRecipientIds = useMemo(
     () => new Set((recipients.data || []).filter((item) => item.enabled).map((item) => item.user_id)),
+    [recipients.data]
+  );
+  const pushableRecipients = useMemo(
+    () => (recipients.data || []).filter((item) => item.enabled && item.can_push),
     [recipients.data]
   );
   const saveRecipients = useMutation({
@@ -74,9 +89,10 @@ function LimitUpPushPage() {
     onError: (error) => message.error(error instanceof Error ? error.message : '生成失败')
   });
   const pushMutation = useMutation({
-    mutationFn: pushLimitUpReport,
+    mutationFn: ({ reportId, payload }: { reportId: number; payload: LimitUpPushRequest }) => pushLimitUpReport(reportId, payload),
     onSuccess: (result) => {
       message.success(`${result.message}，成功 ${result.delivery_count} 个接收人`);
+      setPushTargetReportId(null);
       queryClient.invalidateQueries({ queryKey: ['limit-up-deliveries'] });
     },
     onError: (error) => message.error(error instanceof Error ? error.message : '推送失败')
@@ -110,6 +126,29 @@ function LimitUpPushPage() {
     });
   };
 
+  const openPushModal = (reportId: number) => {
+    // 管理员手动推送必须从已配置且可推送的接收人里选，默认一键推送全部；
+    // 这让临时推送和定时推送共用同一份接收白名单，避免绕过授权配置。
+    setSelectedReportId(reportId);
+    setPushTargetReportId(reportId);
+    pushForm.setFieldsValue({ send_all: true, user_ids: pushableRecipients.map((item) => item.user_id) });
+  };
+
+  const submitPush = (values: LimitUpPushRequest) => {
+    if (!pushTargetReportId) {
+      return;
+    }
+    const payload = {
+      send_all: values.send_all,
+      user_ids: values.send_all ? [] : values.user_ids || []
+    };
+    if (!payload.send_all && !payload.user_ids.length) {
+      message.warning('请选择至少一个接收人');
+      return;
+    }
+    pushMutation.mutate({ reportId: pushTargetReportId, payload });
+  };
+
   const openReportModal = (reportId: number) => {
     // 报告列表保持整页宽度用于扫描历史记录，完整 HTML 放进弹窗阅读；
     // 这样长报告不会挤压列表列宽，也不会因为右侧预览导致表格横向信息缺失。
@@ -132,22 +171,21 @@ function LimitUpPushPage() {
             <Button icon={<RefreshCw size={16} />} onClick={() => queryClient.invalidateQueries()}>
               刷新
             </Button>
-            <Button
-              type="primary"
-              icon={<Sparkles size={16} />}
-              loading={generateMutation.isPending}
-              onClick={() => generateMutation.mutate()}
-            >
-              生成最新报告
-            </Button>
-            <Button
-              icon={<Send size={16} />}
-              disabled={!selectedReportId}
-              loading={pushMutation.isPending}
-              onClick={() => selectedReportId && pushMutation.mutate(selectedReportId)}
-            >
-              推送选中报告
-            </Button>
+            {isAdmin ? (
+              <>
+                <Button
+                  type="primary"
+                  icon={<Sparkles size={16} />}
+                  loading={generateMutation.isPending}
+                  onClick={() => generateMutation.mutate()}
+                >
+                  生成最新报告
+                </Button>
+                <Button icon={<Send size={16} />} disabled={!selectedReportId} onClick={() => selectedReportId && openPushModal(selectedReportId)}>
+                  推送选中报告
+                </Button>
+              </>
+            ) : null}
           </Space>
         </div>
         <Tabs
@@ -235,24 +273,18 @@ function LimitUpPushPage() {
                       },
                       {
                         title: '操作',
-                        width: 150,
+                        width: isAdmin ? 150 : 86,
                         fixed: 'right',
                         render: (_, record) => (
                           <Space size={8}>
                             <Button size="small" icon={<Eye size={14} />} onClick={() => openReportModal(record.id)}>
                               查看
                             </Button>
-                            <Button
-                              size="small"
-                              icon={<Send size={14} />}
-                              loading={pushMutation.isPending && selectedReportId === record.id}
-                              onClick={() => {
-                                setSelectedReportId(record.id);
-                                pushMutation.mutate(record.id);
-                              }}
-                            >
-                              推送
-                            </Button>
+                            {isAdmin ? (
+                              <Button size="small" icon={<Send size={14} />} onClick={() => openPushModal(record.id)}>
+                                推送
+                              </Button>
+                            ) : null}
                           </Space>
                         )
                       }
@@ -276,10 +308,47 @@ function LimitUpPushPage() {
                       )}
                     </div>
                   </Modal>
+                  {isAdmin ? (
+                    <Modal
+                      open={Boolean(pushTargetReportId)}
+                      title="选择推送接收人"
+                      onCancel={() => setPushTargetReportId(null)}
+                      onOk={() => pushForm.submit()}
+                      confirmLoading={pushMutation.isPending}
+                      destroyOnClose
+                    >
+                      <Form form={pushForm} layout="vertical" initialValues={{ send_all: true, user_ids: [] }} onFinish={submitPush}>
+                        <Form.Item name="send_all" valuePropName="checked">
+                          <Checkbox>一键推送给所有已配置且可推送的接收人</Checkbox>
+                        </Form.Item>
+                        <Form.Item shouldUpdate noStyle>
+                          {({ getFieldValue }) =>
+                            getFieldValue('send_all') ? (
+                              <Typography.Text type="secondary">
+                                当前可推送接收人 {pushableRecipients.length} 个。
+                              </Typography.Text>
+                            ) : (
+                              <Form.Item label="单独选择接收人" name="user_ids" rules={[{ required: true, message: '请选择接收人' }]}>
+                                <Select
+                                  mode="multiple"
+                                  placeholder="只允许选择已配置且可推送的接收人"
+                                  options={pushableRecipients.map((item) => ({
+                                    value: item.user_id,
+                                    label: item.display_name ? `${item.display_name}（${item.username}）` : item.username
+                                  }))}
+                                  optionFilterProp="label"
+                                />
+                              </Form.Item>
+                            )
+                          }
+                        </Form.Item>
+                      </Form>
+                    </Modal>
+                  ) : null}
                 </>
               )
             },
-            {
+            ...(isAdmin ? [{
               key: 'recipients',
               label: '接收人',
               children: (
@@ -311,7 +380,7 @@ function LimitUpPushPage() {
                   ]}
                 />
               )
-            },
+            }] : []),
             {
               key: 'deliveries',
               label: '推送流水',
@@ -334,19 +403,21 @@ function LimitUpPushPage() {
                         ]}
                       />
                     </Form.Item>
-                    <Form.Item name="user_id">
-                      <Select
-                        allowClear
-                        className="pushplus-search-select"
-                        placeholder="接收用户"
-                        options={(recipients.data || []).map((item) => ({
-                          value: item.user_id,
-                          label: item.display_name ? `${item.display_name}（${item.username}）` : item.username
-                        }))}
-                        showSearch
-                        optionFilterProp="label"
-                      />
-                    </Form.Item>
+                    {isAdmin ? (
+                      <Form.Item name="user_id">
+                        <Select
+                          allowClear
+                          className="pushplus-search-select"
+                          placeholder="接收用户"
+                          options={(recipients.data || []).map((item) => ({
+                            value: item.user_id,
+                            label: item.display_name ? `${item.display_name}（${item.username}）` : item.username
+                          }))}
+                          showSearch
+                          optionFilterProp="label"
+                        />
+                      </Form.Item>
+                    ) : null}
                     <Form.Item name="limit" initialValue={150}>
                       <Select
                         className="pushplus-limit-select"

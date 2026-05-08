@@ -577,6 +577,11 @@ export interface LimitUpRecipientUpdateRequest {
   recipients: Array<{ user_id: number; enabled: boolean }>;
 }
 
+export interface LimitUpPushRequest {
+  send_all: boolean;
+  user_ids: number[];
+}
+
 export interface LimitUpReportListItem {
   id: number;
   trade_date: string;
