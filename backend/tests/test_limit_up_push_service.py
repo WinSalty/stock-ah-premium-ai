@@ -489,6 +489,52 @@ def test_limit_up_report_share_supports_permanent_link() -> None:
     assert public_report.title == "永久报告"
 
 
+def test_limit_up_report_share_can_be_listed_and_revoked() -> None:
+    """确认管理员可查看已生成分享链接并将其置为失效。
+
+    创建日期：2026-05-09
+    author: sunshengxian
+    """
+
+    db = make_db()
+    admin = AppUser(username="admin", password_hash="hash", role="ADMIN", is_active=True)
+    analysis = LimitUpAnalysisCache(
+        trade_date=date(2026, 5, 8),
+        model="deepseek-v4-pro",
+        prompt_version="limit-up-v1",
+        data_snapshot_hash="hash",
+        status="READY",
+        title="可失效报告",
+        content_html="<h2>报告</h2>",
+        generated_at=datetime.now(UTC).replace(tzinfo=None),
+    )
+    db.add_all([admin, analysis])
+    db.commit()
+    db.refresh(admin)
+    db.refresh(analysis)
+    service = LimitUpPushService(
+        db,
+        settings=Settings(llm_api_key="key", llm_api_key_file=None, tushare_token="token", tushare_token_file=None),
+        tushare_client=FakeTushareClient({}),
+        notification_service=FakeNotificationService(),
+    )
+
+    share = service.create_report_share(analysis.id, None, admin, "http://localhost:5173")
+    shares = service.list_report_shares(analysis.id, "http://localhost:5173")
+    revoked = service.revoke_report_share(analysis.id, shares[0].id, "http://localhost:5173")
+
+    assert len(shares) == 1
+    assert shares[0].token == share.token
+    assert shares[0].status == "ACTIVE"
+    assert revoked.status == "REVOKED"
+    try:
+        service.get_public_report(share.token)
+    except LimitUpPushError as exc:
+        assert "无效或已过期" in str(exc)
+    else:
+        raise AssertionError("失效分享链接不应继续公开读取")
+
+
 def test_latest_analysis_push_is_idempotent_across_polling(monkeypatch) -> None:
     """确认早盘多次轮询同一份报告只推送一次。
 

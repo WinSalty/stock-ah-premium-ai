@@ -1,22 +1,31 @@
-import { Button, Checkbox, DatePicker, Form, Input, Modal, Select, Space, Table, Tabs, Tag, Typography, message } from 'antd';
-import { Eye, RefreshCw, RotateCcw, Search, Send, Share2, Sparkles } from 'lucide-react';
+import { Button, Checkbox, DatePicker, Form, Input, Modal, Popconfirm, Select, Space, Table, Tabs, Tag, Typography, message } from 'antd';
+import { Ban, Eye, RefreshCw, RotateCcw, Search, Send, Share2, Sparkles } from 'lucide-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { Dayjs } from 'dayjs';
 import { useMemo, useState } from 'react';
 import PageHeader from '../components/PageHeader';
 import {
+  createLimitUpReportShare,
   fetchLimitUpDeliveries,
   fetchLimitUpReport,
   fetchLimitUpRecipients,
   fetchLimitUpReports,
-  createLimitUpReportShare,
+  fetchLimitUpReportShares,
   generateLatestLimitUpReport,
   pushLimitUpReport,
+  revokeLimitUpReportShare,
   updateLimitUpRecipients,
   type LimitUpDeliveryFilters,
   type LimitUpReportFilters
 } from '../api/limitUpPush';
-import type { LimitUpDeliveryItem, LimitUpRecipientItem, LimitUpPushRequest, LimitUpReportListItem, UserInfo } from '../types/domain';
+import type {
+  LimitUpDeliveryItem,
+  LimitUpPushRequest,
+  LimitUpRecipientItem,
+  LimitUpReportListItem,
+  LimitUpShareItem,
+  UserInfo
+} from '../types/domain';
 import { formatEast8DateTime } from '../utils/datetime';
 
 interface LimitUpReportSearchForm {
@@ -62,6 +71,11 @@ function LimitUpPushPage({ currentUser }: LimitUpPushPageProps) {
     queryKey: ['limit-up-report-detail', selectedReportId],
     queryFn: () => fetchLimitUpReport(selectedReportId as number),
     enabled: Boolean(selectedReportId)
+  });
+  const reportShares = useQuery({
+    queryKey: ['limit-up-report-shares', shareTargetReportId],
+    queryFn: () => fetchLimitUpReportShares(shareTargetReportId as number),
+    enabled: isAdmin && Boolean(shareTargetReportId)
   });
   const enabledRecipientIds = useMemo(
     () => new Set((recipients.data || []).filter((item) => item.enabled).map((item) => item.user_id)),
@@ -113,7 +127,7 @@ function LimitUpPushPage({ currentUser }: LimitUpPushPageProps) {
       // 分享链接始终使用当前前端域名拼接，避免开发态后端代理端口被复制给外部查看人。
       const shareUrl = new URL(`/limit-up-share/${result.token}`, window.location.origin).toString();
       await navigator.clipboard?.writeText(shareUrl).catch(() => undefined);
-      setShareTargetReportId(null);
+      queryClient.invalidateQueries({ queryKey: ['limit-up-report-shares', shareTargetReportId] });
       Modal.success({
         title: '分享链接已生成',
         content: (
@@ -127,6 +141,15 @@ function LimitUpPushPage({ currentUser }: LimitUpPushPageProps) {
       });
     },
     onError: (error) => message.error(error instanceof Error ? error.message : '分享失败')
+  });
+  const revokeShareMutation = useMutation({
+    mutationFn: ({ reportId, shareId }: { reportId: number; shareId: number }) =>
+      revokeLimitUpReportShare(reportId, shareId),
+    onSuccess: () => {
+      message.success('分享链接已失效');
+      queryClient.invalidateQueries({ queryKey: ['limit-up-report-shares', shareTargetReportId] });
+    },
+    onError: (error) => message.error(error instanceof Error ? error.message : '失效失败')
   });
 
   const updateRecipient = (record: LimitUpRecipientItem, patch: Partial<LimitUpRecipientItem>) => {
@@ -177,6 +200,11 @@ function LimitUpPushPage({ currentUser }: LimitUpPushPageProps) {
       return;
     }
     shareMutation.mutate({ reportId: shareTargetReportId, expiresInHours: shareExpiresHours });
+  };
+
+  const copyShareUrl = async (shareUrl: string) => {
+    await navigator.clipboard?.writeText(shareUrl).catch(() => undefined);
+    message.success('分享链接已复制');
   };
 
   const submitPush = (values: LimitUpPushRequest) => {
@@ -398,15 +426,17 @@ function LimitUpPushPage({ currentUser }: LimitUpPushPageProps) {
                   {isAdmin ? (
                     <Modal
                       open={Boolean(shareTargetReportId)}
-                      title="创建临时分享"
+                      title="分享链接"
                       onCancel={() => setShareTargetReportId(null)}
                       onOk={submitShare}
+                      okText="生成链接"
                       confirmLoading={shareMutation.isPending}
+                      width={860}
                       destroyOnClose
                     >
                       <Space direction="vertical" size={12} className="limit-up-share-modal-body">
                         <Typography.Text type="secondary">
-                          分享链接无需登录即可查看该报告；有限期链接到期后自动失效。
+                          分享链接无需登录即可查看该报告；有限期链接到期后自动失效，也可以手动置为失效。
                         </Typography.Text>
                         <Select
                           className="pushplus-search-select"
@@ -418,6 +448,67 @@ function LimitUpPushPage({ currentUser }: LimitUpPushPageProps) {
                             { label: '72 小时', value: 72 },
                             { label: '7 天', value: 168 },
                             { label: '永久链接', value: 0 }
+                          ]}
+                        />
+                        <Table<LimitUpShareItem>
+                          rowKey="id"
+                          size="small"
+                          loading={reportShares.isLoading || revokeShareMutation.isPending}
+                          dataSource={reportShares.data || []}
+                          pagination={false}
+                          locale={{ emptyText: '暂无已生成分享链接' }}
+                          columns={[
+                            {
+                              title: '链接',
+                              dataIndex: 'share_url',
+                              ellipsis: true,
+                              render: (value) => (
+                                <Typography.Link onClick={() => copyShareUrl(value)}>{value}</Typography.Link>
+                              )
+                            },
+                            {
+                              title: '状态',
+                              dataIndex: 'status',
+                              width: 92,
+                              render: (value) => renderShareStatus(value)
+                            },
+                            {
+                              title: '有效期',
+                              width: 176,
+                              render: (_, record) =>
+                                record.permanent ? '永久有效' : formatEast8DateTime(record.expires_at)
+                            },
+                            { title: '访问', dataIndex: 'view_count', width: 74 },
+                            {
+                              title: '创建时间',
+                              dataIndex: 'created_at',
+                              width: 176,
+                              render: (value) => formatEast8DateTime(value)
+                            },
+                            {
+                              title: '操作',
+                              width: 102,
+                              render: (_, record) =>
+                                record.status === 'ACTIVE' && shareTargetReportId ? (
+                                  <Popconfirm
+                                    title="确认让这个分享链接失效？"
+                                    okText="失效"
+                                    cancelText="取消"
+                                    onConfirm={() =>
+                                      revokeShareMutation.mutate({
+                                        reportId: shareTargetReportId,
+                                        shareId: record.id
+                                      })
+                                    }
+                                  >
+                                    <Button size="small" danger icon={<Ban size={14} />}>
+                                      失效
+                                    </Button>
+                                  </Popconfirm>
+                                ) : (
+                                  '-'
+                                )
+                            }
                           ]}
                         />
                       </Space>
@@ -572,6 +663,19 @@ function LimitUpPushPage({ currentUser }: LimitUpPushPageProps) {
       </section>
     </main>
   );
+}
+
+function renderShareStatus(status: string) {
+  if (status === 'ACTIVE') {
+    return <Tag color="green">有效</Tag>;
+  }
+  if (status === 'EXPIRED') {
+    return <Tag color="orange">已过期</Tag>;
+  }
+  if (status === 'REVOKED') {
+    return <Tag color="default">已失效</Tag>;
+  }
+  return <Tag>{status}</Tag>;
 }
 
 export default LimitUpPushPage;

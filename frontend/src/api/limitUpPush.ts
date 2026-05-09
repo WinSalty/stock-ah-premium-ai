@@ -9,6 +9,7 @@ import type {
   LimitUpReportDetail,
   LimitUpReportListItem,
   LimitUpShareCreateRequest,
+  LimitUpShareItem,
   LimitUpShareResponse
 } from '../types/domain';
 
@@ -67,6 +68,16 @@ export function createLimitUpReportShare(reportId: number, payload: LimitUpShare
   return requestJson<LimitUpShareResponse>(`/api/limit-up-push/reports/${reportId}/shares`, {
     method: 'POST',
     body: JSON.stringify(payload)
+  });
+}
+
+export function fetchLimitUpReportShares(reportId: number) {
+  return requestJson<LimitUpShareItem[]>(`/api/limit-up-push/reports/${reportId}/shares`);
+}
+
+export function revokeLimitUpReportShare(reportId: number, shareId: number) {
+  return requestJson<LimitUpShareItem>(`/api/limit-up-push/reports/${reportId}/shares/${shareId}`, {
+    method: 'DELETE'
   });
 }
 

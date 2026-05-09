@@ -615,6 +615,16 @@ export interface LimitUpShareResponse {
   permanent: boolean;
 }
 
+export interface LimitUpShareItem extends LimitUpShareResponse {
+  id: number;
+  status: 'ACTIVE' | 'EXPIRED' | 'REVOKED' | string;
+  view_count: number;
+  revoked_at: string | null;
+  last_viewed_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface LimitUpPublicReportDetail {
   title: string;
   trade_date: string;

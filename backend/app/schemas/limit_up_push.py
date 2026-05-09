@@ -111,6 +111,22 @@ class LimitUpShareResponse(BaseModel):
     permanent: bool = False
 
 
+class LimitUpShareItem(LimitUpShareResponse):
+    """打板报告分享链接管理项。
+
+    创建日期：2026-05-09
+    author: sunshengxian
+    """
+
+    id: int
+    status: str
+    view_count: int
+    revoked_at: datetime | None = None
+    last_viewed_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
 class LimitUpPublicReportDetail(BaseModel):
     """打板报告公开分享详情。
 

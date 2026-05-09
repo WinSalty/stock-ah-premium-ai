@@ -37,6 +37,7 @@ from app.schemas.limit_up_push import (
     LimitUpRecipientUpdateRequest,
     LimitUpReportDetail,
     LimitUpReportListItem,
+    LimitUpShareItem,
     LimitUpShareResponse,
 )
 from app.services.date_utils import format_tushare_date, parse_tushare_date
@@ -488,9 +489,7 @@ class LimitUpPushService:
         author: sunshengxian
         """
 
-        report = self.db.get(LimitUpAnalysisCache, report_id)
-        if report is None or report.status != ANALYSIS_STATUS_READY or not report.content_html:
-            raise LimitUpPushError("只能分享已生成完成的报告")
+        report = self._get_shareable_report(report_id)
         # expires_in_hours 为空表示永久链接；有限期链接使用 UTC-naive 时间入库，保持与项目其它时间字段一致。
         expires_at = self._now_naive() + timedelta(hours=expires_in_hours) if expires_in_hours else None
         token = self._new_share_token()
@@ -502,12 +501,57 @@ class LimitUpPushService:
         )
         self.db.add(share)
         self.db.commit()
+        self.db.refresh(share)
         return LimitUpShareResponse(
             token=token,
             share_url=f"{share_base_url.rstrip('/')}/limit-up-share/{token}",
             expires_at=expires_at,
             permanent=expires_at is None,
         )
+
+    def list_report_shares(self, report_id: int, share_base_url: str) -> list[LimitUpShareItem]:
+        """查询指定报告已生成的分享链接。
+
+        创建日期：2026-05-09
+        author: sunshengxian
+        """
+
+        self._get_shareable_report(report_id)
+        # 分享链接按创建时间倒序展示，便于管理员再次点击“分享”时先看到最近生成的链接。
+        shares = self.db.scalars(
+            select(LimitUpReportShare)
+            .where(LimitUpReportShare.analysis_id == report_id)
+            .order_by(desc(LimitUpReportShare.id))
+        ).all()
+        return [self._share_item(share, share_base_url) for share in shares]
+
+    def revoke_report_share(
+        self,
+        report_id: int,
+        share_id: int,
+        share_base_url: str,
+    ) -> LimitUpShareItem:
+        """将指定分享链接标记为失效。
+
+        创建日期：2026-05-09
+        author: sunshengxian
+        """
+
+        self._get_shareable_report(report_id)
+        share = self.db.scalar(
+            select(LimitUpReportShare).where(
+                LimitUpReportShare.id == share_id,
+                LimitUpReportShare.analysis_id == report_id,
+            )
+        )
+        if share is None:
+            raise LimitUpPushError("分享链接不存在")
+        # 失效操作保持幂等：已失效链接再次点击不会报错，只返回当前状态，避免前端重复提交造成误提示。
+        if share.revoked_at is None:
+            share.revoked_at = self._now_naive()
+            self.db.commit()
+            self.db.refresh(share)
+        return self._share_item(share, share_base_url)
 
     def get_public_report(self, token: str) -> LimitUpPublicReportDetail:
         """按临时分享 token 读取公开报告。
@@ -1251,6 +1295,46 @@ class LimitUpPushService:
             weekend_replay_enabled=bool(config.weekend_replay_enabled) if config is not None else True,
             can_push=can_push,
             binding_name=binding_name,
+        )
+
+    def _get_shareable_report(self, report_id: int) -> LimitUpAnalysisCache:
+        """读取可分享的已生成报告。
+
+        创建日期：2026-05-09
+        author: sunshengxian
+        """
+
+        report = self.db.get(LimitUpAnalysisCache, report_id)
+        if report is None or report.status != ANALYSIS_STATUS_READY or not report.content_html:
+            raise LimitUpPushError("只能管理已生成完成的报告分享")
+        return report
+
+    def _share_item(self, share: LimitUpReportShare, share_base_url: str) -> LimitUpShareItem:
+        """转换分享链接管理响应。
+
+        创建日期：2026-05-09
+        author: sunshengxian
+        """
+
+        now = self._now_naive()
+        if share.revoked_at is not None:
+            status = "REVOKED"
+        elif share.expires_at is not None and share.expires_at <= now:
+            status = "EXPIRED"
+        else:
+            status = "ACTIVE"
+        return LimitUpShareItem(
+            id=share.id,
+            token=share.share_token,
+            share_url=f"{share_base_url.rstrip('/')}/limit-up-share/{share.share_token}",
+            expires_at=share.expires_at,
+            permanent=share.expires_at is None,
+            status=status,
+            view_count=share.view_count,
+            revoked_at=share.revoked_at,
+            last_viewed_at=share.last_viewed_at,
+            created_at=share.created_at,
+            updated_at=share.updated_at,
         )
 
     def _new_share_token(self) -> str:

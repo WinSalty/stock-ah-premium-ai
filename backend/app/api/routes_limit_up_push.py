@@ -17,6 +17,7 @@ from app.schemas.limit_up_push import (
     LimitUpReportDetail,
     LimitUpReportListItem,
     LimitUpShareCreateRequest,
+    LimitUpShareItem,
     LimitUpShareResponse,
 )
 from app.services.auth_service import ROLE_ADMIN
@@ -170,6 +171,57 @@ def create_limit_up_report_share(
             report_id,
             payload.expires_in_hours,
             current_user,
+            share_base_url_from_request(request),
+        )
+    except LimitUpPushError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/limit-up-push/reports/{report_id}/shares", response_model=list[LimitUpShareItem])
+def list_limit_up_report_shares(
+    report_id: int,
+    request: Request,
+    db: DbSession,
+    current_user: LimitUpPushUser,
+) -> list[LimitUpShareItem]:
+    """管理员查询指定报告已生成的分享链接。
+
+    创建日期：2026-05-09
+    author: sunshengxian
+    """
+
+    require_limit_up_admin(current_user)
+    try:
+        return LimitUpPushService(db).list_report_shares(
+            report_id,
+            share_base_url_from_request(request),
+        )
+    except LimitUpPushError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.delete(
+    "/limit-up-push/reports/{report_id}/shares/{share_id}",
+    response_model=LimitUpShareItem,
+)
+def revoke_limit_up_report_share(
+    report_id: int,
+    share_id: int,
+    request: Request,
+    db: DbSession,
+    current_user: LimitUpPushUser,
+) -> LimitUpShareItem:
+    """管理员将指定报告分享链接置为失效。
+
+    创建日期：2026-05-09
+    author: sunshengxian
+    """
+
+    require_limit_up_admin(current_user)
+    try:
+        return LimitUpPushService(db).revoke_report_share(
+            report_id,
+            share_id,
             share_base_url_from_request(request),
         )
     except LimitUpPushError as exc:
