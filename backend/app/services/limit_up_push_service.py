@@ -5,6 +5,7 @@ import html
 import json
 import logging
 import re
+import secrets
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
@@ -26,14 +27,17 @@ from app.db.models.notification import (
     LimitUpAnalysisCache,
     LimitUpPushDelivery,
     LimitUpPushRecipient,
+    LimitUpReportShare,
     PushplusBinding,
 )
 from app.schemas.limit_up_push import (
     LimitUpDeliveryItem,
+    LimitUpPublicReportDetail,
     LimitUpRecipientItem,
     LimitUpRecipientUpdateRequest,
     LimitUpReportDetail,
     LimitUpReportListItem,
+    LimitUpShareResponse,
 )
 from app.services.date_utils import format_tushare_date, parse_tushare_date
 from app.services.decimal_utils import to_decimal
@@ -309,7 +313,10 @@ class LimitUpPushService:
         analysis = self.db.get(LimitUpAnalysisCache, analysis_id)
         if analysis is None or analysis.status != ANALYSIS_STATUS_READY or not analysis.content_html:
             raise LimitUpPushError("报告不存在或尚未生成完成")
-        recipients = self._enabled_recipients(target_user_ids)
+        recipients = self._enabled_recipients(
+            target_user_ids,
+            require_weekend_replay=scheduled_kind in {DELIVERY_KIND_SATURDAY_REPLAY, DELIVERY_KIND_SUNDAY_REPLAY},
+        )
         if target_user_ids is not None and not recipients:
             raise LimitUpPushError("请选择已配置且启用的接收人")
         pushed = 0
@@ -441,12 +448,12 @@ class LimitUpPushService:
         author: sunshengxian
         """
 
-        requested = {item.user_id: item.enabled for item in payload.recipients}
+        requested = {item.user_id: item for item in payload.recipients}
         users = {
             user.id: user
             for user in self.db.scalars(select(AppUser).where(AppUser.id.in_(requested.keys()))).all()
         } if requested else {}
-        for user_id, enabled in requested.items():
+        for user_id, item in requested.items():
             user = users.get(user_id)
             if user is None or not user.is_active:
                 raise LimitUpPushError(f"接收用户不存在或已停用：{user_id}")
@@ -454,17 +461,93 @@ class LimitUpPushService:
             if config is None:
                 config = LimitUpPushRecipient(
                     user_id=user_id,
-                    enabled=enabled,
+                    enabled=item.enabled,
+                    weekend_replay_enabled=item.weekend_replay_enabled,
                     created_by_user_id=operator.id,
                     updated_by_user_id=operator.id,
                 )
                 self.db.add(config)
             else:
-                config.enabled = enabled
+                config.enabled = item.enabled
+                config.weekend_replay_enabled = item.weekend_replay_enabled
                 config.updated_by_user_id = operator.id
-            self._sync_recipient_menu_permission(user, enabled)
+            self._sync_recipient_menu_permission(user, item.enabled)
         self.db.commit()
         return self.list_recipients()
+
+    def create_report_share(
+        self,
+        report_id: int,
+        expires_in_hours: int | None,
+        operator: AppUser,
+        share_base_url: str,
+    ) -> LimitUpShareResponse:
+        """为已生成报告创建临时公开分享链接。
+
+        创建日期：2026-05-09
+        author: sunshengxian
+        """
+
+        report = self.db.get(LimitUpAnalysisCache, report_id)
+        if report is None or report.status != ANALYSIS_STATUS_READY or not report.content_html:
+            raise LimitUpPushError("只能分享已生成完成的报告")
+        # expires_in_hours 为空表示永久链接；有限期链接使用 UTC-naive 时间入库，保持与项目其它时间字段一致。
+        expires_at = self._now_naive() + timedelta(hours=expires_in_hours) if expires_in_hours else None
+        token = self._new_share_token()
+        share = LimitUpReportShare(
+            analysis_id=report.id,
+            share_token=token,
+            expires_at=expires_at,
+            created_by_user_id=operator.id,
+        )
+        self.db.add(share)
+        self.db.commit()
+        return LimitUpShareResponse(
+            token=token,
+            share_url=f"{share_base_url.rstrip('/')}/limit-up-share/{token}",
+            expires_at=expires_at,
+            permanent=expires_at is None,
+        )
+
+    def get_public_report(self, token: str) -> LimitUpPublicReportDetail:
+        """按临时分享 token 读取公开报告。
+
+        创建日期：2026-05-09
+        author: sunshengxian
+        """
+
+        normalized_token = token.strip()
+        if not normalized_token:
+            raise LimitUpPushError("分享链接无效或已过期")
+        now = self._now_naive()
+        row = self.db.execute(
+            select(LimitUpReportShare, LimitUpAnalysisCache)
+            .join(LimitUpAnalysisCache, LimitUpAnalysisCache.id == LimitUpReportShare.analysis_id)
+            .where(
+                LimitUpReportShare.share_token == normalized_token,
+                LimitUpReportShare.revoked_at.is_(None),
+                or_(LimitUpReportShare.expires_at.is_(None), LimitUpReportShare.expires_at > now),
+                LimitUpAnalysisCache.status == ANALYSIS_STATUS_READY,
+            )
+            .limit(1)
+        ).first()
+        if row is None:
+            raise LimitUpPushError("分享链接无效或已过期")
+        share, report = row
+        if not report.content_html:
+            raise LimitUpPushError("分享报告内容为空")
+        # 公开查看只记录访问次数和最近访问时间，不要求登录；该统计用于管理员判断临时分享是否仍被使用。
+        share.view_count += 1
+        share.last_viewed_at = now
+        self.db.commit()
+        return LimitUpPublicReportDetail(
+            title=report.title,
+            trade_date=report.trade_date,
+            content_html=report.content_html,
+            generated_at=report.generated_at,
+            expires_at=share.expires_at,
+            permanent=share.expires_at is None,
+        )
 
     def list_deliveries(
         self,
@@ -1047,15 +1130,21 @@ class LimitUpPushService:
             .limit(1)
         )
 
-    def _enabled_recipients(self, target_user_ids: list[int] | None = None) -> list[LimitUpPushRecipient]:
+    def _enabled_recipients(
+        self,
+        target_user_ids: list[int] | None = None,
+        require_weekend_replay: bool = False,
+    ) -> list[LimitUpPushRecipient]:
         statement = select(LimitUpPushRecipient).where(LimitUpPushRecipient.enabled.is_(True))
+        if require_weekend_replay:
+            statement = statement.where(LimitUpPushRecipient.weekend_replay_enabled.is_(True))
         if target_user_ids is not None:
             unique_ids = sorted({user_id for user_id in target_user_ids if user_id > 0})
             if not unique_ids:
                 return []
             statement = statement.where(LimitUpPushRecipient.user_id.in_(unique_ids))
         # 手动指定接收人也必须先由管理员配置并启用，不能绕过接收人白名单；
-        # 定时任务传 None 时仍然推送给全部启用接收人。
+        # 周末复推额外遵循接收人自己的晚间复推开关，常规数据就绪推送继续覆盖全部启用接收人。
         return list(self.db.scalars(statement.order_by(LimitUpPushRecipient.id)).all())
 
     def _sync_recipient_menu_permission(self, user: AppUser, enabled: bool) -> None:
@@ -1159,9 +1248,26 @@ class LimitUpPushService:
             username=user.username,
             display_name=user.display_name,
             enabled=bool(config.enabled) if config is not None else False,
+            weekend_replay_enabled=bool(config.weekend_replay_enabled) if config is not None else True,
             can_push=can_push,
             binding_name=binding_name,
         )
+
+    def _new_share_token(self) -> str:
+        """生成不与现有分享冲突的随机 token。
+
+        创建日期：2026-05-09
+        author: sunshengxian
+        """
+
+        # token 只作为临时查看凭据，不承载报告 ID 或用户信息；发生极小概率冲突时重新生成。
+        while True:
+            token = secrets.token_urlsafe(24)
+            exists = self.db.scalar(
+                select(LimitUpReportShare.id).where(LimitUpReportShare.share_token == token).limit(1)
+            )
+            if exists is None:
+                return token
 
     def _report_list_item(self, report: LimitUpAnalysisCache) -> LimitUpReportListItem:
         return LimitUpReportListItem(

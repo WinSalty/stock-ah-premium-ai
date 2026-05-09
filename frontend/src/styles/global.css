@@ -759,6 +759,53 @@ body {
   background: #ffffff;
 }
 
+.limit-up-share-modal-body {
+  width: 100%;
+}
+
+.limit-up-share-page {
+  min-height: 100vh;
+  padding: 28px 16px 48px;
+  background: #f5f7f8;
+}
+
+.limit-up-share-shell {
+  width: min(960px, 100%);
+  margin: 0 auto;
+  padding: 28px;
+  background: #ffffff;
+  border: 1px solid #dfe5e8;
+  border-radius: 8px;
+}
+
+.limit-up-share-head {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 18px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid #e7ecef;
+}
+
+.limit-up-share-head h2 {
+  margin: 0 !important;
+}
+
+.limit-up-share-content {
+  overflow-x: auto;
+}
+
+.limit-up-share-content table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.limit-up-share-content th,
+.limit-up-share-content td {
+  padding: 8px 10px;
+  border: 1px solid #dfe5e8;
+  vertical-align: top;
+}
+
 .selected-row td {
   background: #eaf6f3 !important;
 }

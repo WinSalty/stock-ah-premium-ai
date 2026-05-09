@@ -3,21 +3,28 @@ from __future__ import annotations
 from datetime import date
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from app.api.deps_auth import DbSession, require_permission
 from app.db.models.auth import AppUser
 from app.schemas.limit_up_push import (
     LimitUpActionResponse,
     LimitUpDeliveryItem,
+    LimitUpPublicReportDetail,
     LimitUpPushRequest,
     LimitUpRecipientItem,
     LimitUpRecipientUpdateRequest,
     LimitUpReportDetail,
     LimitUpReportListItem,
+    LimitUpShareCreateRequest,
+    LimitUpShareResponse,
 )
 from app.services.auth_service import ROLE_ADMIN
-from app.services.limit_up_push_service import DELIVERY_KIND_MANUAL, LimitUpPushError, LimitUpPushService
+from app.services.limit_up_push_service import (
+    DELIVERY_KIND_MANUAL,
+    LimitUpPushError,
+    LimitUpPushService,
+)
 
 router = APIRouter()
 LimitUpPushUser = Annotated[AppUser, Depends(require_permission("limit_up_push"))]
@@ -32,6 +39,25 @@ def require_limit_up_admin(user: AppUser) -> None:
 
     if user.role != ROLE_ADMIN:
         raise HTTPException(status_code=403, detail="没有打板推送管理权限")
+
+
+def share_base_url_from_request(request: Request) -> str:
+    """从浏览器请求推导临时分享前端地址。
+
+    创建日期：2026-05-09
+    author: sunshengxian
+    """
+
+    # 前端开发态通过 Vite 代理访问后端，Host 可能是后端端口；优先使用浏览器 Origin，
+    # 缺失时再退回 FastAPI base_url，保证脚本调用也能拿到可拼接的分享地址。
+    origin = request.headers.get("origin")
+    if origin:
+        return origin
+    referer = request.headers.get("referer")
+    if referer and "://" in referer:
+        scheme_host = referer.split("://", 1)
+        return f"{scheme_host[0]}://{scheme_host[1].split('/', 1)[0]}"
+    return str(request.base_url).rstrip("/")
 
 
 @router.get("/limit-up-push/reports", response_model=list[LimitUpReportListItem])
@@ -122,6 +148,49 @@ def push_limit_up_report(
     except LimitUpPushError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return LimitUpActionResponse(ok=True, message="手动推送已执行", report_id=report_id, delivery_count=pushed)
+
+
+@router.post("/limit-up-push/reports/{report_id}/shares", response_model=LimitUpShareResponse)
+def create_limit_up_report_share(
+    report_id: int,
+    payload: LimitUpShareCreateRequest,
+    request: Request,
+    db: DbSession,
+    current_user: LimitUpPushUser,
+) -> LimitUpShareResponse:
+    """管理员为指定打板报告创建临时分享链接。
+
+    创建日期：2026-05-09
+    author: sunshengxian
+    """
+
+    require_limit_up_admin(current_user)
+    try:
+        return LimitUpPushService(db).create_report_share(
+            report_id,
+            payload.expires_in_hours,
+            current_user,
+            share_base_url_from_request(request),
+        )
+    except LimitUpPushError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/limit-up-push/public-shares/{token}", response_model=LimitUpPublicReportDetail)
+def get_public_limit_up_report(
+    token: str,
+    db: DbSession,
+) -> LimitUpPublicReportDetail:
+    """公开读取临时分享的打板报告。
+
+    创建日期：2026-05-09
+    author: sunshengxian
+    """
+
+    try:
+        return LimitUpPushService(db).get_public_report(token)
+    except LimitUpPushError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.get("/limit-up-push/recipients", response_model=list[LimitUpRecipientItem])

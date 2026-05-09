@@ -23,6 +23,7 @@ import AuthPage from './pages/AuthPage';
 import UserAdminPage from './pages/UserAdminPage';
 import PushplusAdminPage from './pages/PushplusAdminPage';
 import LimitUpPushPage from './pages/LimitUpPushPage';
+import LimitUpSharePage from './pages/LimitUpSharePage';
 import ProfilePage from './pages/ProfilePage';
 import LlmMetricsPage from './pages/LlmMetricsPage';
 import { fetchCurrentUser } from './api/auth';
@@ -61,6 +62,7 @@ const allMenuItems = [
  */
 function App() {
   const queryClient = useQueryClient();
+  const shareToken = window.location.pathname.match(/^\/limit-up-share\/([^/]+)$/)?.[1];
   const [page, setPage] = useState<PageKey>('overview');
   const [user, setUser] = useState<UserInfo | null>(null);
   const [isCheckingAuth, setIsCheckingAuth] = useState(Boolean(getAuthToken()));
@@ -115,6 +117,11 @@ function App() {
     setPage('overview');
     message.success('已退出登录');
   };
+
+  if (shareToken) {
+    // 临时分享链接是独立公开入口，必须先于登录态判断渲染，避免查看人被带到登录页。
+    return <LimitUpSharePage token={decodeURIComponent(shareToken)} />;
+  }
 
   if (isCheckingAuth) {
     return (

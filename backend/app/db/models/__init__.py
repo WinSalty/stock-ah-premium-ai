@@ -34,6 +34,7 @@ from app.db.models.notification import (
     LimitUpAnalysisCache,
     LimitUpPushDelivery,
     LimitUpPushRecipient,
+    LimitUpReportShare,
     PushplusBinding,
     PushplusMessageLog,
 )
@@ -72,6 +73,7 @@ __all__ = [
     "LimitUpAnalysisCache",
     "LimitUpPushDelivery",
     "LimitUpPushRecipient",
+    "LimitUpReportShare",
     "OfficialAHComparison",
     "PushplusBinding",
     "PushplusMessageLog",

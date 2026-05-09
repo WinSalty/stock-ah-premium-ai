@@ -1,6 +1,6 @@
 # 数据库表结构说明
 
-更新日期：2026-05-08
+更新日期：2026-05-09
 
 ## 维护口径
 
@@ -80,6 +80,10 @@ LLM 按需个股研究数据：
 - `pushplus_binding`：PushPlus 好友绑定表，保存系统用户与 PushPlus 好友的后端发送令牌映射，不向前端返回好友令牌。
 - `alert_event`：提醒事件表，保存阈值提醒和股价提醒触发时的去重键、推送标题、推送内容和发送状态。
 - `pushplus_message_log`：PushPlus 推送消息流水表，记录测试推送、阈值提醒和股价提醒实际提交给 PushPlus 的时间、接收用户、接收对象、标题、内容、状态、消息流水号和错误信息，供管理员审计查看。
+- `limit_up_analysis_cache`：打板 LLM 报告缓存表，按交易日、模型、提示词版本和数据快照哈希去重，保存 HTML 报告、上下文、质量记录和生成状态。
+- `limit_up_push_recipient`：打板报告接收人配置表，保存系统用户是否启用接收，以及是否接收周六、周日晚间缓存报告复推；PushPlus 好友令牌仍只保存在绑定表。
+- `limit_up_push_delivery`：打板报告业务推送计划与结果表，按报告、计划类型、计划时间和接收用户做幂等，实际 PushPlus 请求流水关联到 `pushplus_message_log`。
+- `limit_up_report_share`：打板报告分享链接表，保存随机 token、过期时间、撤销时间和公开访问次数；`expires_at` 为空表示永久有效，公开查看只读取已生成报告，不授予后台权限。
 - `llm_chat_session`：LLM 问答会话，用于保存投资问答主题和更新时间，按 `user_id` 隔离，`deleted_at` 非空表示会话已逻辑删除。
 - `llm_chat_message`：LLM 问答消息，用于保存用户问题、助手回答、内部查询口径和结果预览，支持后续会话上下文记忆。
 - `llm_call_metric`：LLM 调用耗时指标，按每轮问答唯一 `question_id` 串联路由、SQL、回答和流式首包等阶段；新增 `conversation_title` 和 `user_name` 保存对话标题与用户展示名称；`phase_label`、`phase_description` 解释阶段中文含义，`request_payload_json` 使用 `LONGTEXT` 记录实际发送给 LLM 的请求 JSON 和上下文 messages，不保存鉴权头和 API Key；`response_content` 使用 `LONGTEXT` 记录大模型返回的原始响应内容，流式回答保存拼接后的完整内容。

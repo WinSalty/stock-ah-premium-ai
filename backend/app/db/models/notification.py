@@ -161,6 +161,7 @@ class LimitUpPushRecipient(TimestampMixin, Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("app_user.id"), nullable=False)
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    weekend_replay_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("app_user.id"))
     updated_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("app_user.id"))
 
@@ -194,3 +195,27 @@ class LimitUpPushDelivery(TimestampMixin, Base):
     pushplus_message_log_id: Mapped[int | None] = mapped_column(ForeignKey("pushplus_message_log.id"))
     error_message: Mapped[str | None] = mapped_column(Text)
     sent_at: Mapped[datetime | None] = mapped_column(DateTime)
+
+
+class LimitUpReportShare(TimestampMixin, Base):
+    """打板报告临时分享链接。
+
+    创建日期：2026-05-09
+    author: sunshengxian
+    """
+
+    __tablename__ = "limit_up_report_share"
+    __table_args__ = (
+        UniqueConstraint("share_token", name="uk_limit_up_report_share_token"),
+        Index("idx_limit_up_report_share_analysis", "analysis_id", "created_at"),
+        Index("idx_limit_up_report_share_expires", "expires_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    analysis_id: Mapped[int] = mapped_column(ForeignKey("limit_up_analysis_cache.id"), nullable=False)
+    share_token: Mapped[str] = mapped_column(String(64), nullable=False)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime)
+    created_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("app_user.id"))
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime)
+    last_viewed_at: Mapped[datetime | None] = mapped_column(DateTime)
+    view_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)

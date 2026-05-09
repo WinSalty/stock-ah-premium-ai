@@ -17,6 +17,7 @@ class LimitUpRecipientItem(BaseModel):
     username: str
     display_name: str | None = None
     enabled: bool
+    weekend_replay_enabled: bool
     can_push: bool
     binding_name: str | None = None
 
@@ -30,6 +31,7 @@ class LimitUpRecipientUpdateItem(BaseModel):
 
     user_id: int = Field(ge=1)
     enabled: bool = True
+    weekend_replay_enabled: bool = True
 
 
 class LimitUpRecipientUpdateRequest(BaseModel):
@@ -84,6 +86,44 @@ class LimitUpReportDetail(LimitUpReportListItem):
     content_markdown: str | None = None
     context: dict[str, Any] | None = None
     data_quality: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class LimitUpShareCreateRequest(BaseModel):
+    """打板报告临时分享创建请求。
+
+    创建日期：2026-05-09
+    author: sunshengxian
+    """
+
+    expires_in_hours: int | None = Field(default=24, ge=1, le=168)
+
+
+class LimitUpShareResponse(BaseModel):
+    """打板报告临时分享响应。
+
+    创建日期：2026-05-09
+    author: sunshengxian
+    """
+
+    token: str
+    share_url: str
+    expires_at: datetime | None = None
+    permanent: bool = False
+
+
+class LimitUpPublicReportDetail(BaseModel):
+    """打板报告公开分享详情。
+
+    创建日期：2026-05-09
+    author: sunshengxian
+    """
+
+    title: str
+    trade_date: date
+    content_html: str
+    generated_at: datetime | None = None
+    expires_at: datetime | None = None
+    permanent: bool = False
 
 
 class LimitUpDeliveryItem(BaseModel):

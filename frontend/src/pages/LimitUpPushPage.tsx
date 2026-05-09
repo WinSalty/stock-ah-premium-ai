@@ -1,5 +1,5 @@
 import { Button, Checkbox, DatePicker, Form, Input, Modal, Select, Space, Table, Tabs, Tag, Typography, message } from 'antd';
-import { Eye, RefreshCw, RotateCcw, Search, Send, Sparkles } from 'lucide-react';
+import { Eye, RefreshCw, RotateCcw, Search, Send, Share2, Sparkles } from 'lucide-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { Dayjs } from 'dayjs';
 import { useMemo, useState } from 'react';
@@ -9,6 +9,7 @@ import {
   fetchLimitUpReport,
   fetchLimitUpRecipients,
   fetchLimitUpReports,
+  createLimitUpReportShare,
   generateLatestLimitUpReport,
   pushLimitUpReport,
   updateLimitUpRecipients,
@@ -42,6 +43,8 @@ function LimitUpPushPage({ currentUser }: LimitUpPushPageProps) {
   const [selectedReportId, setSelectedReportId] = useState<number | null>(null);
   const [isReportModalOpen, setIsReportModalOpen] = useState(false);
   const [pushTargetReportId, setPushTargetReportId] = useState<number | null>(null);
+  const [shareTargetReportId, setShareTargetReportId] = useState<number | null>(null);
+  const [shareExpiresHours, setShareExpiresHours] = useState<number | null>(24);
   const [reportFilters, setReportFilters] = useState<LimitUpReportFilters>({ limit: 50 });
   const [deliveryFilters, setDeliveryFilters] = useState<LimitUpDeliveryFilters>({ limit: 150 });
   const isAdmin = currentUser.role === 'ADMIN';
@@ -70,7 +73,13 @@ function LimitUpPushPage({ currentUser }: LimitUpPushPageProps) {
   );
   const saveRecipients = useMutation({
     mutationFn: (items: LimitUpRecipientItem[]) =>
-      updateLimitUpRecipients({ recipients: items.map((item) => ({ user_id: item.user_id, enabled: item.enabled })) }),
+      updateLimitUpRecipients({
+        recipients: items.map((item) => ({
+          user_id: item.user_id,
+          enabled: item.enabled,
+          weekend_replay_enabled: item.weekend_replay_enabled
+        }))
+      }),
     onSuccess: () => {
       message.success('接收人配置已保存');
       queryClient.invalidateQueries({ queryKey: ['limit-up-recipients'] });
@@ -97,12 +106,34 @@ function LimitUpPushPage({ currentUser }: LimitUpPushPageProps) {
     },
     onError: (error) => message.error(error instanceof Error ? error.message : '推送失败')
   });
+  const shareMutation = useMutation({
+    mutationFn: ({ reportId, expiresInHours }: { reportId: number; expiresInHours: number | null }) =>
+      createLimitUpReportShare(reportId, { expires_in_hours: expiresInHours || null }),
+    onSuccess: async (result) => {
+      // 分享链接始终使用当前前端域名拼接，避免开发态后端代理端口被复制给外部查看人。
+      const shareUrl = new URL(`/limit-up-share/${result.token}`, window.location.origin).toString();
+      await navigator.clipboard?.writeText(shareUrl).catch(() => undefined);
+      setShareTargetReportId(null);
+      Modal.success({
+        title: '分享链接已生成',
+        content: (
+          <Space direction="vertical" size={8}>
+            <Typography.Text type="secondary">
+              {result.permanent ? '永久有效' : `有效期至 ${formatEast8DateTime(result.expires_at)}`}
+            </Typography.Text>
+            <Typography.Paragraph copyable={{ text: shareUrl }}>{shareUrl}</Typography.Paragraph>
+          </Space>
+        )
+      });
+    },
+    onError: (error) => message.error(error instanceof Error ? error.message : '分享失败')
+  });
 
-  const toggleRecipient = (record: LimitUpRecipientItem, checked: boolean) => {
-    // 接收人配置只保存系统用户和启用状态，PushPlus token 始终留在后端绑定表；
-    // 前端禁止勾选不可推送用户，避免定时任务反复生成 SKIPPED 流水。
+  const updateRecipient = (record: LimitUpRecipientItem, patch: Partial<LimitUpRecipientItem>) => {
+    // 接收人配置只保存系统用户、启用状态和周末复推偏好，PushPlus token 始终留在后端绑定表；
+    // 周末晚间开关只影响 SATURDAY_REPLAY/SUNDAY_REPLAY，常规早盘和手动推送仍按 enabled 执行。
     const next = (recipients.data || []).map((item) =>
-      item.user_id === record.user_id ? { ...item, enabled: checked } : item
+      item.user_id === record.user_id ? { ...item, ...patch } : item
     );
     saveRecipients.mutate(next);
   };
@@ -132,6 +163,20 @@ function LimitUpPushPage({ currentUser }: LimitUpPushPageProps) {
     setSelectedReportId(reportId);
     setPushTargetReportId(reportId);
     pushForm.setFieldsValue({ send_all: true, user_ids: pushableRecipients.map((item) => item.user_id) });
+  };
+
+  const openShareModal = (reportId: number) => {
+    // 临时分享只针对已生成报告创建独立链接，不会把接收人配置或后台权限授予给查看人。
+    setSelectedReportId(reportId);
+    setShareExpiresHours(24);
+    setShareTargetReportId(reportId);
+  };
+
+  const submitShare = () => {
+    if (!shareTargetReportId) {
+      return;
+    }
+    shareMutation.mutate({ reportId: shareTargetReportId, expiresInHours: shareExpiresHours });
   };
 
   const submitPush = (values: LimitUpPushRequest) => {
@@ -273,7 +318,7 @@ function LimitUpPushPage({ currentUser }: LimitUpPushPageProps) {
                       },
                       {
                         title: '操作',
-                        width: isAdmin ? 150 : 86,
+                        width: isAdmin ? 212 : 86,
                         fixed: 'right',
                         render: (_, record) => (
                           <Space size={8}>
@@ -281,9 +326,14 @@ function LimitUpPushPage({ currentUser }: LimitUpPushPageProps) {
                               查看
                             </Button>
                             {isAdmin ? (
-                              <Button size="small" icon={<Send size={14} />} onClick={() => openPushModal(record.id)}>
-                                推送
-                              </Button>
+                              <>
+                                <Button size="small" icon={<Share2 size={14} />} onClick={() => openShareModal(record.id)}>
+                                  分享
+                                </Button>
+                                <Button size="small" icon={<Send size={14} />} onClick={() => openPushModal(record.id)}>
+                                  推送
+                                </Button>
+                              </>
                             ) : null}
                           </Space>
                         )
@@ -345,6 +395,34 @@ function LimitUpPushPage({ currentUser }: LimitUpPushPageProps) {
                       </Form>
                     </Modal>
                   ) : null}
+                  {isAdmin ? (
+                    <Modal
+                      open={Boolean(shareTargetReportId)}
+                      title="创建临时分享"
+                      onCancel={() => setShareTargetReportId(null)}
+                      onOk={submitShare}
+                      confirmLoading={shareMutation.isPending}
+                      destroyOnClose
+                    >
+                      <Space direction="vertical" size={12} className="limit-up-share-modal-body">
+                        <Typography.Text type="secondary">
+                          分享链接无需登录即可查看该报告；有限期链接到期后自动失效。
+                        </Typography.Text>
+                        <Select
+                          className="pushplus-search-select"
+                          value={shareExpiresHours}
+                          onChange={setShareExpiresHours}
+                          options={[
+                            { label: '1 小时', value: 1 },
+                            { label: '24 小时', value: 24 },
+                            { label: '72 小时', value: 72 },
+                            { label: '7 天', value: 168 },
+                            { label: '永久链接', value: 0 }
+                          ]}
+                        />
+                      </Space>
+                    </Modal>
+                  ) : null}
                 </>
               )
             },
@@ -366,7 +444,18 @@ function LimitUpPushPage({ currentUser }: LimitUpPushPageProps) {
                         <Checkbox
                           checked={enabledRecipientIds.has(record.user_id)}
                           disabled={!record.can_push}
-                          onChange={(event) => toggleRecipient(record, event.target.checked)}
+                          onChange={(event) => updateRecipient(record, { enabled: event.target.checked })}
+                        />
+                      )
+                    },
+                    {
+                      title: '周末晚间',
+                      width: 120,
+                      render: (_, record) => (
+                        <Checkbox
+                          checked={record.weekend_replay_enabled}
+                          disabled={!record.enabled || !record.can_push}
+                          onChange={(event) => updateRecipient(record, { weekend_replay_enabled: event.target.checked })}
                         />
                       )
                     },

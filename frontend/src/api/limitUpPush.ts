@@ -2,11 +2,14 @@ import { requestJson } from './client';
 import type {
   LimitUpActionResponse,
   LimitUpDeliveryItem,
+  LimitUpPublicReportDetail,
   LimitUpPushRequest,
   LimitUpRecipientItem,
   LimitUpRecipientUpdateRequest,
   LimitUpReportDetail,
-  LimitUpReportListItem
+  LimitUpReportListItem,
+  LimitUpShareCreateRequest,
+  LimitUpShareResponse
 } from '../types/domain';
 
 export interface LimitUpReportFilters {
@@ -58,6 +61,17 @@ export function pushLimitUpReport(reportId: number, payload: LimitUpPushRequest 
     method: 'POST',
     body: JSON.stringify(payload)
   });
+}
+
+export function createLimitUpReportShare(reportId: number, payload: LimitUpShareCreateRequest) {
+  return requestJson<LimitUpShareResponse>(`/api/limit-up-push/reports/${reportId}/shares`, {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  });
+}
+
+export function fetchPublicLimitUpReport(token: string) {
+  return requestJson<LimitUpPublicReportDetail>(`/api/limit-up-push/public-shares/${encodeURIComponent(token)}`);
 }
 
 export function fetchLimitUpRecipients() {

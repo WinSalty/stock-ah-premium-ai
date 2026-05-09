@@ -569,12 +569,13 @@ export interface LimitUpRecipientItem {
   username: string;
   display_name: string | null;
   enabled: boolean;
+  weekend_replay_enabled: boolean;
   can_push: boolean;
   binding_name: string | null;
 }
 
 export interface LimitUpRecipientUpdateRequest {
-  recipients: Array<{ user_id: number; enabled: boolean }>;
+  recipients: Array<{ user_id: number; enabled: boolean; weekend_replay_enabled: boolean }>;
 }
 
 export interface LimitUpPushRequest {
@@ -601,6 +602,26 @@ export interface LimitUpReportDetail extends LimitUpReportListItem {
   content_markdown: string | null;
   context: Record<string, unknown> | null;
   data_quality: Array<Record<string, unknown>>;
+}
+
+export interface LimitUpShareCreateRequest {
+  expires_in_hours: number | null;
+}
+
+export interface LimitUpShareResponse {
+  token: string;
+  share_url: string;
+  expires_at: string | null;
+  permanent: boolean;
+}
+
+export interface LimitUpPublicReportDetail {
+  title: string;
+  trade_date: string;
+  content_html: string;
+  generated_at: string | null;
+  expires_at: string | null;
+  permanent: boolean;
 }
 
 export interface LimitUpDeliveryItem {

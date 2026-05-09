@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from app.core.config import Settings
 from app.db.base import Base
 from app.db.models.chat import LlmCallMetric
+from app.db.models.market import AStockBasic
 from app.services.llm_service import (
     FOLLOW_UP_ASSISTANT_SYSTEM_PROMPT,
     FOLLOW_UP_ROUTER_SYSTEM_PROMPT,
@@ -67,6 +68,7 @@ def test_llm_answer_prompt_omits_static_material_payload() -> None:
         Mock(),
         settings=Settings(llm_api_key="test-key", llm_api_key_file=None, llm_model="test-model"),
     )
+    service._supporting_data = Mock(return_value={})  # type: ignore[method-assign]
 
     prompt = service._answer_prompt(
         "我自选里哪些最接近阈值？",
@@ -219,6 +221,63 @@ def test_clear_investment_question_uses_default_deepseek_router(monkeypatch) -> 
     assert "A 股数据包含义" in str(captured["system_prompt"])
 
 
+def test_question_router_payload_includes_local_stock_candidates(monkeypatch) -> None:
+    """确认前置路由把本地股票候选交给 LLM，由模型在受控候选内主动要包。
+
+    创建日期：2026-05-09
+    author: sunshengxian
+    """
+
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    with Session(engine) as db:
+        db.add(
+            AStockBasic(
+                ts_code="600036.SH",
+                symbol="600036",
+                name="招商银行",
+                industry="银行",
+                list_status="L",
+            )
+        )
+        db.commit()
+        service = LlmService(
+            db,
+            settings=Settings(
+                llm_api_key="test-key",
+                llm_api_key_file=None,
+                llm_model="deepseek-v4-flash",
+            ),
+        )
+        captured: dict[str, object] = {}
+
+        def fake_chat_completion(
+            prompt: str,
+            system_prompt: str | None = None,
+            model: str | None = None,
+            temperature: float = 0.1,
+            trace: LlmCallTrace | None = None,
+        ) -> str:
+            captured["prompt"] = prompt
+            return (
+                '{"is_answerable":true,"needs_sql":false,'
+                '"answer_mode":"stock_research",'
+                '"data_demands":[{"market":"A","ts_code":"600036.SH",'
+                '"packages":["quote_valuation","financial_statement"],'
+                '"intent":"stock_research"}],"reason":"候选内命中招商银行"}'
+            )
+
+        monkeypatch.setattr(service, "_chat_completion", fake_chat_completion)
+
+        route = service._route_question("招商银行现在怎么看")
+
+    payload = json.loads(str(captured["prompt"]))
+    assert payload["stock_candidates"][0]["ts_code"] == "600036.SH"
+    assert payload["stock_candidates"][0]["name"] == "招商银行"
+    assert route.answer_mode == "stock_research"
+    assert route.data_demands[0].packages == ("quote_valuation", "financial_statement")
+
+
 def test_question_router_prompt_requires_multi_package_evidence_chain() -> None:
     """确认路由提示词要求单股研究主动组合多个证据包。
 
@@ -226,6 +285,7 @@ def test_question_router_prompt_requires_multi_package_evidence_chain() -> None:
     author: sunshengxian
     """
 
+    assert "数据包分类是内部证据菜单" in QUESTION_ROUTER_SYSTEM_PROMPT
     assert "不要把单股研究压缩成一个数据包" in QUESTION_ROUTER_SYSTEM_PROMPT
     assert "A 股数据包含义" in QUESTION_ROUTER_SYSTEM_PROMPT
     assert "quote_valuation：日线行情" in QUESTION_ROUTER_SYSTEM_PROMPT
@@ -242,6 +302,7 @@ def test_question_router_prompt_requires_multi_package_evidence_chain() -> None:
         "quote_valuation、\nfinancial_statement、business_profile、dividend_forecast、shareholder_governance"
         in QUESTION_ROUTER_SYSTEM_PROMPT
     )
+    assert "A/H 或港股通择边问题" in QUESTION_ROUTER_SYSTEM_PROMPT
 
 
 def test_question_router_prompt_requires_accounting_review_packages() -> None:
@@ -275,6 +336,7 @@ def test_route_from_payload_accepts_market_data_demands() -> None:
         {
             "is_answerable": True,
             "needs_sql": False,
+            "answer_mode": "stock_research",
             "data_demands": [
                 {
                     "market": "A",
@@ -293,6 +355,7 @@ def test_route_from_payload_accepts_market_data_demands() -> None:
     )
 
     assert route.data_demands[0].ts_code == "600036.SH"
+    assert route.answer_mode == "stock_research"
     assert route.data_demands[0].packages == (
         "quote_valuation",
         "financial_statement",
@@ -300,6 +363,40 @@ def test_route_from_payload_accepts_market_data_demands() -> None:
         "shareholder_governance",
         "capital_flow_light",
     )
+
+
+def test_route_from_payload_requires_answer_mode() -> None:
+    """确认新版前置路由必须显式返回 answer_mode。
+
+    创建日期：2026-05-09
+    author: sunshengxian
+    """
+
+    service = LlmService(
+        Mock(),
+        settings=Settings(llm_api_key="test-key", llm_api_key_file=None, llm_model="test-model"),
+    )
+
+    try:
+        service._route_from_payload(
+            {
+                "is_answerable": True,
+                "needs_sql": True,
+                "data_demands": [
+                    {
+                        "market": "HK",
+                        "ts_code": "01810.HK",
+                        "packages": ["financial_statement"],
+                        "intent": "stock_research",
+                    }
+                ],
+                "reason": "用户请求分析小米集团，属于港股投资分析，需要结构化财务数据支撑。",
+            }
+        )
+    except ValueError as exc:
+        assert "answer_mode" in str(exc)
+    else:
+        raise AssertionError("answer_mode should be required")
 
 
 def test_route_from_payload_accepts_hk_financial_demand_only() -> None:
@@ -318,6 +415,7 @@ def test_route_from_payload_accepts_hk_financial_demand_only() -> None:
         {
             "is_answerable": True,
             "needs_sql": False,
+            "answer_mode": "stock_research",
             "data_demands": [
                 {
                     "market": "HK",
@@ -349,6 +447,7 @@ def test_route_from_payload_downgrades_hk_non_financial_packages() -> None:
         {
             "is_answerable": True,
             "needs_sql": False,
+            "answer_mode": "stock_research",
             "data_demands": [
                 {
                     "market": "HK",
@@ -378,6 +477,7 @@ def test_route_from_payload_accepts_up_to_five_market_data_demands() -> None:
         {
             "is_answerable": True,
             "needs_sql": False,
+            "answer_mode": "stock_research",
             "data_demands": [
                 {"ts_code": f"00000{index}.SZ", "packages": ["quote_valuation"]}
                 for index in range(1, 7)
@@ -400,11 +500,17 @@ def test_answer_prompt_includes_market_data_context_and_report_instruction() -> 
         Mock(),
         settings=Settings(llm_api_key="test-key", llm_api_key_file=None, llm_model="test-model"),
     )
+    service._supporting_data = Mock(return_value={})  # type: ignore[method-assign]
 
     prompt = service._answer_prompt(
         "招商银行投资分析报告",
         rows=[],
         context={},
+        route=QuestionRoute(
+            is_answerable=True,
+            should_query_data=True,
+            answer_mode="stock_research",
+        ),
         market_data_context={"stock": {"ts_code": "600036.SH"}, "context": {"latest": []}},
     )
     payload = json.loads(prompt.split("\n", 1)[1])
@@ -419,8 +525,85 @@ def test_answer_prompt_includes_market_data_context_and_report_instruction() -> 
     assert "不得据此判断没有财务数据" in prompt
     assert "第二块必须先给关键财务趋势表" in prompt
     assert "A 股和港股都要优先选取收入" in prompt
+    assert "answer_style_policy" in payload
+    assert "充分的个股研究结构" in payload["answer_style_policy"]
     assert "15000 积分" not in prompt
     assert "随查询减少的余额" not in prompt
+
+
+def test_answer_prompt_keeps_open_question_structure_flexible() -> None:
+    """确认开放投研问题不再被强制套用完整个股报告模板。
+
+    创建日期：2026-05-09
+    author: sunshengxian
+    """
+
+    service = LlmService(
+        Mock(),
+        settings=Settings(llm_api_key="test-key", llm_api_key_file=None, llm_model="test-model"),
+    )
+    service._supporting_data = Mock(return_value={})  # type: ignore[method-assign]
+
+    prompt = service._answer_prompt(
+        "AH 溢价机会接下来怎么看？",
+        rows=[],
+        context={},
+        route=QuestionRoute(
+            is_answerable=True,
+            should_query_data=True,
+            answer_mode="open_research",
+        ),
+        market_data_context={
+            "context": {
+                "scope": "CROSS_MARKET_MULTI",
+                "items": [],
+                "ah_cross_market": [],
+            }
+        },
+    )
+    payload = json.loads(prompt.split("\n", 1)[1])
+
+    assert "开放投研问答" in payload["answer_style_policy"]
+    assert "不要机械套完整个股报告模板" in payload["answer_style_policy"]
+    assert "如果这是个股投资分析报告" not in prompt
+    assert "第二块必须先给关键财务趋势表" in prompt
+
+
+def test_answer_prompt_uses_stock_research_mode_for_plain_company_analysis() -> None:
+    """确认“分析小米集团”这类个股分析会使用充分个股研究结构。
+
+    创建日期：2026-05-09
+    author: sunshengxian
+    """
+
+    service = LlmService(
+        Mock(),
+        settings=Settings(llm_api_key="test-key", llm_api_key_file=None, llm_model="test-model"),
+    )
+    service._supporting_data = Mock(return_value={})  # type: ignore[method-assign]
+
+    prompt = service._answer_prompt(
+        "分析小米集团",
+        rows=[],
+        context={},
+        route=QuestionRoute(
+            is_answerable=True,
+            should_query_data=True,
+            answer_mode="stock_research",
+            data_demands=(MarketDataDemand("01810.HK", ("financial_statement",), market="HK"),),
+            reason="用户请求分析小米集团，属于港股投资分析，需要结构化财务数据支撑。",
+        ),
+        market_data_context={
+            "status": "COMPLETED",
+            "context": {"scope": "HK_STOCK_SINGLE", "financial_periods": [{}, {}, {}]},
+        },
+    )
+    payload = json.loads(prompt.split("\n", 1)[1])
+
+    assert payload["answer_mode"] == "stock_research"
+    assert "充分的个股研究结构" in payload["answer_style_policy"]
+    assert "如果这是个股投资分析报告" in prompt
+    assert "扣非净利润" in prompt
 
 
 def test_data_only_answer_shows_24_financial_periods() -> None:
@@ -1024,6 +1207,7 @@ def test_uncertain_question_scope_uses_default_deepseek_router(monkeypatch) -> N
                         "message": {
                             "content": (
                                 '{"is_answerable":true,"needs_sql":false,'
+                                '"answer_mode":"open_research",'
                                 '"reason":"允许回答"}'
                             )
                         }
@@ -1098,6 +1282,7 @@ def test_question_router_falls_back_to_qwen_when_deepseek_busy(monkeypatch) -> N
                         "message": {
                             "content": (
                                 '{"is_answerable":true,"needs_sql":false,'
+                                '"answer_mode":"stock_research",'
                                 '"reason":"备用模型路由成功"}'
                             )
                         }

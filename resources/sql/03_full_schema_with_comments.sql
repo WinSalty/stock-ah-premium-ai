@@ -455,6 +455,93 @@ CREATE TABLE IF NOT EXISTS `pushplus_message_log` (
     FOREIGN KEY (`alert_event_id`) REFERENCES `alert_event` (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='PushPlus 推送消息流水表';
 
+CREATE TABLE IF NOT EXISTS `limit_up_analysis_cache` (
+  `id` INT NOT NULL AUTO_INCREMENT COMMENT '自增主键',
+  `trade_date` DATE NOT NULL COMMENT '打板报告对应 A 股交易日',
+  `model` VARCHAR(64) NOT NULL COMMENT '生成报告使用的 LLM 模型',
+  `prompt_version` VARCHAR(64) NOT NULL COMMENT '提示词版本，用于区分报告生成口径',
+  `data_snapshot_hash` VARCHAR(64) NOT NULL COMMENT '结构化上下文快照哈希，用于重跑幂等',
+  `status` VARCHAR(16) NOT NULL DEFAULT 'PENDING' COMMENT '报告状态，PENDING、GENERATING、READY、FAILED',
+  `title` VARCHAR(160) NOT NULL COMMENT '报告标题',
+  `content_html` LONGTEXT DEFAULT NULL COMMENT '适合 PushPlus 和公开页展示的完整 HTML 报告',
+  `content_markdown` LONGTEXT DEFAULT NULL COMMENT 'LLM 原始或规范化 Markdown 内容',
+  `context_json` LONGTEXT DEFAULT NULL COMMENT '送入模型的结构化上下文 JSON',
+  `data_quality_json` LONGTEXT DEFAULT NULL COMMENT '各数据接口成功、缺失或失败的质量记录 JSON',
+  `error_message` TEXT DEFAULT NULL COMMENT '报告生成失败摘要',
+  `generated_at` DATETIME DEFAULT NULL COMMENT '报告生成完成时间',
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '记录创建时间',
+  `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '记录更新时间',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_limit_up_analysis_snapshot` (`trade_date`, `model`, `prompt_version`, `data_snapshot_hash`),
+  KEY `idx_limit_up_analysis_trade_status` (`trade_date`, `status`),
+  KEY `idx_limit_up_analysis_generated` (`generated_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='打板 LLM 分析报告缓存表';
+
+CREATE TABLE IF NOT EXISTS `limit_up_push_recipient` (
+  `id` INT NOT NULL AUTO_INCREMENT COMMENT '自增主键',
+  `user_id` INT NOT NULL COMMENT '接收报告的系统用户 ID',
+  `enabled` TINYINT(1) NOT NULL DEFAULT 1 COMMENT '是否接收常规数据就绪推送和手动推送',
+  `weekend_replay_enabled` TINYINT(1) NOT NULL DEFAULT 1 COMMENT '是否接收周六和周日晚间缓存报告复推',
+  `created_by_user_id` INT DEFAULT NULL COMMENT '首次配置管理员用户 ID',
+  `updated_by_user_id` INT DEFAULT NULL COMMENT '最近修改管理员用户 ID',
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '记录创建时间',
+  `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '记录更新时间',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_limit_up_push_recipient_user` (`user_id`),
+  KEY `idx_limit_up_push_recipient_enabled` (`enabled`),
+  CONSTRAINT `fk_limit_up_push_recipient_user`
+    FOREIGN KEY (`user_id`) REFERENCES `app_user` (`id`),
+  CONSTRAINT `fk_limit_up_push_recipient_created_by`
+    FOREIGN KEY (`created_by_user_id`) REFERENCES `app_user` (`id`),
+  CONSTRAINT `fk_limit_up_push_recipient_updated_by`
+    FOREIGN KEY (`updated_by_user_id`) REFERENCES `app_user` (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='打板报告 PushPlus 接收人配置表';
+
+CREATE TABLE IF NOT EXISTS `limit_up_push_delivery` (
+  `id` INT NOT NULL AUTO_INCREMENT COMMENT '自增主键',
+  `analysis_id` INT NOT NULL COMMENT '打板报告缓存 ID',
+  `user_id` INT NOT NULL COMMENT '接收系统用户 ID',
+  `scheduled_kind` VARCHAR(32) NOT NULL COMMENT '计划类型，DATA_READY、SATURDAY_REPLAY、SUNDAY_REPLAY、MANUAL',
+  `scheduled_at` DATETIME NOT NULL COMMENT '业务计划时间，用于定时任务重跑幂等',
+  `status` VARCHAR(16) NOT NULL DEFAULT 'PENDING' COMMENT '推送状态，PENDING、SENT、FAILED、SKIPPED',
+  `pushplus_message_log_id` INT DEFAULT NULL COMMENT '对应 PushPlus 消息流水 ID',
+  `error_message` TEXT DEFAULT NULL COMMENT '失败或跳过原因',
+  `sent_at` DATETIME DEFAULT NULL COMMENT '发送成功时间',
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '记录创建时间',
+  `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '记录更新时间',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_limit_up_push_delivery_once` (`analysis_id`, `scheduled_kind`, `scheduled_at`, `user_id`),
+  KEY `idx_limit_up_push_delivery_status` (`status`, `scheduled_at`),
+  KEY `idx_limit_up_push_delivery_user` (`user_id`, `scheduled_at`),
+  CONSTRAINT `fk_limit_up_push_delivery_analysis`
+    FOREIGN KEY (`analysis_id`) REFERENCES `limit_up_analysis_cache` (`id`),
+  CONSTRAINT `fk_limit_up_push_delivery_user`
+    FOREIGN KEY (`user_id`) REFERENCES `app_user` (`id`),
+  CONSTRAINT `fk_limit_up_push_delivery_log`
+    FOREIGN KEY (`pushplus_message_log_id`) REFERENCES `pushplus_message_log` (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='打板报告业务推送计划与结果表';
+
+CREATE TABLE IF NOT EXISTS `limit_up_report_share` (
+  `id` INT NOT NULL AUTO_INCREMENT COMMENT '自增主键',
+  `analysis_id` INT NOT NULL COMMENT '被分享的打板报告缓存 ID',
+  `share_token` VARCHAR(64) NOT NULL COMMENT '临时公开查看 token，不包含用户或报告明文信息',
+  `expires_at` DATETIME DEFAULT NULL COMMENT '分享链接过期时间，NULL 表示永久有效',
+  `created_by_user_id` INT DEFAULT NULL COMMENT '创建分享的管理员用户 ID',
+  `revoked_at` DATETIME DEFAULT NULL COMMENT '撤销时间，非空表示链接已失效',
+  `last_viewed_at` DATETIME DEFAULT NULL COMMENT '最近一次公开查看时间',
+  `view_count` INT NOT NULL DEFAULT 0 COMMENT '公开查看次数',
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '记录创建时间',
+  `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '记录更新时间',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_limit_up_report_share_token` (`share_token`),
+  KEY `idx_limit_up_report_share_analysis` (`analysis_id`, `created_at`),
+  KEY `idx_limit_up_report_share_expires` (`expires_at`),
+  CONSTRAINT `fk_limit_up_report_share_analysis`
+    FOREIGN KEY (`analysis_id`) REFERENCES `limit_up_analysis_cache` (`id`),
+  CONSTRAINT `fk_limit_up_report_share_created_by`
+    FOREIGN KEY (`created_by_user_id`) REFERENCES `app_user` (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='打板报告临时分享链接表';
+
 CREATE TABLE IF NOT EXISTS `stock_selection_factor_snapshot` (
   `id` INT NOT NULL AUTO_INCREMENT COMMENT '自增主键',
   `factor_date` DATE NOT NULL COMMENT '因子快照日期',
