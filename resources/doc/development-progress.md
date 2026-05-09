@@ -115,6 +115,8 @@
   - 关注/自选股的 H/A 折价、H/A 溢价问题已按对应方向排序，避免把 H 股折价和 H 股溢价混用。
   - AH 溢价、折价和套利类问题会追加候选池、市场分布、自选机会和 `llm-knowledge/ah-premium/` 中的投资研究片段。
   - LLM 个股补数上下文的财务报表、财务指标、主营业务、审计、快报、预告和分红数据统一保留最近 24 期，并同步纳入个股资金流向 `moneyflow` 作为短期交易行为参考。
+  - LLM 同会话追问已新增轻量回答路径：带有会话历史且明显是在质疑、修正、继续前文的消息，不再进入问题路由、SQL、按需补数和完整报告模板，直接由模型结合前文自主回答；若同一会话里明确切换到新的股票代码、标的或独立分析任务，仍走原结构化数据路由。
+  - LLM 个股补数上下文已为元级金额补充亿元派生字段和中文标签字段，避免模型在回答中把营业收入、归母净利润、经营现金流等财务金额换算少一位或多一位。
   - 只读 SQL Guard：只允许 SELECT、禁止多语句和写库操作、限制白名单视图、自动 limit。
   - 默认 schema 已切换为官方 AH 比价、自选机会和港股通可操作性视图。
   - 会话与消息落库；提交新问题时会读取最近会话历史作为上下文记忆。
@@ -218,6 +220,7 @@
 - 调整 PushPlus 扫码自动绑定和提醒保存绑定校验后，`ruff check app tests` 通过，`pytest` 42 个单元测试通过，`npm run build` 通过。
 - 拆分个人绑定、提醒弹窗绑定、用户管理页 PushPlus 管理，并新增消息推送开关后，`alembic upgrade head` 已应用 `20260505_0014`，`ruff check app tests` 通过，`pytest` 44 个单元测试通过，`npm run build` 通过。
 - 新增总览随机锦囊、自选卡片股价/阈值展示和用户级趋势图指标配置后，`python3 -m compileall app tests`、`ruff check app tests`、`pytest`（56 个单元测试）、`npm run build`、`npm audit --omit=dev` 和 `./scripts/check.sh` 均通过。
+- 新增同会话追问轻量回答路径和 LLM 上下文亿元派生字段后，`pytest tests/test_llm_service.py tests/test_market_data_orchestrator.py -q` 通过，56 个单元测试通过；`ruff check app/services/llm_service.py app/services/llm_metric_definitions.py app/services/market_data_orchestrator.py tests/test_llm_service.py tests/test_market_data_orchestrator.py` 通过。
 - 增强启动、停止和重启脚本后，`bash -n scripts/*.sh` 通过；已分别用 `BACKEND_PORT=18000`、`FRONTEND_PORT=15173` 验证启动诊断、整项目重启和停止诊断，并确认后端 `/api/health` 返回正常。
 - 拆分 PushPlus 独立菜单、推送记录搜索和阈值提醒价格/汇率明细后，`alembic upgrade head` 已应用 `20260508_0030`，`pytest tests/test_auth_service.py tests/test_notification_service.py` 36 个单元测试通过，`ruff check` 目标文件通过，`npm run build` 通过。
 - 新增 LLM 项目级日调用限流，默认 `LLM_DAILY_CALL_LIMIT=100`，按 `llm_call_metric` 中外部模型主调用 phase 统计，不计首包、SQL 执行和总耗时等辅助指标。

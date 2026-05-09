@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from datetime import date
+from decimal import Decimal
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session
 
 from app.db.base import Base
@@ -260,6 +261,66 @@ def test_orchestrator_allows_hk_financial_demand(monkeypatch) -> None:
     assert result.status == "COMPLETED"
     assert result.context["scope"] == "HK_STOCK_SINGLE"
     assert fetcher.calls == [("02380.HK", "financial_statement")]
+
+
+def test_orchestrator_adds_yi_amount_fields_for_llm_context() -> None:
+    """确认元级财务金额进入 LLM 上下文前会补充亿元口径，避免模型换算少一位。
+
+    创建日期：2026-05-09
+    author: sunshengxian
+    """
+
+    db = _session()
+    service = MarketDataOrchestrator(db, fetcher=RecordingFetcher())  # type: ignore[arg-type]
+    row = service._format_context_row(  # noqa: SLF001
+        {
+            "ts_code": "000858.SZ",
+            "end_date": date(2026, 3, 31),
+            "revenue": Decimal("22838024164.27"),
+            "n_income_attr_p": Decimal("8062764940.78"),
+            "net_cash_flows_oper_act": Decimal("-2535000000"),
+        }
+    )
+
+    assert row["revenue_yi"] == "228.38"
+    assert row["营业收入_亿元"] == "228.38"
+    assert row["n_income_attr_p_yi"] == "80.63"
+    assert row["归母净利润_亿元"] == "80.63"
+    assert row["net_cash_flows_oper_act_yi"] == "-25.35"
+    assert row["经营现金流净额_亿元"] == "-25.35"
+
+
+def test_query_view_formats_financial_amounts(monkeypatch) -> None:
+    """确认视图查询出口统一补充亿元字段，覆盖真实 SQL 返回链路。
+
+    创建日期：2026-05-09
+    author: sunshengxian
+    """
+
+    db = _session()
+    db.execute(
+        text(
+            "create table tmp_financial_context ("
+            "ts_code varchar(20), revenue numeric, n_income_attr_p numeric)"
+        )
+    )
+    db.execute(
+        text(
+            "insert into tmp_financial_context "
+            "(ts_code, revenue, n_income_attr_p) "
+            "values ('000858.SZ', 22838024164.27, 8062764940.78)"
+        )
+    )
+    db.commit()
+    service = MarketDataOrchestrator(db, fetcher=RecordingFetcher())  # type: ignore[arg-type]
+
+    rows = service._query_view(  # noqa: SLF001
+        "select * from tmp_financial_context where ts_code = :ts_code",
+        "000858.SZ",
+    )
+
+    assert rows[0]["revenue_yi"] == "228.38"
+    assert rows[0]["n_income_attr_p_yi"] == "80.63"
 
 
 def test_orchestrator_uses_hk_financial_cache(monkeypatch) -> None:

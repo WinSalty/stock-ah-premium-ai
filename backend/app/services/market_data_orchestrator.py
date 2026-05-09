@@ -4,6 +4,7 @@ import json
 import re
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from sqlalchemy import bindparam, func, select, text
@@ -64,6 +65,60 @@ ACCOUNTING_REVIEW_KEYWORDS = (
     "季报",
 )
 MAX_MARKET_DATA_STOCKS = 5
+AMOUNT_YUAN_FIELDS = frozenset(
+    {
+        "revenue",
+        "total_revenue",
+        "operate_income",
+        "n_income_attr_p",
+        "profit_dedt",
+        "n_income",
+        "netcash_operate",
+        "net_cash_flows_oper_act",
+        "n_cashflow_act",
+        "n_cashflow_inv_act",
+        "n_cash_flows_fnc_act",
+        "money_cap",
+        "contract_liab",
+        "inventories",
+        "total_assets",
+        "total_liab",
+        "total_hldr_eqy_exc_min_int",
+        "invest_income",
+        "fv_value_chg_gain",
+        "assets_impair_loss",
+        "credit_impa_loss",
+        "bz_sales",
+        "bz_profit",
+        "bz_cost",
+    }
+)
+AMOUNT_YI_LABELS = {
+    "revenue": "营业收入_亿元",
+    "total_revenue": "营业总收入_亿元",
+    "operate_income": "营业收入_亿元",
+    "n_income_attr_p": "归母净利润_亿元",
+    "profit_dedt": "扣非净利润_亿元",
+    "n_income": "净利润_亿元",
+    "netcash_operate": "经营现金流净额_亿元",
+    "net_cash_flows_oper_act": "经营现金流净额_亿元",
+    "n_cashflow_act": "经营现金流净额_亿元",
+    "n_cashflow_inv_act": "投资现金流净额_亿元",
+    "n_cash_flows_fnc_act": "筹资现金流净额_亿元",
+    "money_cap": "货币资金_亿元",
+    "contract_liab": "合同负债_亿元",
+    "inventories": "存货_亿元",
+    "total_assets": "总资产_亿元",
+    "total_liab": "总负债_亿元",
+    "total_hldr_eqy_exc_min_int": "归母权益_亿元",
+    "invest_income": "投资收益_亿元",
+    "fv_value_chg_gain": "公允价值变动收益_亿元",
+    "assets_impair_loss": "资产减值损失_亿元",
+    "credit_impa_loss": "信用减值损失_亿元",
+    "bz_sales": "主营收入_亿元",
+    "bz_profit": "主营利润_亿元",
+    "bz_cost": "主营成本_亿元",
+}
 
 
 @dataclass(frozen=True)
@@ -595,7 +650,43 @@ class MarketDataOrchestrator:
 
     def _query_view(self, sql: str, ts_code: str) -> list[dict[str, Any]]:
         rows = self.db.execute(text(sql), {"ts_code": ts_code}).fetchall()
-        return [dict(row._mapping) for row in rows]
+        return [self._format_context_row(dict(row._mapping)) for row in rows]
+
+    def _format_context_row(self, row: dict[str, Any]) -> dict[str, Any]:
+        """为 LLM 上下文补充亿元派生字段，避免模型把元级金额换算错位。
+
+        创建日期：2026-05-09
+        author: sunshengxian
+        """
+
+        formatted = dict(row)
+        for field in AMOUNT_YUAN_FIELDS:
+            if field not in row:
+                continue
+            value = self._yuan_to_yi(row.get(field))
+            if value is None:
+                continue
+            formatted[f"{field}_yi"] = value
+            label = AMOUNT_YI_LABELS.get(field)
+            if label:
+                # 同时给机器友好字段和中文标签字段，确保模型按字段名或标签阅读时口径一致。
+                formatted[label] = value
+        return formatted
+
+    def _yuan_to_yi(self, value: Any) -> str | None:
+        """把元级金额统一换算为亿元字符串；无法解析的空值保持缺失。
+
+        创建日期：2026-05-09
+        author: sunshengxian
+        """
+
+        if value in (None, ""):
+            return None
+        try:
+            amount = Decimal(str(value))
+        except (InvalidOperation, ValueError):
+            return None
+        return str((amount / Decimal("100000000")).quantize(Decimal("0.01")))
 
     def _build_ah_cross_market_context(
         self,

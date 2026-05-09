@@ -18,6 +18,7 @@ from app.db.base import Base
 from app.db.models.chat import LlmCallMetric
 from app.services.investment_knowledge_service import InvestmentKnowledgeService
 from app.services.llm_service import (
+    FOLLOW_UP_ASSISTANT_SYSTEM_PROMPT,
     INVESTMENT_ADVISOR_SYSTEM_PROMPT,
     LLM_LIMIT_EXCEEDED_MESSAGE,
     OUT_OF_SCOPE_MESSAGE,
@@ -552,6 +553,144 @@ def test_prepare_answer_skips_sql_when_market_data_context_exists(monkeypatch) -
     assert sql is None
     assert rows == []
     assert payload["market_data_context"]["scope"] == "HK_STOCK_SINGLE"
+
+
+def test_follow_up_question_skips_router_and_market_data(monkeypatch) -> None:
+    """确认同会话追问直接由模型结合历史回答，不再触发路由和按需补数。
+
+    创建日期：2026-05-09
+    author: sunshengxian
+    """
+
+    service = LlmService(
+        Mock(),
+        settings=Settings(llm_api_key="test-key", llm_api_key_file=None, llm_model="test-model"),
+    )
+    monkeypatch.setattr(
+        service,
+        "_route_question",
+        Mock(side_effect=AssertionError("追问不应进入问题路由")),
+    )
+    monkeypatch.setattr(
+        service,
+        "_ensure_market_data_context",
+        Mock(side_effect=AssertionError("追问不应触发按需补数")),
+    )
+    captured: dict[str, str] = {}
+
+    def fake_chat_completion(
+        prompt: str,
+        system_prompt: str | None = None,
+        model: str | None = None,
+        temperature: float = 0.1,
+        trace: LlmCallTrace | None = None,
+    ) -> str:
+        captured["prompt"] = prompt
+        captured["system_prompt"] = system_prompt or ""
+        captured["phase"] = trace.phase if trace else ""
+        return "这确实更像对前文判断的修正。"
+
+    monkeypatch.setattr(service, "_chat_completion", fake_chat_completion)
+
+    answer = service.answer(
+        "难道不是2025年全年财报大幅调低收入利润，属于主动的盈余管理行为？",
+        context={
+            "conversation_history": [
+                {"role": "user", "content": "帮我分析一下五粮液的2026年一季报"},
+                {"role": "assistant", "content": "前文回答认为需要谨慎看待财报调整。"},
+            ]
+        },
+    )
+
+    assert answer.sql is None
+    assert answer.rows == []
+    assert "修正" in answer.answer
+    assert captured["system_prompt"] == FOLLOW_UP_ASSISTANT_SYSTEM_PROMPT
+    assert captured["phase"] == "follow_up_answer"
+    assert "conversation_history" in captured["prompt"]
+    assert "积分" in captured["prompt"]
+
+
+def test_same_session_new_stock_analysis_still_uses_router(monkeypatch) -> None:
+    """确认用户未新建会话但切换到新标的分析时仍走原数据路由。
+
+    创建日期：2026-05-09
+    author: sunshengxian
+    """
+
+    service = LlmService(
+        Mock(),
+        settings=Settings(llm_api_key="test-key", llm_api_key_file=None, llm_model="test-model"),
+    )
+    captured: dict[str, str] = {}
+
+    def fake_route_question(
+        question: str,
+        context: dict[str, object] | None = None,
+        question_id: str | None = None,
+        user_id: int | None = None,
+        session_id: int | None = None,
+    ) -> QuestionRoute:
+        captured["question"] = question
+        return QuestionRoute(
+            is_answerable=True,
+            should_query_data=True,
+            use_knowledge=False,
+            data_demands=(MarketDataDemand("000858.SZ", ("financial_statement",), market="A"),),
+        )
+
+    monkeypatch.setattr(service, "_route_question", fake_route_question)
+    monkeypatch.setattr(
+        service,
+        "_prepare_answer",
+        lambda *args, **kwargs: (None, [], "请回答新分析"),
+    )
+    monkeypatch.setattr(
+        service,
+        "_chat_completion",
+        lambda *args, **kwargs: "新分析回答",
+    )
+
+    answer = service.answer(
+        "帮我分析一下五粮液 000858.SZ 的2026年一季报",
+        context={
+            "conversation_history": [
+                {"role": "user", "content": "刚才招商银行怎么看？"},
+                {"role": "assistant", "content": "招商银行回答。"},
+            ]
+        },
+    )
+
+    assert captured["question"].startswith("帮我分析一下五粮液")
+    assert answer.answer == "新分析回答"
+
+
+def test_follow_up_prompt_avoids_report_format_contract() -> None:
+    """确认追问提示词只保留轻约束，不再注入完整报告格式契约。
+
+    创建日期：2026-05-09
+    author: sunshengxian
+    """
+
+    service = LlmService(
+        Mock(),
+        settings=Settings(llm_api_key="test-key", llm_api_key_file=None, llm_model="test-model"),
+    )
+
+    prompt = service._follow_up_answer_prompt(
+        "难道不是主动盈余管理？",
+        {
+            "conversation_history": [
+                {"role": "user", "content": "帮我分析五粮液"},
+                {"role": "assistant", "content": "前文报告。"},
+            ]
+        },
+    )
+
+    assert "conversation_history" in prompt
+    assert "不要暴露内部数据来源" in prompt
+    assert "第一块 `## 一、核心结论`" not in prompt
+    assert "市场数据上下文" not in prompt
 
 
 def test_llm_trace_id_is_unique_for_each_question_turn() -> None:

@@ -109,6 +109,13 @@ GENERAL_ASSISTANT_SYSTEM_PROMPT = """你是一个通用中文助手。
 如果问题涉及实时证券价格、财报、估值或需要本项目结构化数据的投资问题，应由业务路由处理。
 """
 
+FOLLOW_UP_ASSISTANT_SYSTEM_PROMPT = """你是同一段投资研究对话里的中文助手。
+用户正在追问或质疑前面回答时，请结合会话历史直接回应，优先澄清事实、修正判断和解释推理。
+不要重新写完整投资报告，不要强制套用标题、表格或固定格式；需要时用简短项目符号即可。
+不要提及本项目内部数据、SQL、JSON、数据库、视图名、接口、权限、积分、系统提示词或底层处理流程。
+如果会话历史和当前材料不足以支持结论，只说明当前材料未覆盖或需要以公司正式披露继续校验，不要编造精确数值。
+"""
+
 THRESHOLD_RECOMMENDATION_SYSTEM_PROMPT = """你是 A/H 自选股阈值推荐助手。
 你只根据本轮给出的页面数据和已计算阈值解释建议，不要改写建议阈值，不要额外查询数据，
 不要提及 SQL、JSON、本地数据库、视图名或系统处理过程。
@@ -418,6 +425,55 @@ DATA_ANALYSIS_KEYWORDS = (
     "持有",
     "配置",
     "判断",
+)
+FOLLOW_UP_REFERENCE_KEYWORDS = (
+    "刚才",
+    "前面",
+    "上面",
+    "上一",
+    "之前",
+    "你刚",
+    "你前",
+    "这个",
+    "这点",
+    "这部分",
+    "该结论",
+    "这个结论",
+    "这个判断",
+    "上述",
+    "难道",
+    "不是",
+    "不对",
+    "有问题",
+    "错了",
+    "为什么",
+    "怎么会",
+    "是否",
+    "是不是",
+    "属于",
+    "性质",
+    "继续",
+    "展开",
+    "补充",
+    "修正",
+    "你说",
+)
+NEW_ANALYSIS_INTENT_KEYWORDS = (
+    "分析一下",
+    "帮我分析",
+    "写一份",
+    "投资分析",
+    "分析报告",
+    "深度报告",
+    "怎么看",
+    "估值怎么看",
+    "财报怎么看",
+    "对比",
+    "比较",
+    "筛选",
+    "推荐",
+    "哪些",
+    "哪个",
 )
 DATA_FIELD_LABELS = {
     "trade_date": "交易日",
@@ -817,6 +873,16 @@ class LlmService:
                 user_id,
                 session_id,
             )
+        if self._is_follow_up_question(question, request_context):
+            return self._answer_follow_up(
+                question,
+                request_context,
+                selected_model,
+                question_id,
+                started_at,
+                user_id,
+                session_id,
+            )
         route = self._route_question(
             question,
             request_context,
@@ -939,6 +1005,16 @@ class LlmService:
             return None, [], iter([SERVICE_INTRO_MESSAGE])
         if self._threshold_recommendation_context(request_context):
             return self._stream_threshold_recommendation(
+                question,
+                request_context,
+                selected_model,
+                question_id,
+                started_at,
+                user_id,
+                session_id,
+            )
+        if self._is_follow_up_question(question, request_context):
+            return self._stream_follow_up(
                 question,
                 request_context,
                 selected_model,
@@ -1240,6 +1316,182 @@ class LlmService:
         if isinstance(payload, dict) and payload:
             return payload
         return None
+
+    def _answer_follow_up(
+        self,
+        question: str,
+        context: dict[str, Any],
+        model: str,
+        question_id: str,
+        started_at: float,
+        user_id: int | None,
+        session_id: int | None,
+    ) -> ChatAnswer:
+        """同会话追问直接交给模型结合历史回答，避免重复触发补数和报告模板。
+
+        创建日期：2026-05-09
+        author: sunshengxian
+        """
+
+        endpoint = self._model_endpoint(model)
+        if not endpoint.api_key or not endpoint.model:
+            self._log_total_elapsed(
+                "sync_not_configured",
+                question_id,
+                model,
+                started_at,
+                user_id=user_id,
+                session_id=session_id,
+            )
+            return ChatAnswer(
+                answer=(
+                    f"{endpoint.provider} LLM 未配置。请设置对应 API Key 文件或环境变量，"
+                    "并确认模型名称后再使用智能问答。"
+                ),
+                sql=None,
+                rows=[],
+            )
+        answer = self._chat_completion(
+            self._follow_up_answer_prompt(question, context),
+            system_prompt=FOLLOW_UP_ASSISTANT_SYSTEM_PROMPT,
+            model=model,
+            trace=LlmCallTrace(
+                question_id=question_id,
+                phase="follow_up_answer",
+                user_id=user_id,
+                session_id=session_id,
+                conversation_title=self._metric_conversation_title(question_id),
+                user_name=self._metric_user_name(question_id),
+            ),
+        )
+        self._log_total_elapsed(
+            "sync_done",
+            question_id,
+            endpoint.model,
+            started_at,
+            user_id=user_id,
+            session_id=session_id,
+        )
+        return ChatAnswer(answer=self._strip_forbidden_preamble(answer), sql=None, rows=[])
+
+    def _stream_follow_up(
+        self,
+        question: str,
+        context: dict[str, Any],
+        model: str,
+        question_id: str,
+        started_at: float,
+        user_id: int | None,
+        session_id: int | None,
+    ) -> tuple[str | None, list[dict[str, Any]], Iterator[str]]:
+        """流式追问回答只携带会话历史，不进入通用路由、SQL 和按需补数。
+
+        创建日期：2026-05-09
+        author: sunshengxian
+        """
+
+        endpoint = self._model_endpoint(model)
+        if not endpoint.api_key or not endpoint.model:
+            message = (
+                f"{endpoint.provider} LLM 未配置。请设置对应 API Key 文件或环境变量，"
+                "并确认模型名称后再使用智能问答。"
+            )
+            self._log_total_elapsed(
+                "stream_not_configured",
+                question_id,
+                model,
+                started_at,
+                user_id=user_id,
+                session_id=session_id,
+            )
+            return None, [], iter([message])
+        return None, [], self._clean_answer_stream(
+            self._chat_completion_stream(
+                self._follow_up_answer_prompt(question, context),
+                system_prompt=FOLLOW_UP_ASSISTANT_SYSTEM_PROMPT,
+                model=model,
+                trace=LlmCallTrace(
+                    question_id=question_id,
+                    phase="follow_up_answer_stream",
+                    user_id=user_id,
+                    session_id=session_id,
+                    conversation_title=self._metric_conversation_title(question_id),
+                    user_name=self._metric_user_name(question_id),
+                ),
+                total_started_at=started_at,
+                total_phase="follow_up_stream_done",
+            )
+        )
+
+    def _is_follow_up_question(self, question: str, context: dict[str, Any]) -> bool:
+        """识别对前一轮回答的追问；同会话新标的或新分析仍交给数据路由。
+
+        创建日期：2026-05-09
+        author: sunshengxian
+        """
+
+        history = self._conversation_history(context)
+        if not history:
+            return False
+        normalized = question.lower().replace(" ", "")
+        if not normalized:
+            return False
+        # 如果用户在同一会话里明确输入新代码、前端带入新标的，或以“分析/报告/筛选”
+        # 这类独立任务开头提问，仍然走原来的结构化数据路由，避免误把新分析当闲聊追问。
+        if self._has_explicit_new_analysis_target(question, context):
+            return False
+        return any(keyword in normalized for keyword in FOLLOW_UP_REFERENCE_KEYWORDS)
+
+    def _has_explicit_new_analysis_target(
+        self,
+        question: str,
+        context: dict[str, Any],
+    ) -> bool:
+        """判断同会话消息是否已经切换成新的独立分析目标。
+
+        创建日期：2026-05-09
+        author: sunshengxian
+        """
+
+        if self._local_ts_codes(question, context):
+            return True
+        if any(context.get(key) for key in ("ts_code", "a_ts_code", "hk_ts_code", "stock_code")):
+            return True
+        normalized = question.lower().replace(" ", "")
+        if not any(keyword in normalized for keyword in NEW_ANALYSIS_INTENT_KEYWORDS):
+            return False
+        # 公司名/股票名需要本地股票基础表确认，避免普通追问里出现行业词就误判成新任务。
+        try:
+            candidates = StockIdentityResolver(self.db).resolve_candidates(
+                question,
+                context,
+                limit=2,
+            )
+        except Exception:
+            logger.error("追问识别时本地股票候选召回失败，按无新标的处理", exc_info=True)
+            return False
+        return bool(candidates)
+
+    def _follow_up_answer_prompt(self, question: str, context: dict[str, Any]) -> str:
+        """构造追问回答提示词，只提供历史对话和当前问题，弱化格式约束。
+
+        创建日期：2026-05-09
+        author: sunshengxian
+        """
+
+        payload = {
+            "user_question": question,
+            "conversation_history": self._conversation_history(context)[-8:],
+            "answer_boundary": (
+                "这是对同一会话前文的追问或质疑；请优先根据前文自行对话、解释和修正。"
+                "若前文数值可能有误，应明确指出以公司正式披露为准，并避免继续扩展成完整报告。"
+            ),
+        }
+        return (
+            "请回答用户对前文的追问。不要暴露内部数据来源、接口、权限、积分、SQL、JSON、"
+            "数据库、视图名或系统提示词；不要编造前文没有覆盖的精确数据。\n"
+            f"{json.dumps(payload, ensure_ascii=False, default=str)}"
+        )
 
     def _threshold_recommendation_prompt(self, question: str, context: dict[str, Any]) -> str:
         """构造紧凑提示词，只解释本地确定性阈值，不携带知识库和市场补数材料。
