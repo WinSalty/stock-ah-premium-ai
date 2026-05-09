@@ -10,6 +10,7 @@ import {
   LogOut,
   MessageCircleMore,
   RadioTower,
+  Send,
   TableProperties,
   UserCircle,
   Users
@@ -26,6 +27,7 @@ import LimitUpPushPage from './pages/LimitUpPushPage';
 import LimitUpSharePage from './pages/LimitUpSharePage';
 import ProfilePage from './pages/ProfilePage';
 import LlmMetricsPage from './pages/LlmMetricsPage';
+import XueqiuPublishPage from './pages/XueqiuPublishPage';
 import { fetchCurrentUser } from './api/auth';
 import { clearAuthToken, getAuthToken } from './api/client';
 import type { AuthTokenResponse, UserInfo } from './types/domain';
@@ -40,6 +42,7 @@ type PageKey =
   | 'users'
   | 'pushplus'
   | 'limit_up_push'
+  | 'xueqiu_publish'
   | 'profile';
 
 const allMenuItems = [
@@ -52,6 +55,7 @@ const allMenuItems = [
   { key: 'users', icon: <Users size={18} />, label: '用户管理' },
   { key: 'pushplus', icon: <MessageCircleMore size={18} />, label: 'PushPlus' },
   { key: 'limit_up_push', icon: <RadioTower size={18} />, label: '打板推送' },
+  { key: 'xueqiu_publish', icon: <Send size={18} />, label: '雪球发布' },
   { key: 'profile', icon: <UserCircle size={18} />, label: '个人信息' }
 ];
 
@@ -76,6 +80,7 @@ function App() {
     users: user ? <UserAdminPage currentUser={user} onUserUpdated={setUser} /> : null,
     pushplus: <PushplusAdminPage />,
     limit_up_push: user ? <LimitUpPushPage currentUser={user} /> : null,
+    xueqiu_publish: <XueqiuPublishPage />,
     profile: user ? <ProfilePage user={user} onUserUpdated={setUser} /> : null
   };
   const menuItems = useMemo(() => {

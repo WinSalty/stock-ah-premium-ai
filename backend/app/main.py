@@ -17,6 +17,7 @@ from app.api.routes_query import router as query_router
 from app.api.routes_settings import router as settings_router
 from app.api.routes_sync import router as sync_router
 from app.api.routes_watchlist import router as watchlist_router
+from app.api.routes_xueqiu_publish import router as xueqiu_publish_router
 from app.core.config import Settings, get_settings
 from app.core.logging import configure_logging
 from app.db.session import SessionLocal
@@ -24,6 +25,7 @@ from app.jobs.alert_jobs import register_alert_jobs
 from app.jobs.limit_up_push_jobs import register_limit_up_push_jobs
 from app.jobs.scheduler import create_scheduler
 from app.jobs.sync_jobs import register_incremental_sync_jobs
+from app.jobs.xueqiu_publish_jobs import register_xueqiu_publish_jobs
 from app.services.auth_service import AuthService
 
 logger = logging.getLogger(__name__)
@@ -45,6 +47,7 @@ def build_lifespan(settings: Settings):
             settings.sync_scheduler_enabled
             or settings.alert_scheduler_enabled
             or settings.limit_up_push_scheduler_enabled
+            or settings.xueqiu_publish_scheduler_enabled
         ):
             scheduler = create_scheduler(settings.sync_scheduler_timezone)
             if settings.sync_scheduler_enabled:
@@ -53,6 +56,8 @@ def build_lifespan(settings: Settings):
                 register_alert_jobs(scheduler, settings)
             if settings.limit_up_push_scheduler_enabled:
                 register_limit_up_push_jobs(scheduler, settings)
+            if settings.xueqiu_publish_scheduler_enabled:
+                register_xueqiu_publish_jobs(scheduler, settings)
             scheduler.start()
             app.state.scheduler = scheduler
             logger.info("同步调度器已启动 timezone=%s", settings.sync_scheduler_timezone)
@@ -97,6 +102,7 @@ def create_app() -> FastAPI:
     app.include_router(chat_router, prefix="/api", tags=["chat"])
     app.include_router(llm_metrics_router, prefix="/api", tags=["llm-metrics"])
     app.include_router(limit_up_push_router, prefix="/api", tags=["limit-up-push"])
+    app.include_router(xueqiu_publish_router, prefix="/api", tags=["xueqiu-publish"])
     return app
 
 

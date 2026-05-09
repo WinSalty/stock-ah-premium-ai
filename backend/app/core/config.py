@@ -74,15 +74,54 @@ class Settings(BaseSettings):
     alert_scan_minutes: int = Field(default=30, alias="ALERT_SCAN_MINUTES")
     alert_scan_seconds: int = Field(default=1, alias="ALERT_SCAN_SECONDS")
     alert_scan_hours: str = Field(default="9-16", alias="ALERT_SCAN_HOURS")
-    limit_up_push_scheduler_enabled: bool = Field(default=True, alias="LIMIT_UP_PUSH_SCHEDULER_ENABLED")
-    limit_up_push_poll_minutes: str = Field(default="31,36,41,46,51,56", alias="LIMIT_UP_PUSH_POLL_MINUTES")
+    limit_up_push_scheduler_enabled: bool = Field(
+        default=True,
+        alias="LIMIT_UP_PUSH_SCHEDULER_ENABLED",
+    )
+    limit_up_push_poll_minutes: str = Field(
+        default="31,36,41,46,51,56",
+        alias="LIMIT_UP_PUSH_POLL_MINUTES",
+    )
     limit_up_push_poll_hours: str = Field(default="8-9", alias="LIMIT_UP_PUSH_POLL_HOURS")
-    limit_up_push_weekend_replay_hour: int = Field(default=22, alias="LIMIT_UP_PUSH_WEEKEND_REPLAY_HOUR")
+    limit_up_push_weekend_replay_hour: int = Field(
+        default=22,
+        alias="LIMIT_UP_PUSH_WEEKEND_REPLAY_HOUR",
+    )
     limit_up_push_model: str = Field(default="deepseek-v4-pro", alias="LIMIT_UP_PUSH_MODEL")
-    limit_up_push_reasoning_effort: str = Field(default="max", alias="LIMIT_UP_PUSH_REASONING_EFFORT")
-    limit_up_push_prompt_version: str = Field(default="limit-up-v1", alias="LIMIT_UP_PUSH_PROMPT_VERSION")
+    limit_up_push_reasoning_effort: str = Field(
+        default="max",
+        alias="LIMIT_UP_PUSH_REASONING_EFFORT",
+    )
+    limit_up_push_prompt_version: str = Field(
+        default="limit-up-v1",
+        alias="LIMIT_UP_PUSH_PROMPT_VERSION",
+    )
     limit_up_push_indicator_days: int = Field(default=40, alias="LIMIT_UP_PUSH_INDICATOR_DAYS")
-    limit_up_push_indicator_stock_limit: int = Field(default=120, alias="LIMIT_UP_PUSH_INDICATOR_STOCK_LIMIT")
+    limit_up_push_indicator_stock_limit: int = Field(
+        default=120,
+        alias="LIMIT_UP_PUSH_INDICATOR_STOCK_LIMIT",
+    )
+    xueqiu_publish_scheduler_enabled: bool = Field(
+        default=False,
+        alias="XUEQIU_PUBLISH_SCHEDULER_ENABLED",
+    )
+    xueqiu_publish_auto_publish: bool = Field(default=False, alias="XUEQIU_PUBLISH_AUTO_PUBLISH")
+    xueqiu_publish_poll_minutes: str = Field(
+        default="33,38,43,48,53,58",
+        alias="XUEQIU_PUBLISH_POLL_MINUTES",
+    )
+    xueqiu_publish_poll_hours: str = Field(default="8-9", alias="XUEQIU_PUBLISH_POLL_HOURS")
+    xueqiu_publish_timeout_seconds: float = Field(
+        default=20.0,
+        alias="XUEQIU_PUBLISH_TIMEOUT_SECONDS",
+    )
+    xueqiu_publish_default_user_agent: str = Field(
+        default=(
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
+        ),
+        alias="XUEQIU_PUBLISH_DEFAULT_USER_AGENT",
+    )
     pushplus_enabled: bool = Field(default=True, alias="PUSHPLUS_ENABLED")
     pushplus_base_url: str = Field(default="https://www.pushplus.plus", alias="PUSHPLUS_BASE_URL")
     pushplus_token: str | None = Field(default=None, alias="PUSHPLUS_TOKEN")

@@ -187,12 +187,17 @@ class LimitUpPushDelivery(TimestampMixin, Base):
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    analysis_id: Mapped[int] = mapped_column(ForeignKey("limit_up_analysis_cache.id"), nullable=False)
+    analysis_id: Mapped[int] = mapped_column(
+        ForeignKey("limit_up_analysis_cache.id"),
+        nullable=False,
+    )
     user_id: Mapped[int] = mapped_column(ForeignKey("app_user.id"), nullable=False)
     scheduled_kind: Mapped[str] = mapped_column(String(32), nullable=False)
     scheduled_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="PENDING")
-    pushplus_message_log_id: Mapped[int | None] = mapped_column(ForeignKey("pushplus_message_log.id"))
+    pushplus_message_log_id: Mapped[int | None] = mapped_column(
+        ForeignKey("pushplus_message_log.id")
+    )
     error_message: Mapped[str | None] = mapped_column(Text)
     sent_at: Mapped[datetime | None] = mapped_column(DateTime)
 
@@ -212,10 +217,72 @@ class LimitUpReportShare(TimestampMixin, Base):
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    analysis_id: Mapped[int] = mapped_column(ForeignKey("limit_up_analysis_cache.id"), nullable=False)
+    analysis_id: Mapped[int] = mapped_column(
+        ForeignKey("limit_up_analysis_cache.id"),
+        nullable=False,
+    )
     share_token: Mapped[str] = mapped_column(String(64), nullable=False)
     expires_at: Mapped[datetime | None] = mapped_column(DateTime)
     created_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("app_user.id"))
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime)
     last_viewed_at: Mapped[datetime | None] = mapped_column(DateTime)
     view_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+
+class XueqiuPublishCredential(TimestampMixin, Base):
+    """雪球创作者平台登录态配置。
+
+    创建日期：2026-05-10
+    author: sunshengxian
+    """
+
+    __tablename__ = "xueqiu_publish_credential"
+    __table_args__ = (Index("idx_xueqiu_publish_credential_enabled", "enabled"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    cookie_text: Mapped[str] = mapped_column(Text().with_variant(LONGTEXT, "mysql"), nullable=False)
+    user_agent: Mapped[str] = mapped_column(String(512), nullable=False)
+    mp_base_url: Mapped[str] = mapped_column(String(128), nullable=False, default="https://mp.xueqiu.com")
+    referer_url: Mapped[str] = mapped_column(String(255), nullable=False, default="https://mp.xueqiu.com/write/")
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime)
+    last_verified_at: Mapped[datetime | None] = mapped_column(DateTime)
+    last_error: Mapped[str | None] = mapped_column(Text)
+    updated_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("app_user.id"))
+
+
+class XueqiuPublishRecord(TimestampMixin, Base):
+    """雪球长文草稿与发布流水。
+
+    创建日期：2026-05-10
+    author: sunshengxian
+    """
+
+    __tablename__ = "xueqiu_publish_record"
+    __table_args__ = (
+        UniqueConstraint("analysis_id", "publish_mode", name="uk_xueqiu_publish_analysis_mode"),
+        Index("idx_xueqiu_publish_record_status", "status", "created_at"),
+        Index("idx_xueqiu_publish_record_analysis", "analysis_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    analysis_id: Mapped[int] = mapped_column(
+        ForeignKey("limit_up_analysis_cache.id"),
+        nullable=False,
+    )
+    publish_mode: Mapped[str] = mapped_column(String(16), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="PENDING")
+    title: Mapped[str] = mapped_column(String(180), nullable=False)
+    content_html: Mapped[str] = mapped_column(
+        Text().with_variant(LONGTEXT, "mysql"),
+        nullable=False,
+    )
+    cover_pic: Mapped[str | None] = mapped_column(String(512))
+    draft_id: Mapped[str | None] = mapped_column(String(128))
+    status_id: Mapped[str | None] = mapped_column(String(128))
+    article_url: Mapped[str | None] = mapped_column(String(512))
+    request_payload_json: Mapped[str | None] = mapped_column(Text().with_variant(LONGTEXT, "mysql"))
+    response_json: Mapped[str | None] = mapped_column(Text().with_variant(LONGTEXT, "mysql"))
+    error_message: Mapped[str | None] = mapped_column(Text)
+    published_at: Mapped[datetime | None] = mapped_column(DateTime)
+    created_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("app_user.id"))

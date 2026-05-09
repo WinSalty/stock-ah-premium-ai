@@ -37,6 +37,8 @@ from app.db.models.notification import (
     LimitUpReportShare,
     PushplusBinding,
     PushplusMessageLog,
+    XueqiuPublishCredential,
+    XueqiuPublishRecord,
 )
 from app.db.models.sync import DataQualityIssue, SyncCheckpoint, SyncRun
 
@@ -83,4 +85,6 @@ __all__ = [
     "SyncRun",
     "WatchlistStock",
     "WaterstockFxRateDaily",
+    "XueqiuPublishCredential",
+    "XueqiuPublishRecord",
 ]

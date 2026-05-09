@@ -542,6 +542,53 @@ CREATE TABLE IF NOT EXISTS `limit_up_report_share` (
     FOREIGN KEY (`created_by_user_id`) REFERENCES `app_user` (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='打板报告临时分享链接表';
 
+CREATE TABLE IF NOT EXISTS `xueqiu_publish_credential` (
+  `id` INT NOT NULL AUTO_INCREMENT COMMENT '自增主键',
+  `enabled` TINYINT(1) NOT NULL DEFAULT 0 COMMENT '是否启用雪球发布登录态',
+  `cookie_text` LONGTEXT NOT NULL COMMENT '雪球创作者后台 Cookie，仅后端使用，不向前端明文返回',
+  `user_agent` VARCHAR(512) NOT NULL COMMENT '调用雪球接口时使用的浏览器 User-Agent',
+  `mp_base_url` VARCHAR(128) NOT NULL DEFAULT 'https://mp.xueqiu.com' COMMENT '雪球创作者后台基础地址',
+  `referer_url` VARCHAR(255) NOT NULL DEFAULT 'https://mp.xueqiu.com/write/' COMMENT '雪球写作页 Referer',
+  `expires_at` DATETIME DEFAULT NULL COMMENT '登录态人工标记过期时间，NULL 表示未设置',
+  `last_verified_at` DATETIME DEFAULT NULL COMMENT '最近一次验证登录态可用时间',
+  `last_error` TEXT DEFAULT NULL COMMENT '最近一次验证或发布失败摘要',
+  `updated_by_user_id` INT DEFAULT NULL COMMENT '最近更新登录态的管理员用户 ID',
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '记录创建时间',
+  `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '记录更新时间',
+  PRIMARY KEY (`id`),
+  KEY `idx_xueqiu_publish_credential_enabled` (`enabled`),
+  CONSTRAINT `fk_xueqiu_publish_credential_updated_by`
+    FOREIGN KEY (`updated_by_user_id`) REFERENCES `app_user` (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='雪球发布登录态配置表';
+
+CREATE TABLE IF NOT EXISTS `xueqiu_publish_record` (
+  `id` INT NOT NULL AUTO_INCREMENT COMMENT '自增主键',
+  `analysis_id` INT NOT NULL COMMENT '关联的打板报告缓存 ID',
+  `publish_mode` VARCHAR(16) NOT NULL COMMENT '发布模式，DRAFT 草稿或 PUBLISH 正式发布',
+  `status` VARCHAR(16) NOT NULL DEFAULT 'PENDING' COMMENT '状态：PENDING、DRAFTED、PUBLISHED、FAILED',
+  `title` VARCHAR(180) NOT NULL COMMENT '发布到雪球的长文标题',
+  `content_html` LONGTEXT NOT NULL COMMENT '发布到雪球的长文 HTML 正文',
+  `cover_pic` VARCHAR(512) DEFAULT NULL COMMENT '雪球封面图 URL，可为空',
+  `draft_id` VARCHAR(128) DEFAULT NULL COMMENT '雪球草稿 ID',
+  `status_id` VARCHAR(128) DEFAULT NULL COMMENT '雪球正式发布后的状态或文章 ID',
+  `article_url` VARCHAR(512) DEFAULT NULL COMMENT '雪球文章公开 URL',
+  `request_payload_json` LONGTEXT DEFAULT NULL COMMENT '请求摘要 JSON，敏感 token 做脱敏处理',
+  `response_json` LONGTEXT DEFAULT NULL COMMENT '雪球接口响应 JSON',
+  `error_message` TEXT DEFAULT NULL COMMENT '失败原因摘要',
+  `published_at` DATETIME DEFAULT NULL COMMENT '正式发布完成时间',
+  `created_by_user_id` INT DEFAULT NULL COMMENT '触发草稿或发布的管理员用户 ID',
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '记录创建时间',
+  `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '记录更新时间',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_xueqiu_publish_analysis_mode` (`analysis_id`, `publish_mode`),
+  KEY `idx_xueqiu_publish_record_status` (`status`, `created_at`),
+  KEY `idx_xueqiu_publish_record_analysis` (`analysis_id`),
+  CONSTRAINT `fk_xueqiu_publish_record_analysis`
+    FOREIGN KEY (`analysis_id`) REFERENCES `limit_up_analysis_cache` (`id`),
+  CONSTRAINT `fk_xueqiu_publish_record_created_by`
+    FOREIGN KEY (`created_by_user_id`) REFERENCES `app_user` (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='雪球长文草稿与发布流水表';
+
 CREATE TABLE IF NOT EXISTS `stock_selection_factor_snapshot` (
   `id` INT NOT NULL AUTO_INCREMENT COMMENT '自增主键',
   `factor_date` DATE NOT NULL COMMENT '因子快照日期',

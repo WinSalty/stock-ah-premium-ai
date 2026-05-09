@@ -658,6 +658,76 @@ export interface LimitUpActionResponse {
   delivery_count: number;
 }
 
+export interface XueqiuCredentialRequest {
+  enabled: boolean;
+  cookie_text: string;
+  user_agent: string;
+  mp_base_url?: string;
+  referer_url?: string;
+  expires_at?: string | null;
+}
+
+export interface XueqiuCredentialSummary {
+  configured: boolean;
+  enabled: boolean;
+  cookie_preview: string | null;
+  user_agent: string | null;
+  mp_base_url: string | null;
+  referer_url: string | null;
+  expires_at: string | null;
+  last_verified_at: string | null;
+  last_error: string | null;
+  updated_at: string | null;
+}
+
+export interface XueqiuDraftPreview {
+  analysis_id: number;
+  trade_date: string;
+  source_title: string;
+  title: string;
+  content_html: string;
+  content_text: string;
+}
+
+export interface XueqiuPublishRequest {
+  analysis_id?: number | null;
+  publish: boolean;
+  force: boolean;
+  cover_pic?: string | null;
+}
+
+export interface XueqiuActionResponse {
+  ok: boolean;
+  message: string;
+  record_id: number | null;
+  article_url: string | null;
+  draft_id: string | null;
+  status_id: string | null;
+}
+
+export interface XueqiuPublishRecordItem {
+  id: number;
+  analysis_id: number;
+  trade_date: string | null;
+  publish_mode: string;
+  status: string;
+  title: string;
+  draft_id: string | null;
+  status_id: string | null;
+  article_url: string | null;
+  error_message: string | null;
+  published_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface XueqiuPublishRecordDetail extends XueqiuPublishRecordItem {
+  content_html: string;
+  cover_pic: string | null;
+  request_payload_json: string | null;
+  response_json: string | null;
+}
+
 export interface AlertEvent {
   id: number;
   user_id: number;
