@@ -753,15 +753,15 @@ body {
 }
 
 .limit-up-report-row-actions {
-  /* 打板报告操作列是固定右列，图标按钮保持稳定尺寸，避免查看/分享/推送三个动作在窄屏下挤出表格。 */
+  /* 打板报告操作列偏向文字按钮；固定按钮宽度和紧凑间距，避免查看/分享/推送三个动作在窄屏下挤出表格。 */
   display: inline-flex;
   width: 100%;
   justify-content: center;
 }
 
 .limit-up-report-row-actions .ant-btn {
-  width: 28px;
-  min-width: 28px;
+  width: 58px;
+  min-width: 58px;
   padding-inline: 0;
 }
 
@@ -770,6 +770,21 @@ body {
   overflow: auto;
   padding: 4px 2px 8px;
   background: #ffffff;
+}
+
+.limit-up-report-code-block {
+  max-height: min(72vh, 760px);
+  margin: 0;
+  overflow: auto;
+  padding: 12px;
+  border: 1px solid #dfe5e8;
+  border-radius: 6px;
+  background: #f8fafc;
+  color: #0f172a;
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .limit-up-share-modal-body {

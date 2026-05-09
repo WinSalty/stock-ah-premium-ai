@@ -1,4 +1,4 @@
-import { Button, Checkbox, DatePicker, Form, Input, Modal, Popconfirm, Select, Space, Table, Tabs, Tag, Tooltip, Typography, message } from 'antd';
+import { Button, Checkbox, DatePicker, Form, Input, Modal, Popconfirm, Select, Space, Table, Tabs, Tag, Typography, message } from 'antd';
 import { Ban, Eye, RefreshCw, RotateCcw, Search, Send, Share2, Sparkles } from 'lucide-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { Dayjs } from 'dayjs';
@@ -51,6 +51,7 @@ function LimitUpPushPage({ currentUser }: LimitUpPushPageProps) {
   const [pushForm] = Form.useForm<LimitUpPushRequest>();
   const [selectedReportId, setSelectedReportId] = useState<number | null>(null);
   const [isReportModalOpen, setIsReportModalOpen] = useState(false);
+  const [reportViewMode, setReportViewMode] = useState('preview');
   const [pushTargetReportId, setPushTargetReportId] = useState<number | null>(null);
   const [shareTargetReportId, setShareTargetReportId] = useState<number | null>(null);
   const [shareExpiresHours, setShareExpiresHours] = useState<number | null>(24);
@@ -224,8 +225,9 @@ function LimitUpPushPage({ currentUser }: LimitUpPushPageProps) {
 
   const openReportModal = (reportId: number) => {
     // 报告列表保持整页宽度用于扫描历史记录，完整 HTML 放进弹窗阅读；
-    // 这样长报告不会挤压列表列宽，也不会因为右侧预览导致表格横向信息缺失。
+    // 查看弹窗提供渲染预览和原始源码，便于排查 LLM 输出结构，同时避免列表页承载长 HTML。
     setSelectedReportId(reportId);
+    setReportViewMode('preview');
     setIsReportModalOpen(true);
   };
 
@@ -324,7 +326,7 @@ function LimitUpPushPage({ currentUser }: LimitUpPushPageProps) {
                       {
                         title: '报告标题',
                         dataIndex: 'title',
-                        minWidth: 260,
+                        minWidth: 220,
                         ellipsis: true
                       },
                       {
@@ -343,7 +345,7 @@ function LimitUpPushPage({ currentUser }: LimitUpPushPageProps) {
                       },
                       {
                         title: '操作',
-                        width: isAdmin ? 132 : 52,
+                        width: isAdmin ? 196 : 78,
                         fixed: 'right',
                         render: (_, record) => (
                           <Space
@@ -352,32 +354,17 @@ function LimitUpPushPage({ currentUser }: LimitUpPushPageProps) {
                             // 行点击负责选中当前报告；操作按钮区阻止事件冒泡，避免点击查看/分享/推送时同时改变外层选择态。
                             onClick={(event) => event.stopPropagation()}
                           >
-                            <Tooltip title="查看报告">
-                              <Button
-                                aria-label="查看报告"
-                                size="small"
-                                icon={<Eye size={14} />}
-                                onClick={() => openReportModal(record.id)}
-                              />
-                            </Tooltip>
+                            <Button size="small" icon={<Eye size={14} />} onClick={() => openReportModal(record.id)}>
+                              查看
+                            </Button>
                             {isAdmin ? (
                               <>
-                                <Tooltip title="分享链接">
-                                  <Button
-                                    aria-label="分享链接"
-                                    size="small"
-                                    icon={<Share2 size={14} />}
-                                    onClick={() => openShareModal(record.id)}
-                                  />
-                                </Tooltip>
-                                <Tooltip title="推送报告">
-                                  <Button
-                                    aria-label="推送报告"
-                                    size="small"
-                                    icon={<Send size={14} />}
-                                    onClick={() => openPushModal(record.id)}
-                                  />
-                                </Tooltip>
+                                <Button size="small" icon={<Share2 size={14} />} onClick={() => openShareModal(record.id)}>
+                                  分享
+                                </Button>
+                                <Button size="small" icon={<Send size={14} />} onClick={() => openPushModal(record.id)}>
+                                  推送
+                                </Button>
                               </>
                             ) : null}
                           </Space>
@@ -393,15 +380,40 @@ function LimitUpPushPage({ currentUser }: LimitUpPushPageProps) {
                     destroyOnClose
                     onCancel={() => setIsReportModalOpen(false)}
                   >
-                    <div className="limit-up-report-modal-body">
-                      {selectedReport.isFetching ? (
+                    {selectedReport.isFetching ? (
+                      <div className="limit-up-report-modal-body">
                         <Typography.Text type="secondary">报告加载中...</Typography.Text>
-                      ) : selectedReport.data?.content_html ? (
-                        <div dangerouslySetInnerHTML={{ __html: selectedReport.data.content_html }} />
-                      ) : (
+                      </div>
+                    ) : selectedReport.data?.content_html ? (
+                      <Tabs
+                        activeKey={reportViewMode}
+                        onChange={setReportViewMode}
+                        items={[
+                          {
+                            key: 'preview',
+                            label: '预览',
+                            children: (
+                              <div className="limit-up-report-modal-body">
+                                <div dangerouslySetInnerHTML={{ __html: selectedReport.data.content_html }} />
+                              </div>
+                            )
+                          },
+                          {
+                            key: 'source',
+                            label: '源码',
+                            children: (
+                              <pre className="limit-up-report-code-block">
+                                <code>{selectedReport.data.content_html}</code>
+                              </pre>
+                            )
+                          }
+                        ]}
+                      />
+                    ) : (
+                      <div className="limit-up-report-modal-body">
                         <Typography.Text type="secondary">暂无报告内容</Typography.Text>
-                      )}
-                    </div>
+                      </div>
+                    )}
                   </Modal>
                   {isAdmin ? (
                     <Modal
