@@ -21,6 +21,12 @@
 ## Git Push 操作口径
 
 - 本项目远端为 `https://github.com/WinSalty/stock-ah-premium-ai.git`，本机命令行 Git 使用 macOS `osxkeychain` 凭据；IDEA 推送成功通常说明 IDEA 自身登录态有效，但 Codex/终端推送可直接走同一套命令行 Git 配置。
-- 用户明确要求 push 时，先执行 `git -C /Users/salty/codeProject/ai/coding/stock-ah-premium-ai status --short --branch` 确认工作区状态，再直接执行 `git -C /Users/salty/codeProject/ai/coding/stock-ah-premium-ai push origin main`，不要额外执行 `push --dry-run`。
+- 完成正式编码或正式项目文档交付后，除非用户明确说“不用 push”或“只本地提交”，默认都要在 commit 后直接 push。先执行 `git -C /Users/salty/codeProject/ai/coding/stock-ah-premium-ai status --short --branch` 确认工作区状态，再直接执行 `git -C /Users/salty/codeProject/ai/coding/stock-ah-premium-ai push origin main`，不要额外执行 `push --dry-run`。
 - 如果 `git push origin main` 提示认证失败，再检查 `printf 'protocol=https\nhost=github.com\n\n' | git credential-osxkeychain get` 是否能返回 `username` 和已打码的 `password`；不要打印真实 token。若 keychain 没有凭据，再询问用户是否允许使用 `/Users/salty/codeProject/ai/doc/github-token.txt` 重新写入 GitHub HTTPS 凭据。
-- 仅在用户明确要求 push 时推送；如果用户说“不用 push”或只要求本地部署/服务器 rsync，则保持本地提交即可，并在交付说明里明确“本地领先远端，未 push”。
+- 如果用户说“不用 push”或“只本地提交”，则保持本地提交即可，并在交付说明里明确“本地领先远端，未 push”。
+
+## 服务器操作边界
+
+- 默认不部署服务器；完成本地代码修改、测试、commit 和 push 后即停止，不主动执行 `rsync`、`scp`、远端构建、服务重启或生产发布。
+- 服务器默认只允许做只读查询和日志排查，包括查看服务状态、健康检查、公开配置、日志、只读 SQL 查询和文件元数据检查；不得修改服务器文件、同步代码、重启服务、安装依赖、修改环境变量或改动数据库结构/数据。
+- 只有用户明确要求“部署服务器”“修改服务器文件”“执行数据库迁移/写入/修复数据”等具体高影响操作时，才允许执行对应写操作；执行前必须说明将要改动的服务器范围和数据库影响。
