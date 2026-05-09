@@ -19,6 +19,7 @@ from app.db.models.chat import LlmCallMetric
 from app.services.investment_knowledge_service import InvestmentKnowledgeService
 from app.services.llm_service import (
     FOLLOW_UP_ASSISTANT_SYSTEM_PROMPT,
+    FOLLOW_UP_ROUTER_SYSTEM_PROMPT,
     INVESTMENT_ADVISOR_SYSTEM_PROMPT,
     LLM_LIMIT_EXCEEDED_MESSAGE,
     OUT_OF_SCOPE_MESSAGE,
@@ -556,7 +557,7 @@ def test_prepare_answer_skips_sql_when_market_data_context_exists(monkeypatch) -
 
 
 def test_follow_up_question_skips_router_and_market_data(monkeypatch) -> None:
-    """确认同会话追问直接由模型结合历史回答，不再触发路由和按需补数。
+    """确认语义分流为追问时，会直接结合历史回答且不触发数据路由。
 
     创建日期：2026-05-09
     author: sunshengxian
@@ -585,6 +586,9 @@ def test_follow_up_question_skips_router_and_market_data(monkeypatch) -> None:
         temperature: float = 0.1,
         trace: LlmCallTrace | None = None,
     ) -> str:
+        if system_prompt == FOLLOW_UP_ROUTER_SYSTEM_PROMPT:
+            captured["router_prompt"] = prompt
+            return '{"turn_type":"follow_up","confidence":0.92,"reason":"质疑前文定性"}'
         captured["prompt"] = prompt
         captured["system_prompt"] = system_prompt or ""
         captured["phase"] = trace.phase if trace else ""
@@ -607,12 +611,13 @@ def test_follow_up_question_skips_router_and_market_data(monkeypatch) -> None:
     assert "修正" in answer.answer
     assert captured["system_prompt"] == FOLLOW_UP_ASSISTANT_SYSTEM_PROMPT
     assert captured["phase"] == "follow_up_answer"
+    assert "current_message" in captured["router_prompt"]
     assert "conversation_history" in captured["prompt"]
     assert "积分" in captured["prompt"]
 
 
-def test_same_session_new_stock_analysis_still_uses_router(monkeypatch) -> None:
-    """确认用户未新建会话但切换到新标的分析时仍走原数据路由。
+def test_same_session_new_analysis_from_llm_classifier_still_uses_router(monkeypatch) -> None:
+    """确认语义分流为新任务时，即便仍在同会话也继续走原数据路由。
 
     创建日期：2026-05-09
     author: sunshengxian
@@ -648,11 +653,15 @@ def test_same_session_new_stock_analysis_still_uses_router(monkeypatch) -> None:
     monkeypatch.setattr(
         service,
         "_chat_completion",
-        lambda *args, **kwargs: "新分析回答",
+        lambda *args, **kwargs: (
+            '{"turn_type":"new_task","confidence":0.88,"reason":"用户切换到新的独立分析"}'
+            if kwargs.get("system_prompt") == FOLLOW_UP_ROUTER_SYSTEM_PROMPT
+            else "新分析回答"
+        ),
     )
 
     answer = service.answer(
-        "帮我分析一下五粮液 000858.SZ 的2026年一季报",
+        "刚才先放一边，帮我分析一下五粮液的2026年一季报",
         context={
             "conversation_history": [
                 {"role": "user", "content": "刚才招商银行怎么看？"},
@@ -661,8 +670,57 @@ def test_same_session_new_stock_analysis_still_uses_router(monkeypatch) -> None:
         },
     )
 
-    assert captured["question"].startswith("帮我分析一下五粮液")
+    assert captured["question"].startswith("刚才先放一边")
     assert answer.answer == "新分析回答"
+
+
+def test_follow_up_classifier_failure_falls_back_to_data_router(monkeypatch) -> None:
+    """确认追问分流器异常时按新任务处理，避免误跳过结构化数据准备。
+
+    创建日期：2026-05-09
+    author: sunshengxian
+    """
+
+    service = LlmService(
+        Mock(),
+        settings=Settings(llm_api_key="test-key", llm_api_key_file=None, llm_model="test-model"),
+    )
+    captured: dict[str, str] = {}
+
+    def fake_chat_completion(*args, **kwargs) -> str:
+        if kwargs.get("system_prompt") == FOLLOW_UP_ROUTER_SYSTEM_PROMPT:
+            raise ValueError("bad router json")
+        return "正常路由后的回答"
+
+    monkeypatch.setattr(service, "_chat_completion", fake_chat_completion)
+
+    def fake_route_question(question: str, *args, **kwargs) -> QuestionRoute:
+        captured["question"] = question
+        return QuestionRoute(is_answerable=True, should_query_data=False, use_knowledge=False)
+
+    monkeypatch.setattr(
+        service,
+        "_route_question",
+        fake_route_question,
+    )
+    monkeypatch.setattr(
+        service,
+        "_prepare_answer",
+        lambda *args, **kwargs: (None, [], "路由提示词"),
+    )
+
+    answer = service.answer(
+        "这个是不是还要看现金流？",
+        context={
+            "conversation_history": [
+                {"role": "user", "content": "帮我分析五粮液"},
+                {"role": "assistant", "content": "前文回答。"},
+            ]
+        },
+    )
+
+    assert captured["question"] == "这个是不是还要看现金流？"
+    assert answer.answer == "正常路由后的回答"
 
 
 def test_follow_up_prompt_avoids_report_format_contract() -> None:
