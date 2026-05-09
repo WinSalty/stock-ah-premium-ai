@@ -20,7 +20,7 @@
 
 ## Git Push 操作口径
 
-- 本项目远端为 `https://github.com/WinSalty/stock-ah-premium-ai.git`，本机命令行 Git 使用 macOS `osxkeychain` 凭据；IDEA 推送成功通常说明 IDEA 自身登录态有效，但 Codex/终端推送仍应先按命令行凭据单独验证。
-- 用户明确要求 push 时，先执行 `git -C /Users/salty/codeProject/ai/coding/stock-ah-premium-ai status --short --branch` 和 `git -C /Users/salty/codeProject/ai/coding/stock-ah-premium-ai push --dry-run origin main`。dry-run 成功后再执行 `git -C /Users/salty/codeProject/ai/coding/stock-ah-premium-ai push origin main`。
-- 如果 dry-run 提示认证失败，先检查 `printf 'protocol=https\nhost=github.com\n\n' | git credential-osxkeychain get` 是否能返回 `username` 和已打码的 `password`；不要打印真实 token。若 keychain 没有凭据，再询问用户是否允许使用 `/Users/salty/codeProject/ai/doc/github-token.txt` 重新写入 GitHub HTTPS 凭据。
+- 本项目远端为 `https://github.com/WinSalty/stock-ah-premium-ai.git`，本机命令行 Git 使用 macOS `osxkeychain` 凭据；IDEA 推送成功通常说明 IDEA 自身登录态有效，但 Codex/终端推送可直接走同一套命令行 Git 配置。
+- 用户明确要求 push 时，先执行 `git -C /Users/salty/codeProject/ai/coding/stock-ah-premium-ai status --short --branch` 确认工作区状态，再直接执行 `git -C /Users/salty/codeProject/ai/coding/stock-ah-premium-ai push origin main`，不要额外执行 `push --dry-run`。
+- 如果 `git push origin main` 提示认证失败，再检查 `printf 'protocol=https\nhost=github.com\n\n' | git credential-osxkeychain get` 是否能返回 `username` 和已打码的 `password`；不要打印真实 token。若 keychain 没有凭据，再询问用户是否允许使用 `/Users/salty/codeProject/ai/doc/github-token.txt` 重新写入 GitHub HTTPS 凭据。
 - 仅在用户明确要求 push 时推送；如果用户说“不用 push”或只要求本地部署/服务器 rsync，则保持本地提交即可，并在交付说明里明确“本地领先远端，未 push”。
