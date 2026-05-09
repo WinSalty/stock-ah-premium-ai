@@ -1,5 +1,5 @@
 import { Button, Checkbox, Form, Input, Tabs, Typography, message } from 'antd';
-import { BarChart3, BriefcaseBusiness, Database, KeyRound, LockKeyhole, UserRound } from 'lucide-react';
+import { BarChart3, BriefcaseBusiness, DatabaseZap, KeyRound, LockKeyhole, UserRound } from 'lucide-react';
 import { useState } from 'react';
 import { login, register } from '../api/auth';
 import { setAuthToken } from '../api/client';
@@ -53,7 +53,7 @@ function AuthPage({ onAuthenticated }: AuthPageProps) {
         <div className="auth-hero-copy">
           <Typography.Title level={1}>智能洞察&nbsp;&nbsp;价值先机</Typography.Title>
           <Typography.Paragraph>
-            用自选阈值、价差分位和本地投研知识库，把 A/H 价差机会收进同一个工作台。
+            用自选阈值、价差分位和结构化补数，把 A/H 价差机会收进同一个工作台。
           </Typography.Paragraph>
         </div>
         <div className="auth-feature-strip">
@@ -68,11 +68,11 @@ function AuthPage({ onAuthenticated }: AuthPageProps) {
           </div>
           <div className="auth-feature-item">
             <span className="auth-feature-icon auth-feature-green">
-              <Database size={23} />
+              <DatabaseZap size={23} />
             </span>
             <div>
-              <Typography.Text strong>知识库</Typography.Text>
-              <Typography.Text>本地投研知识沉淀</Typography.Text>
+              <Typography.Text strong>补数链路</Typography.Text>
+              <Typography.Text>按需补齐关键材料</Typography.Text>
             </div>
           </div>
           <div className="auth-feature-item">

@@ -20,7 +20,6 @@ from sqlalchemy.orm import Session
 from app.core.config import Settings, get_settings
 from app.db.models.auth import AppUser
 from app.db.models.chat import LlmCallMetric
-from app.services.investment_knowledge_service import InvestmentKnowledgeService
 from app.services.llm_metric_definitions import phase_description, phase_label
 from app.services.market_data_orchestrator import (
     MAX_MARKET_DATA_STOCKS,
@@ -50,7 +49,6 @@ LLM_EXTERNAL_CALL_PHASES = (
 )
 DEFAULT_CHAT_MODEL = "deepseek-v4-flash"
 ANSWER_MARKET_ROW_LIMIT = 60
-ANSWER_KNOWLEDGE_CHUNK_LIMIT = 5
 DEEPSEEK_PRO_CHAT_MODEL = "deepseek-v4-pro"
 QWEN_CHAT_MODEL = "qwen3.6-flash"
 SUPPORTED_CHAT_MODELS = (DEFAULT_CHAT_MODEL, DEEPSEEK_PRO_CHAT_MODEL, QWEN_CHAT_MODEL)
@@ -152,9 +150,9 @@ SQL_SYSTEM_PROMPT = """你是只读金融数据查询规划器。只生成可执
 
 QUESTION_ROUTER_SYSTEM_PROMPT = """你是问答前置路由器。
 你需要在同一次判断中决定：问题是否允许由本助手回答、是否需要查询结构化数据、
-是否需要读取本地投研知识库，以及需要读取哪些知识分类。
+以及是否需要按需补充结构化市场数据。
 通用知识、翻译、改写、解释概念、写作润色和普通问答也属于允许范围；
-这类问题不需要 SQL、不需要知识库、不需要市场数据，直接由 LLM 回答。
+这类问题不需要 SQL、不需要市场数据，直接由 LLM 回答。
 如果用户是在问 A 股或港股的估值、财报、分红、投资分析报告、“怎么看”或多只股票对比，
 还要判断是否需要按需补充市场数据。
 按需补充市场数据最多输出 5 只股票。A 股数据包可以从 quote_valuation、
@@ -197,12 +195,8 @@ shareholder_governance；需要估值判断时再加 quote_valuation。
 用户询问“你好”“你是谁”“你能做什么”“你可以帮我什么”等问候、角色身份和能力介绍问题也属于允许范围。
 违法违规交易、索要敏感信息和账号越权操作不属于范围。
 如果问题需要当前/最近/自选/阈值/列表/排名/筛选/股票代码/精确数值，通常需要查询结构化数据。
-如果问题偏 A/H 价差、选股框架、金融行业、宏观产业、阈值方法或组合风险表达，
-可以读取知识库；如果是单只上市公司研究，应优先使用结构化补数，不再依赖本地个股分析报告。
-只有知识库目录中存在明确场景匹配材料时，才选择对应知识分类；
-不要为了“个股深度研究”泛化选择知识库材料。
 只返回 JSON，不要输出解释。格式：
-{"is_answerable":true或false,"needs_sql":true或false,"use_knowledge":true或false,"knowledge_categories":["分类key"],"data_demands":[{"market":"A或HK","ts_code":"600036.SH或02380.HK","packages":["quote_valuation","financial_statement","business_profile","dividend_forecast","shareholder_governance","capital_flow_light"],"intent":"stock_research"}],"reason":"一句话原因"}
+{"is_answerable":true或false,"needs_sql":true或false,"data_demands":[{"market":"A或HK","ts_code":"600036.SH或02380.HK","packages":["quote_valuation","financial_statement","business_profile","dividend_forecast","shareholder_governance","capital_flow_light"],"intent":"stock_research"}],"reason":"一句话原因"}
 """
 
 OUT_OF_SCOPE_MESSAGE = (
@@ -765,8 +759,6 @@ class QuestionRoute:
 
     is_answerable: bool
     should_query_data: bool
-    use_knowledge: bool
-    knowledge_category_keys: tuple[str, ...] = ()
     data_demands: tuple[MarketDataDemand, ...] = ()
     reason: str = ""
 
@@ -803,7 +795,6 @@ class LlmService:
         self.db = db
         self.settings = settings or get_settings()
         self.sql_guard = SqlGuardService()
-        self.knowledge_service = InvestmentKnowledgeService()
         self._metric_context_by_question_id: dict[str, tuple[str | None, str | None]] = {}
 
     def answer(
@@ -1477,7 +1468,7 @@ class LlmService:
         )
 
     def _threshold_recommendation_prompt(self, question: str, context: dict[str, Any]) -> str:
-        """构造紧凑提示词，只解释本地确定性阈值，不携带知识库和市场补数材料。
+        """构造紧凑提示词，只解释本地确定性阈值，不携带通用问答补数材料。
 
         创建日期：2026-05-07
         author: sunshengxian
@@ -1559,7 +1550,7 @@ class LlmService:
         self,
         context: dict[str, Any],
     ) -> ThresholdRecommendationResult:
-        """按知识库公式确定阈值，保证固定页面输入下的建议值稳定。
+        """按本地确定性公式计算阈值，保证固定页面输入下的建议值稳定。
 
         创建日期：2026-05-07
         author: sunshengxian
@@ -1706,13 +1697,6 @@ class LlmService:
         market_data_context: dict[str, Any] | None = None,
     ) -> str:
         history = self._conversation_history(context)
-        category_keys = route.knowledge_category_keys if route and route.use_knowledge else ()
-        knowledge = self.knowledge_service.select_by_keys(
-            category_keys,
-            ANSWER_KNOWLEDGE_CHUNK_LIMIT,
-            question=question,
-            context=context,
-        )
         filters = {
             key: value
             for key, value in context.items()
@@ -1729,6 +1713,10 @@ class LlmService:
             "market_observations": rows[:ANSWER_MARKET_ROW_LIMIT],
             "supplemental_market_observations": self._supporting_data(question, context),
             "market_data_context": market_data_context,
+            "material_source_policy": (
+                "本轮回答只使用会话历史、页面上下文、结构化市场观察和按需补数上下文；"
+                "项目不再自动注入额外静态材料，不能声称引用了历史研报或未提供的内部资料。"
+            ),
             "external_material_boundary": (
                 "最终回答只能描述当前分析材料覆盖了什么、缺少什么；"
                 "不得向用户暴露内部数据接口、积分、权限、数据库、补数策略或系统处理细节。"
@@ -1743,8 +1731,6 @@ class LlmService:
                 "A 股和港股都要优先选取收入、归母或净利润、扣非或利润质量指标、"
                 "经营现金流、ROE、负债率或估值等可用列，缺失列可省略但不得省略表格。"
             ),
-            "knowledge_categories": knowledge.categories,
-            "reference_materials": knowledge.chunks,
         }
         stock_report_instruction = self._stock_report_instruction(question, market_data_context)
         return (
@@ -1754,8 +1740,8 @@ class LlmService:
             "若有 market_data_context，请优先使用其中的补数上下文作为主证据，"
             "market_observations 只作为补充校验；如果 market_observations 大量为空，"
             "不得据此判断没有财务数据。"
-            "若没有精确数值，可基于 reference_materials 和你的金融知识输出框架性分析，"
-            "但不要编造具体行情数字。"
+            "若没有精确数值，可基于会话历史、页面上下文和你的金融知识输出框架性分析，"
+            "但不要编造具体行情数字，也不要声称引用了历史研报或未提供的内部资料。"
             "不要过度自我设限；在证据足够时可以给出清晰的看多/中性/谨慎判断、"
             "配置优先级、仓位思路和触发条件。"
 "请直接给出结论、投资逻辑、配置建议、执行条件、反证条件和跟踪项。"
@@ -1883,7 +1869,7 @@ class LlmService:
         author: sunshengxian
         """
 
-        if not route.is_answerable or route.should_query_data or route.use_knowledge:
+        if not route.is_answerable or route.should_query_data:
             return False
         if route.data_demands:
             return False
@@ -3015,7 +3001,6 @@ class LlmService:
             return QuestionRoute(
                 is_answerable=False,
                 should_query_data=False,
-                use_knowledge=False,
                 reason="空问题",
             )
         context = context or {}
@@ -3031,7 +3016,6 @@ class LlmService:
                     and value not in (None, "", [])
                 )
             },
-            "knowledge_catalog": self.knowledge_service.catalog(),
         }
         try:
             content = self._chat_completion(
@@ -3108,8 +3092,6 @@ class LlmService:
         return QuestionRoute(
             is_answerable=route.is_answerable,
             should_query_data=route.should_query_data,
-            use_knowledge=route.use_knowledge,
-            knowledge_category_keys=route.knowledge_category_keys,
             data_demands=demands,
             reason=route.reason,
         )
@@ -3121,20 +3103,10 @@ class LlmService:
         author: sunshengxian
         """
 
-        categories = payload.get("knowledge_categories")
-        if not isinstance(categories, list):
-            categories = []
-        # 只接受当前知识库登记的分类，避免旧路由继续请求已下线的个股报告分类。
-        allowed_category_keys = {category.key for category in self.knowledge_service.categories}
-        category_keys = tuple(
-            item for item in categories if isinstance(item, str) and item in allowed_category_keys
-        )
         demands = self._data_demands_from_payload(payload.get("data_demands"))
         return QuestionRoute(
             is_answerable=payload.get("is_answerable") is True,
             should_query_data=payload.get("needs_sql") is True,
-            use_knowledge=payload.get("use_knowledge") is True,
-            knowledge_category_keys=category_keys,
             data_demands=demands,
             reason=str(payload.get("reason") or ""),
         )
@@ -3387,16 +3359,15 @@ class LlmService:
 
         local_scope = self._local_question_scope(question)
         if local_scope is False:
-            return QuestionRoute(False, False, False, reason="本地规则判定为非投资问题")
+            return QuestionRoute(False, False, reason="本地规则判定为非投资问题")
         if local_scope is True:
             return QuestionRoute(
                 is_answerable=True,
                 should_query_data=self._should_query_data(question, context or {}),
-                use_knowledge=False,
                 data_demands=self._local_data_demands(question, context or {}),
                 reason="前置路由不可用，本地规则放行",
             )
-        return QuestionRoute(False, False, False, reason="前置路由不可用且本地规则不确定")
+        return QuestionRoute(False, False, reason="前置路由不可用且本地规则不确定")
 
     def _local_data_demands(
         self,

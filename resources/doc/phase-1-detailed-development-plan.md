@@ -301,7 +301,7 @@ stock-ah-premium-ai/
 - `ah_pair_service`：维护 AH 配对，支持官方接口导入和人工导入。
 - `fx_rate_service`：维护直接汇率和交叉汇率，暴露按日期取 HKD/CNY 的方法。
 - `official_premium_calc_service`：基于官方 A/H 比价重算 H/A 派生字段和来源标记。
-- `llm_service`：封装 DeepSeek 和阿里 Qwen OpenAI-compatible Chat API，不把密钥暴露给前端；投资研究边界、SQL 和知识库读取决策使用 `deepseek-v4-flash` 前置路由，问答主模型仍支持 DeepSeek 与 Qwen 切换。
+- `llm_service`：封装 DeepSeek 和阿里 Qwen OpenAI-compatible Chat API，不把密钥暴露给前端；投资研究边界、SQL 和按需补数决策使用 `deepseek-v4-flash` 前置路由，问答主模型仍支持 DeepSeek 与 Qwen 切换。
 - `sql_guard_service`：对 LLM 生成的 SQL 做只读、白名单、limit、超时校验。
 
 ## 7. API 设计
@@ -352,7 +352,7 @@ LLM 问答：
    - 禁止 `INSERT`、`UPDATE`、`DELETE`、`DROP`、`ALTER`、`CREATE`、多语句。
    - 自动加 `LIMIT`，设置查询超时。
 5. 后端执行只读查询，拿到小结果集。
-6. LLM 基于结果集、会话上下文和分类投资知识片段生成中文投资报告。
+6. LLM 基于结果集、会话上下文、结构化市场观察和按需补数上下文生成中文投资报告。
 7. 前端展示回答和数据摘要表格，不展示 SQL、底层数据来源或中间 JSON。
 
 建议为 LLM 问答创建只读数据库账号，仅授予查询视图权限。可优先开放视图：

@@ -1,10 +1,8 @@
 from __future__ import annotations
 
 import json
-import zipfile
 from collections.abc import Iterator
 from datetime import datetime
-from pathlib import Path
 from time import perf_counter
 from unittest.mock import Mock
 from zoneinfo import ZoneInfo
@@ -16,7 +14,6 @@ from sqlalchemy.orm import Session
 from app.core.config import Settings
 from app.db.base import Base
 from app.db.models.chat import LlmCallMetric
-from app.services.investment_knowledge_service import InvestmentKnowledgeService
 from app.services.llm_service import (
     FOLLOW_UP_ASSISTANT_SYSTEM_PROMPT,
     FOLLOW_UP_ROUTER_SYSTEM_PROMPT,
@@ -59,40 +56,10 @@ def test_llm_service_rejects_unsafe_question_before_api_call() -> None:
     assert answer.rows == []
 
 
-def test_llm_answer_prompt_loads_routed_investment_knowledge() -> None:
-    """确认问答提示词按前置路由选择加载知识库分类。
+def test_llm_answer_prompt_omits_static_material_payload() -> None:
+    """确认回答提示词不再注入额外静态材料分类或参考内容。
 
-    创建日期：2026-05-04
-    author: sunshengxian
-    """
-
-    service = LlmService(
-        Mock(),
-        settings=Settings(llm_api_key="test-key", llm_api_key_file=None, llm_model="test-model"),
-    )
-
-    prompt = service._answer_prompt(
-        "A/H 溢价套利风险框架",
-        rows=[],
-        context={"conversation_history": [{"role": "user", "content": "先看港股通标的"}]},
-        route=QuestionRoute(
-            is_answerable=True,
-            should_query_data=False,
-            use_knowledge=True,
-            knowledge_category_keys=("ah_premium",),
-        ),
-    )
-    payload = json.loads(prompt.split("\n", 1)[1])
-
-    assert "A/H 溢价与跨市场价差" in payload["knowledge_categories"]
-    assert payload["reference_materials"]
-    assert "conversation_history" in payload
-
-
-def test_llm_answer_prompt_can_skip_investment_knowledge() -> None:
-    """确认前置路由判断不需要知识库时不会塞参考材料。
-
-    创建日期：2026-05-05
+    创建日期：2026-05-09
     author: sunshengxian
     """
 
@@ -105,17 +72,20 @@ def test_llm_answer_prompt_can_skip_investment_knowledge() -> None:
         "我自选里哪些最接近阈值？",
         rows=[{"display_name": "招商银行", "distance_to_target_pct": "0.5"}],
         context={},
-        route=QuestionRoute(
-            is_answerable=True,
-            should_query_data=True,
-            use_knowledge=False,
-        ),
+        route=QuestionRoute(is_answerable=True, should_query_data=True),
     )
     payload = json.loads(prompt.split("\n", 1)[1])
 
-    assert payload["knowledge_categories"] == []
-    assert payload["reference_materials"] == []
-
+    assert set(payload) >= {
+        "user_question",
+        "conversation_history",
+        "filters",
+        "market_observations",
+        "supplemental_market_observations",
+        "market_data_context",
+    }
+    assert "静态材料" in payload["material_source_policy"]
+    assert "历史研报" in payload["material_source_policy"]
 
 def test_preamble_cleaner_removes_json_process_language() -> None:
     """确认回答前缀清理会去掉暴露过程的寒暄。
@@ -231,10 +201,11 @@ def test_clear_investment_question_uses_default_deepseek_router(monkeypatch) -> 
     ) -> str:
         captured["model"] = model
         captured["prompt"] = prompt
+        captured["system_prompt"] = system_prompt
         captured["phase"] = trace.phase if trace else None
         return (
-            '{"is_answerable":true,"needs_sql":false,"use_knowledge":true,'
-            '"knowledge_categories":["ah_premium"],"reason":"需要 A/H 价差框架"}'
+            '{"is_answerable":true,"needs_sql":false,'
+            '"reason":"允许回答"}'
         )
 
     monkeypatch.setattr(service, "_chat_completion", fake_chat_completion)
@@ -243,11 +214,9 @@ def test_clear_investment_question_uses_default_deepseek_router(monkeypatch) -> 
 
     assert route.is_answerable is True
     assert route.should_query_data is False
-    assert route.use_knowledge is True
-    assert route.knowledge_category_keys == ("ah_premium",)
     assert captured["model"] == "deepseek-v4-flash"
     assert captured["phase"] == "question_router"
-    assert "knowledge_catalog" in str(captured["prompt"])
+    assert "A 股数据包含义" in str(captured["system_prompt"])
 
 
 def test_question_router_prompt_requires_multi_package_evidence_chain() -> None:
@@ -306,8 +275,6 @@ def test_route_from_payload_accepts_market_data_demands() -> None:
         {
             "is_answerable": True,
             "needs_sql": False,
-            "use_knowledge": True,
-            "knowledge_categories": ["ah_premium", "unknown_legacy_category"],
             "data_demands": [
                 {
                     "market": "A",
@@ -333,7 +300,6 @@ def test_route_from_payload_accepts_market_data_demands() -> None:
         "shareholder_governance",
         "capital_flow_light",
     )
-    assert route.knowledge_category_keys == ("ah_premium",)
 
 
 def test_route_from_payload_accepts_hk_financial_demand_only() -> None:
@@ -352,7 +318,6 @@ def test_route_from_payload_accepts_hk_financial_demand_only() -> None:
         {
             "is_answerable": True,
             "needs_sql": False,
-            "use_knowledge": False,
             "data_demands": [
                 {
                     "market": "HK",
@@ -384,7 +349,6 @@ def test_route_from_payload_downgrades_hk_non_financial_packages() -> None:
         {
             "is_answerable": True,
             "needs_sql": False,
-            "use_knowledge": False,
             "data_demands": [
                 {
                     "market": "HK",
@@ -414,7 +378,6 @@ def test_route_from_payload_accepts_up_to_five_market_data_demands() -> None:
         {
             "is_answerable": True,
             "needs_sql": False,
-            "use_knowledge": False,
             "data_demands": [
                 {"ts_code": f"00000{index}.SZ", "packages": ["quote_valuation"]}
                 for index in range(1, 7)
@@ -539,7 +502,6 @@ def test_prepare_answer_skips_sql_when_market_data_context_exists(monkeypatch) -
         QuestionRoute(
             is_answerable=True,
             should_query_data=True,
-            use_knowledge=False,
             data_demands=(
                 MarketDataDemand("00700.HK", ("financial_statement",), market="HK"),
             ),
@@ -640,7 +602,6 @@ def test_same_session_new_analysis_from_llm_classifier_still_uses_router(monkeyp
         return QuestionRoute(
             is_answerable=True,
             should_query_data=True,
-            use_knowledge=False,
             data_demands=(MarketDataDemand("000858.SZ", ("financial_statement",), market="A"),),
         )
 
@@ -696,7 +657,7 @@ def test_follow_up_classifier_failure_falls_back_to_data_router(monkeypatch) -> 
 
     def fake_route_question(question: str, *args, **kwargs) -> QuestionRoute:
         captured["question"] = question
-        return QuestionRoute(is_answerable=True, should_query_data=False, use_knowledge=False)
+        return QuestionRoute(is_answerable=True, should_query_data=False)
 
     monkeypatch.setattr(
         service,
@@ -771,41 +732,6 @@ def test_llm_trace_id_is_unique_for_each_question_turn() -> None:
     assert len(second_trace_id) == 32
 
 
-def test_investment_knowledge_selects_stock_factor_category() -> None:
-    """确认选股类问题命中因子文档。
-
-    创建日期：2026-05-04
-    author: sunshengxian
-    """
-
-    selection = InvestmentKnowledgeService().select("筛选低估值、高股息且 ROE 稳定的股票")
-
-    assert "A 股选股与估值因子" in selection.categories
-    assert selection.chunks
-
-
-def test_investment_knowledge_reads_docx_reports(tmp_path: Path) -> None:
-    """确认 LLM 知识服务仍可读取非个股分类中的 docx 材料。
-
-    创建日期：2026-05-04
-    author: sunshengxian
-    """
-
-    report_path = tmp_path / "ah-premium" / "cmb-ah-premium-arbitrage-report-2026.docx"
-    _write_minimal_docx(
-        report_path,
-        paragraphs=(
-            "招商银行 A/H 倒挂与融资套利约束",
-            "核心结论：价差只能作为择边信号，需要同时检查港股通、融资成本和汇率。",
-        ),
-    )
-
-    selection = InvestmentKnowledgeService(doc_root=tmp_path).select("招商银行 AH 价差怎么做择边？")
-
-    assert "A/H 溢价与跨市场价差" in selection.categories
-    assert any("择边信号" in chunk["content"] for chunk in selection.chunks)
-
-
 def test_default_sql_uses_watchlist_and_correct_ha_discount_direction() -> None:
     """确认关注股票的 H/A 折价问题按 H 股折价方向排序。
 
@@ -823,19 +749,6 @@ def test_default_sql_uses_watchlist_and_correct_ha_discount_direction() -> None:
     assert sql is not None
     assert "v_watchlist_opportunity" in sql
     assert "ORDER BY ha_premium_pct ASC" in sql
-
-
-def test_investment_knowledge_selects_threshold_recommendation_logic() -> None:
-    """确认阈值推荐问题命中稳定推荐逻辑文档。
-
-    创建日期：2026-05-04
-    author: sunshengxian
-    """
-
-    selection = InvestmentKnowledgeService().select("招商银行 H/A 目标阈值应该设多少？")
-
-    assert "A/H 溢价与跨市场价差" in selection.categories
-    assert any("统一计算框架" in chunk["content"] for chunk in selection.chunks)
 
 
 def test_threshold_recommendation_fast_path_skips_router_and_market_data(monkeypatch) -> None:
@@ -1111,7 +1024,6 @@ def test_uncertain_question_scope_uses_default_deepseek_router(monkeypatch) -> N
                         "message": {
                             "content": (
                                 '{"is_answerable":true,"needs_sql":false,'
-                                '"use_knowledge":false,"knowledge_categories":[],'
                                 '"reason":"允许回答"}'
                             )
                         }
@@ -1186,7 +1098,6 @@ def test_question_router_falls_back_to_qwen_when_deepseek_busy(monkeypatch) -> N
                         "message": {
                             "content": (
                                 '{"is_answerable":true,"needs_sql":false,'
-                                '"use_knowledge":true,"knowledge_categories":["ah_premium"],'
                                 '"reason":"备用模型路由成功"}'
                             )
                         }
@@ -1224,8 +1135,6 @@ def test_question_router_falls_back_to_qwen_when_deepseek_busy(monkeypatch) -> N
     route = service._route_question("招商银行现在估值怎么看")
 
     assert route.is_answerable is True
-    assert route.use_knowledge is True
-    assert route.knowledge_category_keys == ("ah_premium",)
     assert [call["payload"]["model"] for call in calls] == [
         "deepseek-v4-flash",
         "qwen3.6-flash",
@@ -1501,21 +1410,6 @@ def test_daily_llm_call_limit_counts_external_main_phases_only() -> None:
             raise AssertionError("daily LLM limit should be enforced")
 
 
-def _write_minimal_docx(path: Path, paragraphs: tuple[str, ...]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    body = "".join(
-        f"<w:p><w:r><w:t>{paragraph}</w:t></w:r></w:p>" for paragraph in paragraphs
-    )
-    document_xml = (
-        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-        '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
-        f"<w:body>{body}</w:body>"
-        "</w:document>"
-    )
-    with zipfile.ZipFile(path, "w") as docx_file:
-        docx_file.writestr("word/document.xml", document_xml)
-
-
 def test_general_direct_question_is_allowed_without_investment_boundary() -> None:
     """确认翻译和通用知识问答不再被投资边界误拦截。
 
@@ -1527,7 +1421,7 @@ def test_general_direct_question_is_allowed_without_investment_boundary() -> Non
         Mock(),
         settings=Settings(llm_api_key="test-key", llm_api_key_file=None, llm_model="test-model"),
     )
-    route = QuestionRoute(is_answerable=True, should_query_data=False, use_knowledge=False)
+    route = QuestionRoute(is_answerable=True, should_query_data=False)
 
     assert service._is_general_direct_question("把这句话翻译成英文：利润质量很重要", route) is True
 

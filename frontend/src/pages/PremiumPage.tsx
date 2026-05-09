@@ -129,7 +129,7 @@ function buildModalThresholdPrompt(item: PremiumItem, values: WatchlistFormValue
   const metricPremium = direction === 'AH' ? item.ah_premium_pct : item.ha_premium_pct;
   return [
     `请为“${values.display_name || item.a_name || item.hk_name || item.a_ts_code}”推荐一个 ${directionLabel} 目标阈值。`,
-    '场景是用户正在设置自选股提醒阈值。请优先按知识库中的“自选阈值推荐逻辑”给出稳定、可复核的建议。',
+    '场景是用户正在设置自选股提醒阈值。请结合页面给出的价差分位、持有侧和当前阈值，给出稳定、可复核的建议。',
     '',
     '当前页面数据：',
     `- A 股 / H 股代码：${item.a_ts_code} / ${item.hk_ts_code}`,

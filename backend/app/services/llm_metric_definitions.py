@@ -31,7 +31,7 @@ PHASE_LABELS: dict[str, str] = {
 
 PHASE_DESCRIPTIONS: dict[str, str] = {
     "question_router": (
-        "前置路由阶段，判断问题是否属于投资研究、是否需要查结构化数据、是否需要读取知识库。"
+        "前置路由阶段，判断问题是否属于投资研究、是否需要查结构化数据、是否需要按需补数。"
     ),
     "stock_disambiguation": (
         "股票名称语义消歧阶段，只在本地股票候选内选择具体 A 股代码，不调用外部行情接口。"

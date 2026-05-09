@@ -93,7 +93,7 @@ APP_CORS_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
 
 不要把真实 Token、数据库密码或 LLM Key 写入仓库。若 shell 中残留旧 `TUSHARE_TOKEN`，项目仍会优先使用 `TUSHARE_TOKEN_FILE` 指向的文件，避免误用旧 token；DeepSeek 和 Qwen Key 同理优先使用本机文件。
 
-智能问答仅面向投资研究问题。后端会先用 `deepseek-v4-flash` 做单次 JSON 前置路由，同时判断是否可答、是否需要结构化数据、是否需要知识库和知识分类，再为选定问答模型注入专业金融投资分析顾问角色、最近会话上下文、必要的数据摘要和必要的投研知识片段；前端只展示报告和数据摘要表格，不展示 SQL 或底层查询过程。若历史环境中仍配置 `deepseek-v4-pro[1m]`，后端会在请求 DeepSeek 时自动归一化为 API 支持的 `deepseek-v4-pro`；当前不额外传 `reasoning_effort`。
+智能问答仅面向投资研究问题。后端会先用 `deepseek-v4-flash` 做单次 JSON 前置路由，同时判断是否可答、是否需要结构化数据、是否需要按需补充市场数据，再为选定问答模型注入专业金融投资分析顾问角色、最近会话上下文、页面上下文、数据摘要和按需补数结果；前端只展示报告和数据摘要表格，不展示 SQL 或底层查询过程。若历史环境中仍配置 `deepseek-v4-pro[1m]`，后端会在请求 DeepSeek 时自动归一化为 API 支持的 `deepseek-v4-pro`；当前不额外传 `reasoning_effort`。
 
 Tushare 中转服务文档见 `http://tsy.xiaodefa.cn/docs`。项目后端已按其 SDK 方式设置。文档示例使用 `ts.set_token(token)`，项目实现采用 `ts.pro_api(token, timeout=...)` 直接传入 token，避免 SDK 把 token 额外写到用户目录缓存文件：
 
@@ -466,9 +466,9 @@ QWEN_API_KEY=
 QWEN_QUESTION_ROUTER_MODEL=deepseek-v4-flash
 ```
 
-问答页面使用流式响应，输入框按 Enter 发送，Shift+Enter 换行，并支持选择 `deepseek-v4-flash`、`deepseek-v4-pro` 或 `qwen3.6-flash`，默认 DeepSeek Flash；预设问题点击后会直接发送。空会话会从 LLM 投资知识库主题中随机展示投研问题，便于直接生成更完整的投资分析报告。外部模型主调用会按项目维度做日限流，默认每天 100 次，统计范围包括 DeepSeek Flash 前置路由、SQL 生成/修复和最终回答调用，不包含首包耗时、SQL 执行和总耗时等内部指标。若页面一直没有响应，先确认后端 `/api/health` 正常，再查看后端日志中是否有 LLM 日限流、生成 SQL 字段名、前置路由或数据库执行错误。
+问答页面使用流式响应，输入框按 Enter 发送，Shift+Enter 换行，并支持选择 `deepseek-v4-flash`、`deepseek-v4-pro` 或 `qwen3.6-flash`，默认 DeepSeek Flash；预设问题点击后会直接发送。空会话展示结构化投研场景预设问题，便于直接触发数据路由和按需补数。外部模型主调用会按项目维度做日限流，默认每天 100 次，统计范围包括 DeepSeek Flash 前置路由、SQL 生成/修复和最终回答调用，不包含首包耗时、SQL 执行和总耗时等内部指标。若页面一直没有响应，先确认后端 `/api/health` 正常，再查看后端日志中是否有 LLM 日限流、生成 SQL 字段名、前置路由或数据库执行错误。
 
-AH 溢价、折价和套利相关问题可按前置路由补充本地候选池、市场分布、自选机会，以及 `resources/doc/llm-knowledge/ah-premium/` 中的研究片段，避免只基于单行 SQL 结果作答。银行/非银、个股报告、宏观地产金融推演等问题会先给轻量知识库目录简介，由模型选择是否读取对应子目录中的投研报告片段。回答提示词要求 LLM 给出评级口径、配置倾向、优先级、仓位思路、阈值和触发条件，并避免输出模板化免责句。
+AH 溢价、折价和套利相关问题可按前置路由补充本地候选池、市场分布和自选机会，避免只基于单行 SQL 结果作答。项目已移除自动静态投研材料注入链路和旧材料目录；银行/非银、个股报告、宏观地产金融推演等回答只基于会话历史、页面上下文、结构化市场观察、按需补数结果和模型自身金融知识组织。回答提示词要求 LLM 给出评级口径、配置倾向、优先级、仓位思路、阈值和触发条件，并避免输出模板化免责句。
 
 ## 15. 当前验证状态
 

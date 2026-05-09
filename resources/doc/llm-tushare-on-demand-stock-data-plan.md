@@ -4,7 +4,7 @@
 
 ## 1. 背景与目标
 
-当前项目已经具备 LLM 问答、投资知识库、只读 SQL Guard、A/H 溢价主表和 A 股选股因子宽表。上一版方案聚焦“上市公司财务数据补齐”，可以解决利润表、资产负债表、现金流和财务指标缺失时的个股分析问题。但 Tushare Pro 实际覆盖的数据域远不止财务，官方数据分类还包括基础数据、行情数据、财务数据、参考数据、特色数据、两融数据、资金流向、市场参考、指数数据、基金数据、港美股数据、宏观经济和新闻快讯等。
+当前项目已经具备 LLM 问答、只读 SQL Guard、A/H 溢价主表和 A 股选股因子宽表。上一版方案聚焦“上市公司财务数据补齐”，可以解决利润表、资产负债表、现金流和财务指标缺失时的个股分析问题。但 Tushare Pro 实际覆盖的数据域远不止财务，官方数据分类还包括基础数据、行情数据、财务数据、参考数据、特色数据、两融数据、资金流向、市场参考、指数数据、基金数据、港美股数据、宏观经济和新闻快讯等。
 
 本方案把能力抽象成通用的“股票问答数据需求编排器”：LLM 只表达投资研究意图和数据需求，后端判断本地是否已有缓存；本地缺数时，按白名单受控调用 Tushare，先幂等落库和审计，再把小规模、可解释、可复核的数据摘要交给 LLM。
 
@@ -18,7 +18,7 @@
 flowchart LR
   U["用户问题"] --> R["LLM 前置路由"]
   R --> P["数据需求计划"]
-  P --> L["本地知识库和只读 SQL"]
+  P --> L["只读 SQL 和结构化上下文"]
   L --> G{"本地材料是否足够"}
   G -->|"足够"| C["上下文构造器"]
   G -->|"缺数且在内部白名单内"| O["按需补数编排器"]
@@ -122,8 +122,6 @@ class MarketDataDemand:
 {
   "is_answerable": true,
   "needs_sql": true,
-  "use_knowledge": true,
-  "knowledge_categories": ["ah_premium"],
   "data_demands": [
     {
       "intent": "stock_research",
@@ -143,8 +141,6 @@ class MarketDataDemand:
 {
   "is_answerable": true,
   "needs_sql": false,
-  "use_knowledge": false,
-  "knowledge_categories": [],
   "data_demands": [
     {
       "intent": "stock_research",
@@ -346,6 +342,7 @@ class DataPackageFetcher(Protocol):
 
 完成编码后需要同步更新：
 
+- 项目不再保留自动静态投研材料注入目录；后续新增分析方法论时，优先沉淀为数据包说明、路由提示词约束、摘要视图或可验证字段，不恢复离线材料片段自动塞入回答上下文。
 - `resources/doc/database-schema.md`
 - `resources/doc/development-progress.md`
 - `resources/doc/stock-selection-factor-design.md`，说明选股宽表与通用按需补数的分工

@@ -353,7 +353,7 @@ function buildThresholdRecommendationPrompt(item: WatchlistOpportunity) {
   const directionLabel = direction === 'AH' ? 'A/H' : 'H/A';
   return [
     `请为自选股“${opportunityName(item)}”推荐一个 ${directionLabel} 目标阈值。`,
-    '你是 A/H 跨市场价差研究助手，请优先按知识库中的“自选阈值推荐逻辑”给出稳定、可复核的建议。',
+    '你是 A/H 跨市场价差研究助手，请结合页面给出的价差分位、持有侧和当前阈值，给出稳定、可复核的建议。',
     '',
     '页面数据：',
     `- A 股 / H 股代码：${item.watchlist.a_ts_code} / ${item.watchlist.hk_ts_code}`,

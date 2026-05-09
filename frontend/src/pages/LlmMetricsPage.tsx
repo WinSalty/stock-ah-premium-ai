@@ -36,7 +36,7 @@ const providerOptions = ['Qwen', 'DeepSeek', 'Database', 'Internal'].map((item) 
 }));
 
 const phaseDescriptions: Record<string, string> = {
-  question_router: '前置路由阶段，判断问题是否属于投资研究、是否需要查结构化数据、是否需要读取知识库。',
+  question_router: '前置路由阶段，判断问题是否属于投资研究、是否需要查结构化数据、是否需要按需补数。',
   generate_sql: 'SQL 生成阶段，仅在问题需要精确结构化数据时调用外部模型生成只读查询。',
   repair_sql: 'SQL 修复阶段，仅在生成的 SQL 字段或语法执行失败时触发一次修复。',
   execute_sql: '数据库执行阶段，不调用 LLM；row_count 表示实际返回给回答链路的数据行数。',
