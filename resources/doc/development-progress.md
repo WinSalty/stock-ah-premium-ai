@@ -1,6 +1,6 @@
 # 开发进度记录
 
-更新日期：2026-05-08
+更新日期：2026-05-09
 
 ## 当前状态
 
@@ -8,7 +8,7 @@
 
 ## 已完成
 
-- 新增 `resources/doc/llm-tushare-on-demand-stock-data-plan.md`，沉淀 LLM 股票问答通用按需补数方案：基于 Tushare 数据分类抽象 `MarketDataDemand`、数据包白名单、缓存限流和补数审计；明确当前 15000 积分是权限门槛不是按次扣费制，自动补数只允许 A 股、短区间、低频、缓存优先，不自动全市场批量拉取；个股投资分析报告作为第一优先级优化场景，提示词只教分析方法和证据链，不用死板模板过度约束 LLM 推理。
+- 新增 `resources/doc/llm-tushare-on-demand-stock-data-plan.md`，沉淀 LLM 股票问答通用按需补数方案：基于 Tushare 数据分类抽象 `MarketDataDemand`、数据包白名单、缓存限流和补数审计；自动补数只允许 A 股、短区间、低频、缓存优先，不自动全市场批量拉取；个股投资分析报告作为第一优先级优化场景，提示词只教分析方法和证据链，不用死板模板过度约束 LLM 推理。最终回答只暴露材料覆盖和材料缺口，不暴露积分、权限、接口名和内部补数策略。
 - 已按方案落地 LLM 股票按需补数链路：新增 `a_daily_basic`、三张财务报表核心表、`a_financial_indicator`、`a_dividend`、`a_forecast` 和补数审计表；新增股票解析器、Tushare 白名单抓取器和按需编排器。LLM 路由支持 `data_demands`，后端接受 `quote_valuation`、`financial_statement`、`dividend_forecast` 三类数据包；命中缓存时不调用 Tushare，名称歧义会先基于本地股票基础表召回候选再让 LLM 在候选内语义消歧，明确多股对比时允许 5 只以内逐只补数。
 - 个股投资分析报告提示词已优化：回答上下文新增 `market_data_context`，报告场景要求区分可观察事实、推断和假设，围绕商业质量、盈利增长、资产负债、现金流、估值、分红、业绩预告、A/H 相关性和反证条件建立证据链，同时保留 LLM 自主组织报告结构的自由度。
 - 项目目录调整为前后端混合 coding 项目：`/Users/salty/codeProject/ai/coding/stock-ah-premium-ai`。
@@ -261,7 +261,7 @@
 - 新增“问数模式”：用户明确表达“只要数据、不要分析、返回数据、财报数据、估值数据”等意图且未要求分析时，后端直接把结构化数据格式化为 Markdown 表格，并提示可继续返回行情估值、财务摘要、现金流、利润质量、分红/业绩预告、主营业务构成、A/H 溢价和自选股阈值数据；用户要求分析时仍走原投研回答链路。
   - 放宽通用问答边界：翻译、知识解释、改写、润色、编程概念等普通问答由通用 LLM prompt 直接回答，不再套用投资助手拒答边界；仅违法违规交易、敏感信息和账号越权类请求继续拒绝。
   - 个股分析报告提示词优化：报告类回答要求先做数据核验，再区分事实、推断和假设，重点核查扣非净利润、投资收益、公允价值变动、减值、经营现金流覆盖、资产结构和估值口径，避免仅因表面 PE/PB 偏低给出乐观判断。
-- 个股研究上下文继续扩展为 15000 积分可用接口组合：新增 `business_profile`、`shareholder_governance` 和 `capital_flow_light` 三类数据包；分别补入 `fina_mainbz`、`fina_audit`、`express`、`top10_holders`、`top10_floatholders`、`stk_holdernumber`、`pledge_stat` 和 `moneyflow`。财务、主营和分红底层补数周期扩展到最近 8 年，业绩预告和业绩快报保留最近 5 年，个股资金流底层保留最近 60 个自然日；LLM 上下文仍只取摘要视图最近少量记录，避免原始明细过量塞入 prompt。
+- 个股研究上下文继续扩展为内部白名单接口组合：新增 `business_profile`、`shareholder_governance` 和 `capital_flow_light` 三类数据包；分别补入 `fina_mainbz`、`fina_audit`、`express`、`top10_holders`、`top10_floatholders`、`stk_holdernumber`、`pledge_stat` 和 `moneyflow`。财务、主营和分红底层补数周期扩展到最近 8 年，业绩预告和业绩快报保留最近 5 年，个股资金流底层保留最近 60 个自然日；LLM 上下文仍只取摘要视图最近少量记录，避免原始明细过量塞入 prompt。
 - 只读视图和 SQL Guard 同步扩充：新增 `v_stock_business_profile_summary`、`v_stock_shareholder_governance_summary` 和 `v_stock_moneyflow_recent`，并将报告提示词升级为同时检查主营收入/利润来源、审计意见、业绩快报、股东集中度、股东户数、质押压力和短期资金流，明确资金流只解释交易情绪，不替代基本面证据。
 
 ## 2026-05-07 AI 阈值推荐快路径优化
@@ -270,6 +270,13 @@
 - 后端新增阈值推荐确定性计算器，按 `threshold-recommendation-logic.md` 的 `median + 0.65 * (p80 - median)`、当前分位高于 80% 取 `max(base, current)`、历史分位缺失时给 2 到 5 个百分点缓冲等规则稳定生成建议阈值；LLM 只解释这个紧凑结果，避免相同页面输入下答案大幅漂移。
 - 阈值推荐支持流式调用和专用耗时阶段：`threshold_answer`、`threshold_answer_stream`、`threshold_answer_stream_first_chunk`、`threshold_done`、`threshold_stream_done`，管理员可在 LLM 耗时页面直接区分阈值快路径和通用问答链路。
 - 模型未配置时，阈值推荐会返回本地确定性 Markdown 兜底答案，避免固定场景因外部模型不可用完全无法使用；模型配置正常时仍由 LLM 补充推荐理由和执行条件。
+
+## 2026-05-09 财报异常问答补包优化
+
+- 排查服务器 LLM 耗时追踪 `0b448bd3f02c44248b94fe264fac6e1f`：本地与服务器 `llm_call_metric`、`llm_market_data_fetch_run`、`llm_market_data_fetch_item` 表结构一致，不存在部署漂移；问题原文当前落在 `conversation_title`，请求上下文落在 `request_payload_json`，模型响应落在 `response_content`。
+- 该追踪中前置路由只返回 `financial_statement`，补数审计也只调用财务报表和财务指标包，未触发审计意见、业绩快报、前十大股东、前十大流通股东、股东户数和质押比例相关上下文，导致回答阶段只能基于财务异常模式推断并把可补结构化材料列为缺口。
+- `MarketDataOrchestrator` 新增财报异常专项语义扩展：当问题出现年报/季报异常、财务报表更改、会计政策或会计估计变更、差错更正、追溯调整、重述、审计意见、业绩快报等信号时，即使路由只给 `financial_statement`，后端也会自动补充 `business_profile` 与 `shareholder_governance`。
+- 投研回答提示词新增外部材料边界：最终回答只能说明当前材料覆盖项和缺口项；公告原文、公司回复或补充披露未覆盖时，只写“当前材料未覆盖，需后续以正式披露校验”，不得暴露积分、权限、接口名、数据库表和内部补数策略。
 
 ## 2026-05-08 港股财务问答与 24 期财务上下文优化
 

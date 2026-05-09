@@ -201,6 +201,38 @@ def test_orchestrator_report_question_requests_enhanced_research_packages() -> N
     )
 
 
+def test_orchestrator_expands_accounting_review_routed_financial_package(monkeypatch) -> None:
+    """确认财报调整问题即便路由只给财务包，也会补审计快报和股东治理材料。
+
+    创建日期：2026-05-09
+    author: sunshengxian
+    """
+
+    db = _session()
+    db.add(AStockBasic(ts_code="000858.SZ", symbol="000858", name="五粮液", list_status="L"))
+    db.commit()
+    fetcher = RecordingFetcher()
+    service = MarketDataOrchestrator(db, fetcher=fetcher)  # type: ignore[arg-type]
+    monkeypatch.setattr(service, "_build_context", lambda ts_code, packages: {"ts_code": ts_code})
+
+    result = service.ensure_for_question(
+        "帮我分析一下五粮液的2026年一季报，五粮液大幅更改2025年的财务报表属于什么性质？",
+        {},
+        (MarketDataDemand("000858.SZ", ("financial_statement",), market="A"),),
+    )
+
+    assert result.packages == (
+        "financial_statement",
+        "business_profile",
+        "shareholder_governance",
+    )
+    assert fetcher.calls == [
+        ("000858.SZ", "financial_statement"),
+        ("000858.SZ", "business_profile"),
+        ("000858.SZ", "shareholder_governance"),
+    ]
+
+
 def test_orchestrator_allows_hk_financial_demand(monkeypatch) -> None:
     """确认港股研究问题可触发港股财务包，并按港股市场范围写审计上下文。
 

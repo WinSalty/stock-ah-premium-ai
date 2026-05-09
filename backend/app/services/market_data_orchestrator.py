@@ -48,6 +48,21 @@ DIVIDEND_KEYWORDS = ("分红", "股息", "派息", "业绩预告", "预告")
 BUSINESS_PROFILE_KEYWORDS = ("主营", "业务构成", "收入结构", "产品", "地区", "审计", "业绩快报")
 GOVERNANCE_KEYWORDS = ("股东", "持股", "质押", "股东户数", "治理", "大股东", "筹码集中")
 CAPITAL_FLOW_KEYWORDS = ("资金流", "资金流向", "大单", "特大单", "净流入", "短期资金")
+ACCOUNTING_REVIEW_KEYWORDS = (
+    "会计政策",
+    "会计估计",
+    "差错更正",
+    "追溯调整",
+    "报表更改",
+    "财务报表更改",
+    "重述",
+    "调整财务报表",
+    "审计意见",
+    "业绩快报",
+    "年报",
+    "一季报",
+    "季报",
+)
 MAX_MARKET_DATA_STOCKS = 5
 
 
@@ -127,7 +142,7 @@ class MarketDataOrchestrator:
                 "SKIPPED",
                 "未识别到股票研究需求",
             )
-        stock_demands = self._validated_stock_demands(demands)
+        stock_demands = self._validated_stock_demands(question, demands)
         if not stock_demands:
             return MarketDataEnsureResult(
                 None,
@@ -271,6 +286,7 @@ class MarketDataOrchestrator:
 
     def _validated_stock_demands(
         self,
+        question: str,
         demands: tuple[MarketDataDemand, ...],
     ) -> tuple[tuple[StockIdentity, MarketDataDemand, tuple[str, ...]], ...]:
         """校验路由或消歧后的股票代码，并保留每只股票自己的数据包需求。
@@ -291,8 +307,13 @@ class MarketDataOrchestrator:
                 continue
             seen.add(stock_result.identity.ts_code)
             market = self._market_from_ts_code(stock_result.identity.ts_code)
+            packages = self._packages_with_question_context(
+                demand.packages,
+                question,
+                market,
+            )
             validated.append(
-                (stock_result.identity, demand, self._normalize_packages(demand.packages, market))
+                (stock_result.identity, demand, packages)
             )
         return tuple(validated[:MAX_MARKET_DATA_STOCKS])
 
@@ -334,7 +355,57 @@ class MarketDataOrchestrator:
         return tuple(packages)
 
     def _normalize_packages(self, packages: tuple[str, ...], market: str = "A") -> tuple[str, ...]:
-        allowed = (
+        # 统一使用市场白名单过滤路由返回包名，避免不同方法里的包顺序或港股限制不一致。
+        allowed = self._allowed_packages_for_market(market)
+        normalized = tuple(package for package in allowed if package in set(packages))
+        if normalized:
+            return normalized
+        return (FINANCIAL_STATEMENT_PACKAGE,) if market == "HK" else (QUOTE_VALUATION_PACKAGE,)
+
+    def _packages_with_question_context(
+        self,
+        packages: tuple[str, ...],
+        question: str,
+        market: str,
+    ) -> tuple[str, ...]:
+        """根据问题语义扩展路由模型遗漏但研究判断必需的数据包。
+
+        创建日期：2026-05-09
+        author: sunshengxian
+        """
+
+        normalized_packages = self._normalize_packages(packages, market)
+        if market == "HK":
+            return normalized_packages
+        expanded = list(normalized_packages)
+        normalized_question = question.lower()
+        # 路由模型经常只返回财务报表包；当用户追问财报调整、重述、审计或年季报异常性质时，
+        # 必须同步准备审计/快报和股东治理材料，否则回答只能依赖财务模式做推断，
+        # 容易把本轮可准备的结构化材料误报为缺口。
+        if FINANCIAL_STATEMENT_PACKAGE in expanded and any(
+            keyword.lower() in normalized_question for keyword in ACCOUNTING_REVIEW_KEYWORDS
+        ):
+            for package in (BUSINESS_PROFILE_PACKAGE, SHAREHOLDER_GOVERNANCE_PACKAGE):
+                if package not in expanded:
+                    expanded.append(package)
+        return tuple(
+            package
+            for package in self._allowed_packages_for_market(market)
+            if package in expanded
+        )
+
+    def _allowed_packages_for_market(self, market: str) -> tuple[str, ...]:
+        """返回市场可用数据包白名单，供归一化和语义扩展保持同一顺序。
+
+        创建日期：2026-05-09
+        author: sunshengxian
+        """
+
+        if market == "HK":
+            # 港股自动补数目前只开放财务指标和三大报表；行情、股东治理、分红等仍沿用
+            # 本地已有 AH/港股通数据或后续单独扩展，避免路由模型误触未沉淀的数据域。
+            return (FINANCIAL_STATEMENT_PACKAGE,)
+        return (
             QUOTE_VALUATION_PACKAGE,
             FINANCIAL_STATEMENT_PACKAGE,
             BUSINESS_PROFILE_PACKAGE,
@@ -342,14 +413,6 @@ class MarketDataOrchestrator:
             SHAREHOLDER_GOVERNANCE_PACKAGE,
             CAPITAL_FLOW_PACKAGE,
         )
-        if market == "HK":
-            # 港股自动补数目前只开放财务指标和三大报表；行情、股东治理、分红等仍沿用
-            # 本地已有 AH/港股通数据或后续单独扩展，避免路由模型误触未沉淀的数据域。
-            allowed = (FINANCIAL_STATEMENT_PACKAGE,)
-        normalized = tuple(package for package in allowed if package in set(packages))
-        if normalized:
-            return normalized
-        return (FINANCIAL_STATEMENT_PACKAGE,) if market == "HK" else (QUOTE_VALUATION_PACKAGE,)
 
     def _merged_packages(self, package_groups: tuple[tuple[str, ...], ...]) -> tuple[str, ...]:
         # 批次审计表只记录本轮问答涉及的包合集，逐股实际包仍保留在 market_data_context.items 中。

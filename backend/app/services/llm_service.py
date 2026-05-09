@@ -135,7 +135,35 @@ financial_statement、business_profile、dividend_forecast、shareholder_governa
 capital_flow_light 中选择；港股当前只允许 financial_statement 数据包，
 代码必须是 5 位港股 Tushare 代码，例如 02380.HK，不要输出港股行情、指数、
 全市场或任意 Tushare 接口名。
-路由重点是控制接口范围、股票数量和时间窗口。
+A 股数据包含义：
+- quote_valuation：日线行情、最新收盘、近 20/60/120 日走势、成交额、换手率、
+PE、PB、PS、市值、流通市值、股息率等，用于判断价格位置和估值。
+- financial_statement：利润表、资产负债表、现金流量表、财务指标；包含收入、利润、
+扣非利润、EPS、ROE、毛利率、净利率、资产负债率、货币资金、有息负债、经营/投资/筹资现金流等，
+用于判断基本面、利润质量、资产质量和现金流匹配。
+- business_profile：主营业务产品/地区构成、收入和利润来源、审计意见、审计机构、
+签字会计师、审计费用、业绩快报及是否审计等，用于判断业务结构和报表可靠性。
+- dividend_forecast：分红方案、派息进度、股息相关字段、业绩预告类型、预告摘要、
+业绩变动区间和变动原因等，用于判断股东回报和业绩前瞻。
+- shareholder_governance：前十大股东、前十大流通股东、持股比例、持股变化、
+股东户数、质押次数、质押股数、总股本和质押比例等，用于判断治理、筹码和质押风险。
+- capital_flow_light：近端个股资金流向、小单/中单/大单/特大单买卖额和净流入，
+用于解释短期交易情绪，不能替代基本面结论。
+路由重点是控制股票数量和时间窗口，但不要把单股研究压缩成一个数据包；
+只要问题需要形成投资判断、解释异常或判断性质，就应主动选择能互相校验的多个数据包。
+A 股数据包选择规则：
+1. 估值、贵不贵、价格趋势、涨跌幅、PE/PB/市值/股息率：选择 quote_valuation。
+2. 财报、一季报/半年报/三季报/年报、收入、利润、ROE、资产负债、现金流：选择 financial_statement。
+3. 主营业务、收入结构、产品/地区构成、审计意见、业绩快报、报表可靠性：选择 business_profile。
+4. 分红、股息、派息、业绩预告：选择 dividend_forecast。
+5. 股东、前十大股东、流通股东、股东户数、质押、治理、筹码集中：选择 shareholder_governance。
+6. 资金流、短线资金、大单、特大单、净流入：选择 capital_flow_light。
+7. 个股投资分析报告、深度报告、怎么看、配置建议：通常至少选择 quote_valuation、
+financial_statement、business_profile、dividend_forecast、shareholder_governance；
+用户明确问短线资金时再加 capital_flow_light。
+8. 财务报表大幅更改、重述、追溯调整、差错更正、会计政策/会计估计变更、审计意见、
+业绩快报、年报/季报异常性质：必须选择 financial_statement、business_profile、
+shareholder_governance；需要估值判断时再加 quote_valuation。
 投资研究范围包括股票、基金、指数、行业、估值、财报、红利、仓位、风险、
 组合配置、A/H 溢价、港股通、宏观与投资策略相关问题；股票代码、公司投研、
 阈值建议和投资报告写作也属于范围。
@@ -1466,6 +1494,12 @@ class LlmService:
             "market_observations": rows[:ANSWER_MARKET_ROW_LIMIT],
             "supplemental_market_observations": self._supporting_data(question, context),
             "market_data_context": market_data_context,
+            "external_material_boundary": (
+                "最终回答只能描述当前分析材料覆盖了什么、缺少什么；"
+                "不得向用户暴露内部数据接口、积分、权限、数据库、补数策略或系统处理细节。"
+                "公告原文、公司回复、补充披露等若未在材料中出现，只能表述为当前材料未覆盖，"
+                "需要后续以公司正式披露校验。"
+            ),
             "financial_context_contract": (
                 "若 market_data_context.context.financial_periods 存在，"
                 "最多包含最近 24 期财务摘要；"
@@ -1481,7 +1515,7 @@ class LlmService:
         return (
             "请根据以下分析材料生成给用户的最终投资研究回答。"
             "材料中的结构化字段和参考内容只供你内部分析，最终回答不得提及材料格式、"
-            "底层系统、SQL、JSON、数据库、视图名或文件来源。"
+            "底层系统、SQL、JSON、数据库、视图名、文件来源、内部接口、积分或权限。"
             "若有 market_data_context，请优先使用其中的补数上下文作为主证据，"
             "market_observations 只作为补充校验；如果 market_observations 大量为空，"
             "不得据此判断没有财务数据。"
@@ -1538,10 +1572,10 @@ class LlmService:
             "reason": result.reason,
             "stocks": result.stocks,
             "data_boundary": (
-                f"仅按 A 股/港股、白名单数据包和最多 {MAX_MARKET_DATA_STOCKS} "
-                "只股票补充有限区间数据；"
-                "A 股可补行情估值、财务、主营、股东治理和资金流；港股当前只补财务指标和三大报表，"
-                "材料缺口需要在结论中说明。"
+                f"本轮最多围绕 {MAX_MARKET_DATA_STOCKS} 只股票准备有限区间分析材料；"
+                "最终回答只说明材料已覆盖和未覆盖的事实维度。"
+                "若公告原文、公司回复或补充披露未出现在材料中，只说当前材料未覆盖，"
+                "不要说明内部接口、积分、权限或补数来源。"
             ),
         }
 

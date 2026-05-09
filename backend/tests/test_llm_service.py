@@ -21,6 +21,7 @@ from app.services.llm_service import (
     INVESTMENT_ADVISOR_SYSTEM_PROMPT,
     LLM_LIMIT_EXCEEDED_MESSAGE,
     OUT_OF_SCOPE_MESSAGE,
+    QUESTION_ROUTER_SYSTEM_PROMPT,
     SERVICE_INTRO_MESSAGE,
     LlmCallTrace,
     LlmDailyLimitExceeded,
@@ -245,6 +246,46 @@ def test_clear_investment_question_uses_default_deepseek_router(monkeypatch) -> 
     assert captured["model"] == "deepseek-v4-flash"
     assert captured["phase"] == "question_router"
     assert "knowledge_catalog" in str(captured["prompt"])
+
+
+def test_question_router_prompt_requires_multi_package_evidence_chain() -> None:
+    """确认路由提示词要求单股研究主动组合多个证据包。
+
+    创建日期：2026-05-09
+    author: sunshengxian
+    """
+
+    assert "不要把单股研究压缩成一个数据包" in QUESTION_ROUTER_SYSTEM_PROMPT
+    assert "A 股数据包含义" in QUESTION_ROUTER_SYSTEM_PROMPT
+    assert "quote_valuation：日线行情" in QUESTION_ROUTER_SYSTEM_PROMPT
+    assert (
+        "financial_statement：利润表、资产负债表、现金流量表、财务指标"
+        in QUESTION_ROUTER_SYSTEM_PROMPT
+    )
+    assert "business_profile：主营业务产品/地区构成" in QUESTION_ROUTER_SYSTEM_PROMPT
+    assert "dividend_forecast：分红方案" in QUESTION_ROUTER_SYSTEM_PROMPT
+    assert "shareholder_governance：前十大股东、前十大流通股东" in QUESTION_ROUTER_SYSTEM_PROMPT
+    assert "capital_flow_light：近端个股资金流向" in QUESTION_ROUTER_SYSTEM_PROMPT
+    assert "个股投资分析报告" in QUESTION_ROUTER_SYSTEM_PROMPT
+    assert (
+        "quote_valuation、\nfinancial_statement、business_profile、dividend_forecast、shareholder_governance"
+        in QUESTION_ROUTER_SYSTEM_PROMPT
+    )
+
+
+def test_question_router_prompt_requires_accounting_review_packages() -> None:
+    """确认财报异常和报表更改问题会提示路由主动要三类校验包。
+
+    创建日期：2026-05-09
+    author: sunshengxian
+    """
+
+    assert "财务报表大幅更改" in QUESTION_ROUTER_SYSTEM_PROMPT
+    assert "会计政策/会计估计变更" in QUESTION_ROUTER_SYSTEM_PROMPT
+    assert (
+        "必须选择 financial_statement、business_profile、\nshareholder_governance"
+        in QUESTION_ROUTER_SYSTEM_PROMPT
+    )
 
 
 def test_route_from_payload_accepts_market_data_demands() -> None:
