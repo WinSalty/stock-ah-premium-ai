@@ -1,4 +1,4 @@
-import { Button, Checkbox, DatePicker, Form, Input, Modal, Popconfirm, Select, Space, Table, Tabs, Tag, Typography, message } from 'antd';
+import { Button, Checkbox, DatePicker, Form, Input, Modal, Popconfirm, Select, Space, Table, Tabs, Tag, Tooltip, Typography, message } from 'antd';
 import { Ban, Eye, RefreshCw, RotateCcw, Search, Send, Share2, Sparkles } from 'lucide-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { Dayjs } from 'dayjs';
@@ -254,9 +254,6 @@ function LimitUpPushPage({ currentUser }: LimitUpPushPageProps) {
                 >
                   生成最新报告
                 </Button>
-                <Button icon={<Send size={16} />} disabled={!selectedReportId} onClick={() => selectedReportId && openPushModal(selectedReportId)}>
-                  推送选中报告
-                </Button>
               </>
             ) : null}
           </Space>
@@ -346,21 +343,41 @@ function LimitUpPushPage({ currentUser }: LimitUpPushPageProps) {
                       },
                       {
                         title: '操作',
-                        width: isAdmin ? 212 : 86,
+                        width: isAdmin ? 132 : 52,
                         fixed: 'right',
                         render: (_, record) => (
-                          <Space size={8}>
-                            <Button size="small" icon={<Eye size={14} />} onClick={() => openReportModal(record.id)}>
-                              查看
-                            </Button>
+                          <Space
+                            size={4}
+                            className="limit-up-report-row-actions"
+                            // 行点击负责选中当前报告；操作按钮区阻止事件冒泡，避免点击查看/分享/推送时同时改变外层选择态。
+                            onClick={(event) => event.stopPropagation()}
+                          >
+                            <Tooltip title="查看报告">
+                              <Button
+                                aria-label="查看报告"
+                                size="small"
+                                icon={<Eye size={14} />}
+                                onClick={() => openReportModal(record.id)}
+                              />
+                            </Tooltip>
                             {isAdmin ? (
                               <>
-                                <Button size="small" icon={<Share2 size={14} />} onClick={() => openShareModal(record.id)}>
-                                  分享
-                                </Button>
-                                <Button size="small" icon={<Send size={14} />} onClick={() => openPushModal(record.id)}>
-                                  推送
-                                </Button>
+                                <Tooltip title="分享链接">
+                                  <Button
+                                    aria-label="分享链接"
+                                    size="small"
+                                    icon={<Share2 size={14} />}
+                                    onClick={() => openShareModal(record.id)}
+                                  />
+                                </Tooltip>
+                                <Tooltip title="推送报告">
+                                  <Button
+                                    aria-label="推送报告"
+                                    size="small"
+                                    icon={<Send size={14} />}
+                                    onClick={() => openPushModal(record.id)}
+                                  />
+                                </Tooltip>
                               </>
                             ) : null}
                           </Space>

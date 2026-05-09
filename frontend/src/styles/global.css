@@ -752,6 +752,19 @@ body {
   vertical-align: middle;
 }
 
+.limit-up-report-row-actions {
+  /* 打板报告操作列是固定右列，图标按钮保持稳定尺寸，避免查看/分享/推送三个动作在窄屏下挤出表格。 */
+  display: inline-flex;
+  width: 100%;
+  justify-content: center;
+}
+
+.limit-up-report-row-actions .ant-btn {
+  width: 28px;
+  min-width: 28px;
+  padding-inline: 0;
+}
+
 .limit-up-report-modal-body {
   max-height: min(72vh, 760px);
   overflow: auto;
