@@ -374,6 +374,7 @@ export interface ThresholdRecommendationContext {
 }
 
 export interface ChatMessageResponse {
+  message_id?: number | null;
   answer: string;
   rows: Record<string, unknown>[];
 }
@@ -696,6 +697,14 @@ export interface XueqiuPublishRequest {
   cover_pic?: string | null;
 }
 
+export interface XueqiuChatAnswerPublishRequest {
+  message_id: number;
+  publish: boolean;
+  force: boolean;
+  cover_pic?: string | null;
+  title?: string | null;
+}
+
 export interface XueqiuPublishSettingRequest {
   scheduler_enabled: boolean;
   auto_publish: boolean;
@@ -720,7 +729,9 @@ export interface XueqiuActionResponse {
 
 export interface XueqiuPublishRecordItem {
   id: number;
-  analysis_id: number;
+  analysis_id: number | null;
+  chat_message_id: number | null;
+  source_type: string;
   trade_date: string | null;
   publish_mode: string;
   status: string;

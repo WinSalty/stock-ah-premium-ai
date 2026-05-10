@@ -112,6 +112,20 @@ class XueqiuPublishRequest(BaseModel):
     cover_pic: str | None = Field(default=None, max_length=512)
 
 
+class XueqiuChatAnswerPublishRequest(BaseModel):
+    """问答回答发布到雪球的请求。
+
+    创建日期：2026-05-10
+    author: sunshengxian
+    """
+
+    message_id: int = Field(ge=1)
+    publish: bool = False
+    force: bool = False
+    cover_pic: str | None = Field(default=None, max_length=512)
+    title: str | None = Field(default=None, max_length=120)
+
+
 class XueqiuPublishRecordItem(BaseModel):
     """雪球发布流水列表项。
 
@@ -120,7 +134,9 @@ class XueqiuPublishRecordItem(BaseModel):
     """
 
     id: int
-    analysis_id: int
+    analysis_id: int | None = None
+    chat_message_id: int | None = None
+    source_type: str = "LIMIT_UP_REPORT"
     trade_date: date | None = None
     publish_mode: str
     status: str

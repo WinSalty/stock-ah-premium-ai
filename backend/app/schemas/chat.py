@@ -127,5 +127,6 @@ class ChatMessageResponse(BaseModel):
     author: sunshengxian
     """
 
+    message_id: int | None = None
     answer: str
     rows: list[dict[str, Any]] = Field(default_factory=list)

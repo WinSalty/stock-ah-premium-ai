@@ -55,6 +55,7 @@ export function sendChatMessage(sessionId: number, payload: ChatMessageRequest) 
 
 interface ChatStreamEvent {
   type: 'meta' | 'delta' | 'done' | 'error';
+  message_id?: number | null;
   content?: string;
   answer?: string;
   rows?: Record<string, unknown>[];

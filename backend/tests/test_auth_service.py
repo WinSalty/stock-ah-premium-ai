@@ -40,10 +40,10 @@ def test_user_permissions_are_stored_per_user() -> None:
         assert service.user_response(updated_user).permissions == ["chat", "profile"]
 
 
-def test_admin_default_permissions_include_pushplus_menu() -> None:
-    """确认管理员默认拥有独立 PushPlus 菜单权限。
+def test_admin_default_permissions_include_admin_action_menus() -> None:
+    """确认管理员默认拥有独立管理菜单和问答发布动作权限。
 
-    创建日期：2026-05-08
+    创建日期：2026-05-10
     author: sunshengxian
     """
 
@@ -59,6 +59,8 @@ def test_admin_default_permissions_include_pushplus_menu() -> None:
 
     assert "users" in response.permissions
     assert "pushplus" in response.permissions
+    assert "xueqiu_publish" in response.permissions
+    assert "chat_xueqiu_publish" in response.permissions
 
 
 def test_profile_update_only_changes_basic_fields() -> None:

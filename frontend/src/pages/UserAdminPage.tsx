@@ -21,6 +21,8 @@ const menuPermissionOptions = [
   { label: '用户管理', value: 'users' },
   { label: 'PushPlus', value: 'pushplus' },
   { label: '打板推送', value: 'limit_up_push' },
+  { label: '雪球发布', value: 'xueqiu_publish' },
+  { label: '问答发布雪球', value: 'chat_xueqiu_publish' },
   { label: '个人信息', value: 'profile' }
 ];
 

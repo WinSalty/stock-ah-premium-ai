@@ -368,7 +368,11 @@ def create_message(
     db.add(assistant_message)
     _touch_session(session, visible_question, has_history=True)
     db.commit()
-    return ChatMessageResponse(answer=answer.answer, rows=answer.rows)
+    return ChatMessageResponse(
+        message_id=assistant_message.id,
+        answer=answer.answer,
+        rows=answer.rows,
+    )
 
 
 @router.post("/chat/sessions/{session_id}/messages/stream")
@@ -435,7 +439,14 @@ def create_message_stream(
             db.add(assistant_message)
             _touch_session(session, visible_question, has_history=True)
             db.commit()
-            yield _json_line({"type": "done", "answer": answer_text, "rows": rows})
+            yield _json_line(
+                {
+                    "type": "done",
+                    "message_id": assistant_message.id,
+                    "answer": answer_text,
+                    "rows": rows,
+                }
+            )
         except LlmDailyLimitExceeded as exc:
             db.rollback()
             logger.error("LLM 流式问答触发日限流")
@@ -452,7 +463,14 @@ def create_message_stream(
             db.add(assistant_message)
             _touch_session(session, visible_question, has_history=True)
             db.commit()
-            yield _json_line({"type": "error", "answer": answer_text, "rows": rows})
+            yield _json_line(
+                {
+                    "type": "error",
+                    "message_id": assistant_message.id,
+                    "answer": answer_text,
+                    "rows": rows,
+                }
+            )
         except Exception:
             db.rollback()
             logger.error("LLM 流式问答失败", exc_info=True)
@@ -469,6 +487,13 @@ def create_message_stream(
             db.add(assistant_message)
             _touch_session(session, visible_question, has_history=True)
             db.commit()
-            yield _json_line({"type": "error", "answer": answer_text, "rows": rows})
+            yield _json_line(
+                {
+                    "type": "error",
+                    "message_id": assistant_message.id,
+                    "answer": answer_text,
+                    "rows": rows,
+                }
+            )
 
     return StreamingResponse(stream(), media_type="application/x-ndjson")

@@ -10,13 +10,19 @@ from sqlalchemy.pool import StaticPool
 from app.core.config import Settings
 from app.db.base import Base
 from app.db.models.auth import AppUser
+from app.db.models.chat import LlmChatMessage, LlmChatSession
 from app.db.models.market import ATradeCalendar
-from app.db.models.notification import LimitUpAnalysisCache, PushplusMessageLog
-from app.schemas.xueqiu_publish import XueqiuCredentialRequest, XueqiuPublishSettingRequest
+from app.db.models.notification import LimitUpAnalysisCache, PushplusMessageLog, XueqiuPublishRecord
+from app.schemas.xueqiu_publish import (
+    XueqiuChatAnswerPublishRequest,
+    XueqiuCredentialRequest,
+    XueqiuPublishSettingRequest,
+)
 from app.services.auth_service import AuthService
 from app.services.limit_up_push_service import LimitUpPushService
 from app.services.xueqiu_publish_service import (
     XUEQIU_MODE_DRAFT,
+    XUEQIU_SOURCE_CHAT_ANSWER,
     XUEQIU_STATUS_DRAFTED,
     XueqiuPublishError,
     XueqiuPublishService,
@@ -147,6 +153,7 @@ def test_admin_default_permissions_include_xueqiu_publish() -> None:
     user = AuthService(db, settings).ensure_default_admin()
 
     assert "xueqiu_publish" in AuthService(db, settings).get_user_permissions(user)
+    assert "chat_xueqiu_publish" in AuthService(db, settings).get_user_permissions(user)
 
 
 def test_credential_summary_masks_cookie() -> None:
@@ -302,6 +309,60 @@ def test_scheduler_cron_field_matches_page_config() -> None:
     assert service._cron_field_matches("8-9", 9) is True
     assert service._cron_field_matches("*/5", 40) is True
     assert service._cron_field_matches("30", 31) is False
+
+
+def test_chat_answer_can_be_saved_as_xueqiu_draft(monkeypatch) -> None:
+    """确认问答回答可转成 HTML 后保存为雪球草稿流水。
+
+    创建日期：2026-05-10
+    author: sunshengxian
+    """
+
+    db = make_db()
+    admin = AppUser(username="admin", password_hash="hash", role="ADMIN", is_active=True)
+    db.add(admin)
+    db.flush()
+    session = LlmChatSession(user_id=admin.id, title="招商银行分析")
+    db.add(session)
+    db.flush()
+    answer = LlmChatMessage(
+        session_id=session.id,
+        role="assistant",
+        content="## 核心结论\n\n| 指标 | 判断 |\n| --- | --- |\n| ROE | 稳定 |",
+    )
+    db.add(answer)
+    db.commit()
+    db.refresh(admin)
+    db.refresh(answer)
+    service = XueqiuPublishService(db, Settings())
+    save_test_credential(service, admin)
+
+    monkeypatch.setattr(
+        "app.services.llm_service.LlmService._chat_completion",
+        lambda *_args, **_kwargs: (
+            "<h2>核心结论</h2><table><thead><tr><th>指标</th><th>判断</th></tr></thead>"
+            "<tbody><tr><td>ROE</td><td>稳定</td></tr></tbody></table>"
+        ),
+    )
+    monkeypatch.setattr(
+        service,
+        "_save_draft",
+        lambda _credential, _record: {"id": "chat-draft-id"},
+    )
+
+    record = service.save_or_publish_chat_answer(
+        XueqiuChatAnswerPublishRequest(message_id=answer.id),
+        admin,
+    )
+
+    saved = db.get(XueqiuPublishRecord, record.id)
+    assert saved is not None
+    assert saved.analysis_id is None
+    assert saved.chat_message_id == answer.id
+    assert saved.source_type == XUEQIU_SOURCE_CHAT_ANSWER
+    assert saved.status == XUEQIU_STATUS_DRAFTED
+    assert "<table>" in saved.content_html
+    assert saved.draft_id == "chat-draft-id"
 
 
 def test_scheduler_publishes_current_t_minus_one_report_on_tuesday(monkeypatch) -> None:

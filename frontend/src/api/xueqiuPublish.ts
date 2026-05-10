@@ -1,6 +1,7 @@
 import { requestJson } from './client';
 import type {
   XueqiuActionResponse,
+  XueqiuChatAnswerPublishRequest,
   XueqiuCredentialRequest,
   XueqiuCredentialSummary,
   XueqiuDraftPreview,
@@ -60,6 +61,13 @@ export function saveXueqiuPublishSetting(payload: XueqiuPublishSettingRequest) {
 
 export function publishXueqiuArticle(payload: XueqiuPublishRequest) {
   return requestJson<XueqiuActionResponse>('/api/xueqiu-publish/publish', {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  });
+}
+
+export function publishXueqiuChatAnswer(payload: XueqiuChatAnswerPublishRequest) {
+  return requestJson<XueqiuActionResponse>('/api/xueqiu-publish/chat-answer', {
     method: 'POST',
     body: JSON.stringify(payload)
   });

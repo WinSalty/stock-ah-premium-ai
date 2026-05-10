@@ -34,6 +34,7 @@ ALL_MENU_PERMISSIONS: dict[str, str] = {
     "pushplus": "PushPlus",
     "limit_up_push": "打板推送",
     "xueqiu_publish": "雪球发布",
+    "chat_xueqiu_publish": "问答发布雪球",
     "profile": "个人信息",
 }
 
@@ -49,6 +50,7 @@ DEFAULT_ROLE_PERMISSIONS: dict[str, list[str]] = {
         "pushplus",
         "limit_up_push",
         "xueqiu_publish",
+        "chat_xueqiu_publish",
         "profile",
     ],
     ROLE_USER: ["overview", "premium", "chat", "profile"],

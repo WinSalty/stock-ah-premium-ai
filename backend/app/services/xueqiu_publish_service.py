@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import Settings, get_settings
 from app.db.models.auth import AppUser
+from app.db.models.chat import LlmChatMessage, LlmChatSession
 from app.db.models.notification import (
     LimitUpAnalysisCache,
     XueqiuPublishCredential,
@@ -22,6 +23,7 @@ from app.db.models.notification import (
     XueqiuPublishSetting,
 )
 from app.schemas.xueqiu_publish import (
+    XueqiuChatAnswerPublishRequest,
     XueqiuCredentialRequest,
     XueqiuCredentialSummary,
     XueqiuDraftPreview,
@@ -31,12 +33,15 @@ from app.schemas.xueqiu_publish import (
     XueqiuPublishSettingSummary,
 )
 from app.services.limit_up_push_service import ANALYSIS_STATUS_READY, LimitUpPushService
+from app.services.llm_service import LlmCallTrace, LlmService
 from app.services.notification_service import NotificationError, NotificationService
 
 logger = logging.getLogger(__name__)
 
 XUEQIU_MODE_DRAFT = "DRAFT"
 XUEQIU_MODE_PUBLISH = "PUBLISH"
+XUEQIU_SOURCE_LIMIT_UP_REPORT = "LIMIT_UP_REPORT"
+XUEQIU_SOURCE_CHAT_ANSWER = "CHAT_ANSWER"
 XUEQIU_STATUS_PENDING = "PENDING"
 XUEQIU_STATUS_DRAFTED = "DRAFTED"
 XUEQIU_STATUS_PUBLISHED = "PUBLISHED"
@@ -45,6 +50,17 @@ XUEQIU_IMAGE_STYLE_SUFFIX_PATTERN = re.compile(r"!(?:\d+\.jpg|[A-Za-z0-9_.,-]+)$
 EAST8_TZ = ZoneInfo("Asia/Shanghai")
 DEFAULT_XUEQIU_COVER_PIC = "https://xqimg.imedao.com/19e0d23ff40328673fdcf12c.png"
 XUEQIU_SCHEDULER_WEEKDAYS = {1, 2, 3, 4, 5}
+CHAT_XUEQIU_HTML_SYSTEM_PROMPT = """你是严谨的雪球长文 HTML 排版转换器。
+任务：把用户提供的中文 Markdown 投资回答转换成适合雪球长文接口保存的 HTML 片段。
+
+硬性要求：
+1. 只输出 HTML 片段，不要输出 Markdown、代码块、解释、DOCTYPE、html/body/head 标签。
+2. 保留原回答的标题层级、项目符号、重点加粗、段落和逻辑顺序，不新增投资结论。
+3. Markdown 表格必须转换为原生 HTML `<table><thead><tbody><tr><th><td>`，禁止继续使用竖线表格。
+4. 不要使用 script、style、iframe、form、button、input、svg、canvas、img 或外链资源。
+5. 只允许使用 h2/h3/p/strong/em/ul/ol/li/table/thead/tbody/tr/th/td/br/hr 标签。
+6. 输出必须是合法闭合 HTML，所有文本内容按原文表达，不要编造数据。
+"""
 
 
 class XueqiuPublishError(ValueError):
@@ -269,6 +285,69 @@ class XueqiuPublishService:
         self.db.refresh(record)
         return record
 
+    def save_or_publish_chat_answer(
+        self,
+        payload: XueqiuChatAnswerPublishRequest,
+        user: AppUser,
+    ) -> XueqiuPublishRecord:
+        """将问答回答转换为 HTML 后保存为雪球草稿或正式发布。
+
+        创建日期：2026-05-10
+        author: sunshengxian
+        """
+
+        credential = self._enabled_credential()
+        message = self._chat_answer_message(payload.message_id, user)
+        mode = XUEQIU_MODE_PUBLISH if payload.publish else XUEQIU_MODE_DRAFT
+        record = self._get_or_create_chat_record(message, payload, user, mode)
+        if record.status in {XUEQIU_STATUS_DRAFTED, XUEQIU_STATUS_PUBLISHED} and not payload.force:
+            return record
+        title = self._chat_article_title(message, payload.title)
+        content_html = self._chat_markdown_to_xueqiu_html(message, user)
+        record.title = title
+        record.content_html = content_html
+        record.cover_pic = self._normalize_cover_pic(payload.cover_pic)
+        record.status = XUEQIU_STATUS_PENDING
+        record.error_message = None
+        self.db.flush()
+        try:
+            draft_response = self._save_draft(credential, record)
+            draft_id = str(draft_response.get("id") or draft_response.get("draft_id") or "")
+            if not draft_id:
+                raise XueqiuPublishError("雪球草稿接口未返回 draft id")
+            record.draft_id = draft_id
+            record.response_json = self._json_dumps({"draft": draft_response})
+            if not payload.publish:
+                record.status = XUEQIU_STATUS_DRAFTED
+                self.db.commit()
+                self.db.refresh(record)
+                return record
+            session_token = self._fetch_session_token(credential, draft_id)
+            publish_response = self._publish_status(credential, record, session_token)
+            status_id = self._extract_status_id(publish_response)
+            record.status = XUEQIU_STATUS_PUBLISHED
+            record.status_id = status_id
+            record.article_url = self._build_article_url(publish_response, status_id)
+            record.response_json = self._json_dumps(
+                {"draft": draft_response, "publish": publish_response}
+            )
+            record.published_at = self._now_naive()
+        except Exception as exc:
+            record.status = XUEQIU_STATUS_FAILED
+            record.error_message = str(exc)
+            self.db.commit()
+            self._send_admin_failure_alert(record, None, mode, exc)
+            logger.error(
+                "问答回答发布雪球失败 message_id=%s mode=%s",
+                message.id,
+                mode,
+                exc_info=True,
+            )
+            raise XueqiuPublishError(str(exc)) from exc
+        self.db.commit()
+        self.db.refresh(record)
+        return record
+
     def save_or_publish_latest_by_scheduler(self) -> XueqiuPublishRecord | None:
         """定时任务入口：确保最新报告存在后按配置保存草稿或发布。
 
@@ -319,7 +398,10 @@ class XueqiuPublishService:
 
         statement = (
             select(XueqiuPublishRecord, LimitUpAnalysisCache.trade_date)
-            .join(LimitUpAnalysisCache, LimitUpAnalysisCache.id == XueqiuPublishRecord.analysis_id)
+            .outerjoin(
+                LimitUpAnalysisCache,
+                LimitUpAnalysisCache.id == XueqiuPublishRecord.analysis_id,
+            )
             .order_by(desc(XueqiuPublishRecord.id))
             .limit(limit)
         )
@@ -339,7 +421,10 @@ class XueqiuPublishService:
 
         row = self.db.execute(
             select(XueqiuPublishRecord, LimitUpAnalysisCache.trade_date)
-            .join(LimitUpAnalysisCache, LimitUpAnalysisCache.id == XueqiuPublishRecord.analysis_id)
+            .outerjoin(
+                LimitUpAnalysisCache,
+                LimitUpAnalysisCache.id == XueqiuPublishRecord.analysis_id,
+            )
             .where(XueqiuPublishRecord.id == record_id)
         ).one_or_none()
         if row is None:
@@ -544,12 +629,47 @@ class XueqiuPublishService:
         title, content_html = self._build_article(analysis)
         record = XueqiuPublishRecord(
             analysis_id=analysis.id,
+            source_type=XUEQIU_SOURCE_LIMIT_UP_REPORT,
             publish_mode=mode,
             status=XUEQIU_STATUS_PENDING,
             title=title,
             content_html=content_html,
             cover_pic=self._normalize_cover_pic(cover_pic),
             created_by_user_id=user.id if user else None,
+        )
+        self.db.add(record)
+        self.db.flush()
+        return record
+
+    def _get_or_create_chat_record(
+        self,
+        message: LlmChatMessage,
+        payload: XueqiuChatAnswerPublishRequest,
+        user: AppUser,
+        mode: str,
+    ) -> XueqiuPublishRecord:
+        """读取或创建问答回答发布流水。
+
+        创建日期：2026-05-10
+        author: sunshengxian
+        """
+
+        if not payload.force:
+            existing = self._latest_chat_record_for_mode(message.id, mode)
+            if existing is not None:
+                return existing
+        # 先用原始 Markdown 占位，真正提交前再由 LLM 转换为雪球 HTML；
+        # 这样转换或接口失败时也能保留本次发布尝试的流水。
+        record = XueqiuPublishRecord(
+            analysis_id=None,
+            chat_message_id=message.id,
+            source_type=XUEQIU_SOURCE_CHAT_ANSWER,
+            publish_mode=mode,
+            status=XUEQIU_STATUS_PENDING,
+            title=self._chat_article_title(message, payload.title),
+            content_html=message.content,
+            cover_pic=self._normalize_cover_pic(payload.cover_pic),
+            created_by_user_id=user.id,
         )
         self.db.add(record)
         self.db.flush()
@@ -578,6 +698,29 @@ class XueqiuPublishService:
             .limit(1)
         )
 
+    def _latest_chat_record_for_mode(
+        self,
+        message_id: int,
+        mode: str,
+    ) -> XueqiuPublishRecord | None:
+        """读取同一问答回答和发布模式下最近一条流水。
+
+        创建日期：2026-05-10
+        author: sunshengxian
+        """
+
+        # 问答发布默认复用最近流水，避免同一回答反复创建草稿；管理员勾选强制时新增流水，
+        # 用于在雪球网页端删除旧草稿后重新生成。
+        return self.db.scalar(
+            select(XueqiuPublishRecord)
+            .where(
+                XueqiuPublishRecord.chat_message_id == message_id,
+                XueqiuPublishRecord.publish_mode == mode,
+            )
+            .order_by(desc(XueqiuPublishRecord.created_at), desc(XueqiuPublishRecord.id))
+            .limit(1)
+        )
+
     def _build_article(self, analysis: LimitUpAnalysisCache) -> tuple[str, str]:
         title = f"{analysis.trade_date:%Y-%m-%d} 打板复盘：涨停生态、题材强度与次日观察"
         body = self._unwrap_report_body(analysis.content_html or "")
@@ -586,6 +729,115 @@ class XueqiuPublishService:
             "不构成任何投资建议。短线打板波动剧烈，请结合自身风险承受能力独立判断。</p>"
         )
         return title, f"{body}{disclaimer}"
+
+    def _chat_answer_message(self, message_id: int, user: AppUser) -> LlmChatMessage:
+        """读取当前用户自己的问答助手回答。
+
+        创建日期：2026-05-10
+        author: sunshengxian
+        """
+
+        message = self.db.scalar(
+            select(LlmChatMessage)
+            .join(LlmChatSession, LlmChatSession.id == LlmChatMessage.session_id)
+            .where(
+                LlmChatMessage.id == message_id,
+                LlmChatMessage.role == "assistant",
+                LlmChatSession.user_id == user.id,
+                LlmChatSession.deleted_at.is_(None),
+            )
+            .limit(1)
+        )
+        if message is None or not message.content.strip():
+            raise XueqiuPublishError("未找到可发布的问答回答")
+        return message
+
+    def _chat_article_title(self, message: LlmChatMessage, custom_title: str | None) -> str:
+        """生成问答回答发布到雪球的标题。
+
+        创建日期：2026-05-10
+        author: sunshengxian
+        """
+
+        if custom_title and custom_title.strip():
+            return custom_title.strip()[:120]
+        first_heading = re.search(r"^#{1,3}\s+(.+)$", message.content, flags=re.MULTILINE)
+        if first_heading:
+            return self._plain_text(first_heading.group(1))[:120] or "投资问答复盘"
+        first_line = next(
+            (line.strip() for line in message.content.splitlines() if line.strip()),
+            "",
+        )
+        normalized = self._plain_text(first_line)
+        return normalized[:120] or "投资问答复盘"
+
+    def _chat_markdown_to_xueqiu_html(self, message: LlmChatMessage, user: AppUser) -> str:
+        """调用 LLM 将问答 Markdown 转为适合雪球长文的 HTML。
+
+        创建日期：2026-05-10
+        author: sunshengxian
+        """
+
+        prompt = (
+            "请将下面 Markdown 投资问答回答转换为雪球长文 HTML 片段，表格必须使用 HTML table。\n\n"
+            f"Markdown 原文：\n{message.content}"
+        )
+        html_text = LlmService(self.db, self.settings)._chat_completion(
+            prompt,
+            system_prompt=CHAT_XUEQIU_HTML_SYSTEM_PROMPT,
+            model=self.settings.llm_model,
+            temperature=0,
+            trace=LlmCallTrace(
+                question_id=f"xq{message.id}",
+                phase="xueqiu_html_convert",
+                user_id=user.id,
+                session_id=message.session_id,
+                conversation_title="问答回答发布雪球",
+                user_name=(user.display_name or user.username),
+            ),
+        )
+        sanitized = self._sanitize_chat_html(html_text)
+        if not sanitized:
+            raise XueqiuPublishError("LLM 未返回可发布的 HTML 内容")
+        return sanitized
+
+    def _sanitize_chat_html(self, content_html: str) -> str:
+        """清理 LLM 转换结果，保留雪球长文可接受的安全 HTML 片段。
+
+        创建日期：2026-05-10
+        author: sunshengxian
+        """
+
+        cleaned = content_html.strip()
+        cleaned = re.sub(r"^```(?:html)?\s*", "", cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r"\s*```$", "", cleaned)
+        # HTML 由内部 LLM 根据白名单提示词生成，仍在入库前清掉脚本、样式和交互标签；
+        # 表格结构保留为原生 table，便于雪球编辑器按源码渲染。
+        cleaned = re.sub(
+            r"<\s*(script|style|iframe|form|button|input|svg|canvas|img)[^>]*>[\s\S]*?<\s*/\s*\1\s*>",
+            "",
+            cleaned,
+            flags=re.IGNORECASE,
+        )
+        cleaned = re.sub(
+            r"<\s*(script|style|iframe|form|button|input|svg|canvas|img)[^>]*?/?>",
+            "",
+            cleaned,
+            flags=re.IGNORECASE,
+        )
+        cleaned = re.sub(r"\son[a-z]+\s*=\s*(['\"]).*?\1", "", cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r"\sstyle\s*=\s*(['\"]).*?\1", "", cleaned, flags=re.IGNORECASE)
+        return cleaned.strip()
+
+    def _plain_text(self, text: str) -> str:
+        """把 Markdown 标记规整为可用标题文本。
+
+        创建日期：2026-05-10
+        author: sunshengxian
+        """
+
+        without_marks = re.sub(r"[*_`#>\[\]()|]", " ", text)
+        return re.sub(r"\s+", " ", without_marks).strip()
 
     def _unwrap_report_body(self, content_html: str) -> str:
         stripped = content_html.strip()
@@ -623,7 +875,7 @@ class XueqiuPublishService:
     def _send_admin_failure_alert(
         self,
         record: XueqiuPublishRecord,
-        analysis: LimitUpAnalysisCache,
+        analysis: LimitUpAnalysisCache | None,
         mode: str,
         exc: Exception,
     ) -> None:
@@ -656,7 +908,7 @@ class XueqiuPublishService:
     def _build_failure_alert_content(
         self,
         record: XueqiuPublishRecord,
-        analysis: LimitUpAnalysisCache,
+        analysis: LimitUpAnalysisCache | None,
         mode: str,
         exc: Exception,
     ) -> str:
@@ -673,8 +925,10 @@ class XueqiuPublishService:
             "<h3 style=\"margin:0 0 12px;\">雪球长文发布失败</h3>"
             "<table style=\"width:100%;border-collapse:collapse;font-size:14px;\">"
             f"{self._failure_alert_row('流水 ID', str(record.id))}"
-            f"{self._failure_alert_row('报告 ID', str(analysis.id))}"
-            f"{self._failure_alert_row('交易日', str(analysis.trade_date))}"
+            f"{self._failure_alert_row('来源', self._record_source_label(record))}"
+            f"{self._failure_alert_row('报告 ID', str(analysis.id) if analysis else '-')}"
+            f"{self._failure_alert_row('交易日', str(analysis.trade_date) if analysis else '-')}"
+            f"{self._failure_alert_row('问答消息 ID', str(record.chat_message_id or '-'))}"
             f"{self._failure_alert_row('动作', mode_label)}"
             f"{self._failure_alert_row('标题', record.title)}"
             f"{self._failure_alert_row('失败原因', str(exc))}"
@@ -683,6 +937,15 @@ class XueqiuPublishService:
             "重新保存 Cookie 或手动强制新建草稿后再试。</p>"
             "</div>"
         )
+
+    def _record_source_label(self, record: XueqiuPublishRecord) -> str:
+        """转换雪球流水来源标签。
+
+        创建日期：2026-05-10
+        author: sunshengxian
+        """
+
+        return "问答回答" if record.source_type == XUEQIU_SOURCE_CHAT_ANSWER else "打板报告"
 
     def _failure_alert_row(self, label: str, value: str) -> str:
         """生成失败提醒表格行并转义用户可变内容。
@@ -838,6 +1101,8 @@ class XueqiuPublishService:
         return XueqiuPublishRecordItem(
             id=record.id,
             analysis_id=record.analysis_id,
+            chat_message_id=record.chat_message_id,
+            source_type=record.source_type,
             trade_date=trade_date,
             publish_mode=record.publish_mode,
             status=record.status,

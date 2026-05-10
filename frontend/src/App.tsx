@@ -75,7 +75,7 @@ function App() {
     sync: <SyncPage />,
     query: <DataQueryPage />,
     premium: user ? <PremiumPage currentUser={user} /> : null,
-    chat: <ChatPage />,
+    chat: user ? <ChatPage currentUser={user} /> : null,
     llm_metrics: <LlmMetricsPage />,
     users: user ? <UserAdminPage currentUser={user} onUserUpdated={setUser} /> : null,
     pushplus: <PushplusAdminPage />,

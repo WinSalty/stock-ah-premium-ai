@@ -291,8 +291,10 @@ class XueqiuPublishRecord(TimestampMixin, Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     analysis_id: Mapped[int] = mapped_column(
         ForeignKey("limit_up_analysis_cache.id"),
-        nullable=False,
+        nullable=True,
     )
+    chat_message_id: Mapped[int | None] = mapped_column(ForeignKey("llm_chat_message.id"))
+    source_type: Mapped[str] = mapped_column(String(32), nullable=False, default="LIMIT_UP_REPORT")
     publish_mode: Mapped[str] = mapped_column(String(16), nullable=False)
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="PENDING")
     title: Mapped[str] = mapped_column(String(180), nullable=False)

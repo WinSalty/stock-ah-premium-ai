@@ -8,6 +8,7 @@ from app.api.deps_auth import DbSession, require_permission
 from app.db.models.auth import AppUser
 from app.schemas.xueqiu_publish import (
     XueqiuActionResponse,
+    XueqiuChatAnswerPublishRequest,
     XueqiuCredentialRequest,
     XueqiuCredentialSummary,
     XueqiuDraftPreview,
@@ -22,6 +23,7 @@ from app.services.xueqiu_publish_service import XueqiuPublishError, XueqiuPublis
 
 router = APIRouter()
 XueqiuPublishUser = Annotated[AppUser, Depends(require_permission("xueqiu_publish"))]
+ChatXueqiuPublishUser = Annotated[AppUser, Depends(require_permission("chat_xueqiu_publish"))]
 
 
 def require_xueqiu_admin(user: AppUser) -> None:
@@ -161,6 +163,32 @@ def publish_xueqiu_article(
             cover_pic=payload.cover_pic,
             user=current_user,
         )
+    except XueqiuPublishError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return XueqiuActionResponse(
+        ok=True,
+        message="雪球长文已发布" if payload.publish else "雪球草稿已保存",
+        record_id=record.id,
+        article_url=record.article_url,
+        draft_id=record.draft_id,
+        status_id=record.status_id,
+    )
+
+
+@router.post("/xueqiu-publish/chat-answer", response_model=XueqiuActionResponse)
+def publish_chat_answer_to_xueqiu(
+    payload: XueqiuChatAnswerPublishRequest,
+    db: DbSession,
+    current_user: ChatXueqiuPublishUser,
+) -> XueqiuActionResponse:
+    """将问答回答转换为 HTML 后保存雪球草稿或正式发布。
+
+    创建日期：2026-05-10
+    author: sunshengxian
+    """
+
+    try:
+        record = XueqiuPublishService(db).save_or_publish_chat_answer(payload, current_user)
     except XueqiuPublishError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return XueqiuActionResponse(

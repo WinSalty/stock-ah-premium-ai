@@ -1,5 +1,5 @@
 import { Button, Checkbox, Form, Input, Popconfirm, Segmented, Skeleton, Table, message } from 'antd';
-import { Download, FileText, Plus, SendHorizontal, Trash2 } from 'lucide-react';
+import { Download, FileText, Plus, Send, SendHorizontal, Trash2 } from 'lucide-react';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { useEffect, useRef, useState } from 'react';
@@ -18,11 +18,13 @@ import type {
   ChatMessageResponse,
   ChatModel,
   ChatSession,
-  ChatStoredMessage
+  ChatStoredMessage,
+  UserInfo
 } from '../types/domain';
 import { formatEast8DateTime } from '../utils/datetime';
 import { exportChatAnswersToWord } from '../utils/chatWordExport';
 import { CHAT_PROGRESS_STEPS } from '../constants/llmProgress';
+import { publishXueqiuChatAnswer } from '../api/xueqiuPublish';
 
 interface ChatFormValues {
   question: string;
@@ -30,10 +32,15 @@ interface ChatFormValues {
 
 interface ChatTurn {
   id: string;
+  messageId?: number | null;
   question: string;
   response?: ChatMessageResponse;
   streaming?: boolean;
   progressText?: string;
+}
+
+interface ChatPageProps {
+  currentUser: UserInfo;
 }
 
 const LAST_SESSION_KEY = 'stock-ah-premium-ai:last-chat-session';
@@ -413,7 +420,7 @@ function randomPresetQuestions(previous: string[] = []) {
  * 创建日期：2026-05-04
  * author: sunshengxian
  */
-function ChatPage() {
+function ChatPage({ currentUser }: ChatPageProps) {
   const [form] = Form.useForm<ChatFormValues>();
   const historyRef = useRef<HTMLElement | null>(null);
   const shouldAutoScrollRef = useRef(true);
@@ -429,6 +436,8 @@ function ChatPage() {
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
   const [selectedModel, setSelectedModel] = useState<ChatModel>(DEFAULT_CHAT_MODEL);
   const [selectedSessionIds, setSelectedSessionIds] = useState<number[]>([]);
+  const [publishingTurnId, setPublishingTurnId] = useState<string | null>(null);
+  const canPublishChatAnswerToXueqiu = currentUser.permissions.includes('chat_xueqiu_publish');
 
   useEffect(() => {
     void loadInitialSessions();
@@ -702,16 +711,18 @@ function ChatPage() {
               )
             ),
           onDone: (event) => {
-            updateTurn(turnId, { streaming: false, progressText: '' });
+            updateTurn(turnId, { streaming: false, progressText: '', messageId: event.message_id });
             updateTurnResponse(turnId, {
+              message_id: event.message_id,
               answer: event.answer || '',
               rows: event.rows || []
             });
             void refreshSessions(currentSession.id);
           },
           onError: (event) => {
-            updateTurn(turnId, { streaming: false, progressText: '' });
+            updateTurn(turnId, { streaming: false, progressText: '', messageId: event.message_id });
             updateTurnResponse(turnId, {
+              message_id: event.message_id,
               answer: event.answer || '问答失败，请稍后再试。',
               rows: event.rows || []
             });
@@ -751,6 +762,27 @@ function ChatPage() {
       }))
     );
     message.success('Word 文档已下载');
+  };
+
+  const publishTurnToXueqiu = async (turn: ChatTurn) => {
+    const messageId = turn.messageId || turn.response?.message_id;
+    if (!messageId) {
+      message.warning('这条回答还没有落库，请等生成完成后再发布');
+      return;
+    }
+    setPublishingTurnId(turn.id);
+    try {
+      const response = await publishXueqiuChatAnswer({
+        message_id: messageId,
+        publish: false,
+        force: false
+      });
+      message.success(response.draft_id ? '雪球草稿已保存' : response.message);
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '保存雪球草稿失败');
+    } finally {
+      setPublishingTurnId(null);
+    }
   };
 
   return (
@@ -883,6 +915,34 @@ function ChatPage() {
                     <div className="chat-question">{turn.question}</div>
                     <div className="chat-answer">
                       <div className="chat-answer-actions">
+                        {canPublishChatAnswerToXueqiu ? (
+                          <Popconfirm
+                            title="保存雪球草稿"
+                            description="将这条回答转换为 HTML 长文并保存到雪球草稿？"
+                            okText="保存"
+                            cancelText="取消"
+                            onConfirm={() => void publishTurnToXueqiu(turn)}
+                            disabled={
+                              Boolean(turn.streaming) ||
+                              !turn.response?.answer?.trim() ||
+                              !(turn.messageId || turn.response?.message_id)
+                            }
+                          >
+                            <Button
+                              type="text"
+                              size="small"
+                              icon={<Send size={14} />}
+                              loading={publishingTurnId === turn.id}
+                              disabled={
+                                Boolean(turn.streaming) ||
+                                !turn.response?.answer?.trim() ||
+                                !(turn.messageId || turn.response?.message_id)
+                              }
+                            >
+                              发布雪球
+                            </Button>
+                          </Popconfirm>
+                        ) : null}
                         <Button
                           type="text"
                           size="small"
@@ -971,7 +1031,8 @@ function buildTurns(messages: ChatStoredMessage[]): ChatTurn[] {
     if (item.role === 'assistant') {
       const target = [...turns].reverse().find((turn) => !turn.response?.answer);
       if (target) {
-        target.response = { answer: item.content, rows: item.rows || [] };
+        target.messageId = item.id;
+        target.response = { message_id: item.id, answer: item.content, rows: item.rows || [] };
       }
     }
   });
