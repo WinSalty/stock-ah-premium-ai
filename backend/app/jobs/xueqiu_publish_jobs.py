@@ -18,14 +18,14 @@ def register_xueqiu_publish_jobs(scheduler: BackgroundScheduler, settings: Setti
     author: sunshengxian
     """
 
-    # 雪球发布属于第三方公开内容写入，进程级调度总开关默认关闭；
-    # 注册后每个工作日分钟级检查一次，具体时点、动作和封面由页面落库配置实时决定。
+    # 雪球发布任务只在周二到周六唤起：Tushare/KPL 打板报告按 T-1 交易日生成，
+    # 周二早上对应周一报告，周六早上对应周五报告；具体时点、动作和封面仍由页面配置决定。
     scheduler.add_job(
         xueqiu_publish_latest_job,
         trigger="cron",
         id="xueqiu-publish-latest-limit-up",
         name="保存或发布最新打板报告到雪球",
-        day_of_week="mon-fri",
+        day_of_week="tue-sat",
         hour="*",
         minute="*",
         second=0,

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, date, datetime
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
@@ -9,15 +10,19 @@ from sqlalchemy.pool import StaticPool
 from app.core.config import Settings
 from app.db.base import Base
 from app.db.models.auth import AppUser
+from app.db.models.market import ATradeCalendar
 from app.db.models.notification import LimitUpAnalysisCache, PushplusMessageLog
 from app.schemas.xueqiu_publish import XueqiuCredentialRequest, XueqiuPublishSettingRequest
 from app.services.auth_service import AuthService
+from app.services.limit_up_push_service import LimitUpPushService
 from app.services.xueqiu_publish_service import (
     XUEQIU_MODE_DRAFT,
     XUEQIU_STATUS_DRAFTED,
     XueqiuPublishError,
     XueqiuPublishService,
 )
+
+EAST8_TZ = ZoneInfo("Asia/Shanghai")
 
 
 def make_db() -> Session:
@@ -61,6 +66,73 @@ def add_ready_report(db: Session) -> LimitUpAnalysisCache:
     db.commit()
     db.refresh(report)
     return report
+
+
+def add_ready_report_for_date(db: Session, trade_date: date) -> LimitUpAnalysisCache:
+    """写入指定交易日的 READY 报告，便于校验定时任务不会误取旧报告。
+
+    创建日期：2026-05-10
+    author: sunshengxian
+    """
+
+    report = LimitUpAnalysisCache(
+        trade_date=trade_date,
+        model="deepseek-v4-pro",
+        prompt_version="limit-up-v1",
+        data_snapshot_hash=f"hash-{trade_date:%Y%m%d}",
+        status="READY",
+        title=f"{trade_date:%Y-%m-%d} A股涨停打板复盘",
+        content_html=(
+            '<div style="background:#fff"><div style="padding:10px">'
+            "<h2>市场情绪</h2><p>涨停家数达 125 家，最高标 7 板。</p>"
+            "</div></div>"
+        ),
+        generated_at=datetime.now(UTC).replace(tzinfo=None),
+    )
+    db.add(report)
+    db.commit()
+    db.refresh(report)
+    return report
+
+
+def enable_scheduler_setting(
+    service: XueqiuPublishService,
+    user: AppUser,
+    *,
+    publish: bool = False,
+) -> None:
+    """保存测试用定时配置，统一命中任意小时和分钟。
+
+    创建日期：2026-05-10
+    author: sunshengxian
+    """
+
+    service.save_publish_setting(
+        XueqiuPublishSettingRequest(
+            scheduler_enabled=True,
+            auto_publish=publish,
+            poll_hours="*",
+            poll_minutes="*",
+            default_cover_pic="",
+        ),
+        user,
+    )
+
+
+def save_test_credential(service: XueqiuPublishService, user: AppUser) -> None:
+    """保存可用于单测桩函数的雪球登录态。
+
+    创建日期：2026-05-10
+    author: sunshengxian
+    """
+
+    service.save_credential(
+        XueqiuCredentialRequest(
+            cookie_text="xq_a_token=secret-token; u=12345; device_id=device",
+            user_agent="Mozilla/5.0",
+        ),
+        user,
+    )
 
 
 def test_admin_default_permissions_include_xueqiu_publish() -> None:
@@ -230,6 +302,87 @@ def test_scheduler_cron_field_matches_page_config() -> None:
     assert service._cron_field_matches("8-9", 9) is True
     assert service._cron_field_matches("*/5", 40) is True
     assert service._cron_field_matches("30", 31) is False
+
+
+def test_scheduler_publishes_current_t_minus_one_report_on_tuesday(monkeypatch) -> None:
+    """确认周二定时发布只处理东八区当天对应的最新 T-1 报告。
+
+    创建日期：2026-05-10
+    author: sunshengxian
+    """
+
+    db = make_db()
+    admin = AppUser(username="admin", password_hash="hash", role="ADMIN", is_active=True)
+    db.add_all(
+        [
+            admin,
+            ATradeCalendar(exchange="SSE", cal_date=date(2026, 5, 8), is_open=1),
+            ATradeCalendar(exchange="SSE", cal_date=date(2026, 5, 11), is_open=1),
+        ]
+    )
+    db.commit()
+    db.refresh(admin)
+    old_report = add_ready_report_for_date(db, date(2026, 5, 8))
+    expected_report = add_ready_report_for_date(db, date(2026, 5, 11))
+    service = XueqiuPublishService(db, Settings(xueqiu_publish_scheduler_enabled=True))
+    enable_scheduler_setting(service, admin)
+    save_test_credential(service, admin)
+    requested_trade_dates: list[date] = []
+
+    def fake_ensure_analysis(self, trade_date: date) -> LimitUpAnalysisCache | None:
+        # 定时发布单测只验证“选择哪个 T-1 报告”，不触发真实 KPL 数据抓取和 LLM 生成。
+        requested_trade_dates.append(trade_date)
+        return self.db.scalar(
+            select(LimitUpAnalysisCache).where(LimitUpAnalysisCache.trade_date == trade_date)
+        )
+
+    monkeypatch.setattr(LimitUpPushService, "ensure_analysis_for_trade_date", fake_ensure_analysis)
+    monkeypatch.setattr(
+        service,
+        "_now_local",
+        lambda: datetime(2026, 5, 12, 8, 30, tzinfo=EAST8_TZ),
+    )
+    monkeypatch.setattr(service, "_save_draft", lambda _credential, _record: {"id": "draft-id"})
+
+    record = service.save_or_publish_latest_by_scheduler()
+
+    assert record is not None
+    assert requested_trade_dates == [date(2026, 5, 11)]
+    assert record.analysis_id == expected_report.id
+    assert record.analysis_id != old_report.id
+    assert record.status == XUEQIU_STATUS_DRAFTED
+
+
+def test_scheduler_skips_monday_even_when_report_exists(monkeypatch) -> None:
+    """确认周一不自动写入雪球，避免把周末窗口外的报告误当 T-1 发布。
+
+    创建日期：2026-05-10
+    author: sunshengxian
+    """
+
+    db = make_db()
+    admin = AppUser(username="admin", password_hash="hash", role="ADMIN", is_active=True)
+    db.add_all(
+        [
+            admin,
+            ATradeCalendar(exchange="SSE", cal_date=date(2026, 5, 8), is_open=1),
+        ]
+    )
+    db.commit()
+    db.refresh(admin)
+    add_ready_report_for_date(db, date(2026, 5, 8))
+    service = XueqiuPublishService(db, Settings(xueqiu_publish_scheduler_enabled=True))
+    enable_scheduler_setting(service, admin)
+    save_test_credential(service, admin)
+    monkeypatch.setattr(
+        service,
+        "_now_local",
+        lambda: datetime(2026, 5, 11, 8, 30, tzinfo=EAST8_TZ),
+    )
+
+    record = service.save_or_publish_latest_by_scheduler()
+
+    assert record is None
 
 
 def test_publish_failure_sends_pushplus_alert_to_admin(monkeypatch) -> None:

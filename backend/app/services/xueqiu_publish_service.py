@@ -4,7 +4,7 @@ import html
 import json
 import logging
 import re
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any
 from urllib.parse import urljoin
 from zoneinfo import ZoneInfo
@@ -44,6 +44,7 @@ XUEQIU_STATUS_FAILED = "FAILED"
 XUEQIU_IMAGE_STYLE_SUFFIX_PATTERN = re.compile(r"!(?:\d+\.jpg|[A-Za-z0-9_.,-]+)$")
 EAST8_TZ = ZoneInfo("Asia/Shanghai")
 DEFAULT_XUEQIU_COVER_PIC = "https://xqimg.imedao.com/19e0d23ff40328673fdcf12c.png"
+XUEQIU_SCHEDULER_WEEKDAYS = {1, 2, 3, 4, 5}
 
 
 class XueqiuPublishError(ValueError):
@@ -278,11 +279,25 @@ class XueqiuPublishService:
         setting = self._setting_or_create()
         if not setting.scheduler_enabled:
             return None
-        if not self._scheduler_time_matches(setting):
+        now = self._now_local()
+        today = now.date()
+        # 服务层保留周二到周六的二次防线，避免手动触发 job 或 cron 配置漂移时，
+        # 把非 T-1 窗口的报告误保存到雪球。
+        if not self._scheduler_publish_day(today):
+            return None
+        if not self._scheduler_time_matches(setting, now):
             return None
         limit_service = LimitUpPushService(self.db, self.settings)
-        analysis = limit_service.ensure_analysis_for_trade_date(limit_service.latest_a_trade_date())
-        if analysis is None or analysis.status != ANALYSIS_STATUS_READY:
+        target_trade_date = limit_service.latest_a_trade_date(today=today)
+        analysis = limit_service.ensure_analysis_for_trade_date(target_trade_date)
+        if (
+            analysis is None
+            or analysis.status != ANALYSIS_STATUS_READY
+            or not analysis.content_html
+            or analysis.trade_date != target_trade_date
+        ):
+            # 定时发布只认当前东八区日期推导出的最新 T-1 交易日报告；
+            # 任何空报告、未生成完成或交易日错配都跳过，等待下一分钟/下次调度重试。
             return None
         return self.save_or_publish_report(
             analysis.id,
@@ -744,14 +759,29 @@ class XueqiuPublishService:
             raise XueqiuPublishError(f"雪球定时{label}只支持数字、逗号、横线、星号和步长")
         return normalized
 
-    def _scheduler_time_matches(self, setting: XueqiuPublishSetting) -> bool:
+    def _scheduler_publish_day(self, today: date) -> bool:
+        """判断当天是否允许执行 T-1 打板报告的雪球定时发布。
+
+        创建日期：2026-05-10
+        author: sunshengxian
+        """
+
+        # Python weekday: 周一为 0，周二到周六对应 1-5；
+        # 周一尚无上一个交易日的“本周 T-1”发布窗口，周日也不做自动写入。
+        return today.weekday() in XUEQIU_SCHEDULER_WEEKDAYS
+
+    def _scheduler_time_matches(
+        self,
+        setting: XueqiuPublishSetting,
+        now: datetime | None = None,
+    ) -> bool:
         """判断当前东八区时间是否命中页面配置的调度时点。
 
         创建日期：2026-05-10
         author: sunshengxian
         """
 
-        now = datetime.now(EAST8_TZ)
+        now = now or self._now_local()
         return self._cron_field_matches(setting.poll_hours, now.hour) and self._cron_field_matches(
             setting.poll_minutes,
             now.minute,
@@ -880,5 +910,14 @@ class XueqiuPublishService:
     def _json_dumps(self, value: Any) -> str:
         return json.dumps(value, ensure_ascii=False, default=str)
 
+    def _now_local(self) -> datetime:
+        """返回东八区有时区当前时间，供调度日期和小时分钟共用同一时刻。
+
+        创建日期：2026-05-10
+        author: sunshengxian
+        """
+
+        return datetime.now(EAST8_TZ)
+
     def _now_naive(self) -> datetime:
-        return datetime.now(EAST8_TZ).replace(tzinfo=None)
+        return self._now_local().replace(tzinfo=None)
