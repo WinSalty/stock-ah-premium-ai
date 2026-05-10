@@ -31,6 +31,7 @@ from app.schemas.xueqiu_publish import (
     XueqiuPublishSettingSummary,
 )
 from app.services.limit_up_push_service import ANALYSIS_STATUS_READY, LimitUpPushService
+from app.services.notification_service import NotificationError, NotificationService
 
 logger = logging.getLogger(__name__)
 
@@ -255,6 +256,7 @@ class XueqiuPublishService:
             record.status = XUEQIU_STATUS_FAILED
             record.error_message = str(exc)
             self.db.commit()
+            self._send_admin_failure_alert(record, analysis, mode, exc)
             logger.error(
                 "雪球长文发布失败 analysis_id=%s mode=%s",
                 analysis.id,
@@ -602,6 +604,87 @@ class XueqiuPublishService:
         # 雪球正文图片常带 !800.jpg 一类展示尺寸后缀，草稿接口用于封面时可能不接受；
         # 入库和提交前统一还原到原图地址，保留管理员复制现有文章图片地址的便利性。
         return XUEQIU_IMAGE_STYLE_SUFFIX_PATTERN.sub("", normalized)
+
+    def _send_admin_failure_alert(
+        self,
+        record: XueqiuPublishRecord,
+        analysis: LimitUpAnalysisCache,
+        mode: str,
+        exc: Exception,
+    ) -> None:
+        """雪球发布失败后通过 PushPlus 提醒默认管理员。
+
+        创建日期：2026-05-10
+        author: sunshengxian
+        """
+
+        admin = self.db.scalar(
+            select(AppUser)
+            .where(
+                AppUser.username == self.settings.default_admin_username,
+                AppUser.is_active.is_(True),
+            )
+            .limit(1)
+        )
+        if admin is None:
+            logger.error("雪球发布失败提醒跳过，默认管理员不存在 record_id=%s", record.id)
+            return
+        try:
+            NotificationService(self.db, self.settings).send_pushplus_message(
+                admin.id,
+                "雪球长文发布失败",
+                self._build_failure_alert_content(record, analysis, mode, exc),
+            )
+        except NotificationError:
+            logger.error("雪球发布失败提醒发送失败 record_id=%s", record.id, exc_info=True)
+
+    def _build_failure_alert_content(
+        self,
+        record: XueqiuPublishRecord,
+        analysis: LimitUpAnalysisCache,
+        mode: str,
+        exc: Exception,
+    ) -> str:
+        """构造雪球发布失败 PushPlus HTML 内容。
+
+        创建日期：2026-05-10
+        author: sunshengxian
+        """
+
+        mode_label = "正式发布" if mode == XUEQIU_MODE_PUBLISH else "保存草稿"
+        return (
+            "<div style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"
+            "line-height:1.7;color:#182230;\">"
+            "<h3 style=\"margin:0 0 12px;\">雪球长文发布失败</h3>"
+            "<table style=\"width:100%;border-collapse:collapse;font-size:14px;\">"
+            f"{self._failure_alert_row('流水 ID', str(record.id))}"
+            f"{self._failure_alert_row('报告 ID', str(analysis.id))}"
+            f"{self._failure_alert_row('交易日', str(analysis.trade_date))}"
+            f"{self._failure_alert_row('动作', mode_label)}"
+            f"{self._failure_alert_row('标题', record.title)}"
+            f"{self._failure_alert_row('失败原因', str(exc))}"
+            "</table>"
+            "<p style=\"margin:12px 0 0;color:#667085;\">请到后台“雪球发布”菜单查看流水详情，"
+            "重新保存 Cookie 或手动强制新建草稿后再试。</p>"
+            "</div>"
+        )
+
+    def _failure_alert_row(self, label: str, value: str) -> str:
+        """生成失败提醒表格行并转义用户可变内容。
+
+        创建日期：2026-05-10
+        author: sunshengxian
+        """
+
+        return (
+            "<tr>"
+            "<td style=\"width:28%;padding:8px;border-top:1px solid #eaecf0;"
+            "background:#f8fafc;color:#667085;\">"
+            f"{html.escape(label)}</td>"
+            "<td style=\"padding:8px;border-top:1px solid #eaecf0;color:#182230;\">"
+            f"{html.escape(value[:500])}</td>"
+            "</tr>"
+        )
 
     def _setting_or_create(self) -> XueqiuPublishSetting:
         """读取或初始化雪球发布页面配置。

@@ -2,19 +2,20 @@ from __future__ import annotations
 
 from datetime import UTC, date, datetime
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
 from app.core.config import Settings
 from app.db.base import Base
 from app.db.models.auth import AppUser
-from app.db.models.notification import LimitUpAnalysisCache
+from app.db.models.notification import LimitUpAnalysisCache, PushplusMessageLog
 from app.schemas.xueqiu_publish import XueqiuCredentialRequest, XueqiuPublishSettingRequest
 from app.services.auth_service import AuthService
 from app.services.xueqiu_publish_service import (
     XUEQIU_MODE_DRAFT,
     XUEQIU_STATUS_DRAFTED,
+    XueqiuPublishError,
     XueqiuPublishService,
 )
 
@@ -229,3 +230,68 @@ def test_scheduler_cron_field_matches_page_config() -> None:
     assert service._cron_field_matches("8-9", 9) is True
     assert service._cron_field_matches("*/5", 40) is True
     assert service._cron_field_matches("30", 31) is False
+
+
+def test_publish_failure_sends_pushplus_alert_to_admin(monkeypatch) -> None:
+    """确认雪球发布失败时向默认管理员发送 PushPlus 提醒。
+
+    创建日期：2026-05-10
+    author: sunshengxian
+    """
+
+    db = make_db()
+    admin = AppUser(username="admin", password_hash="hash", role="ADMIN", is_active=True)
+    db.add(admin)
+    db.commit()
+    db.refresh(admin)
+    report = add_ready_report(db)
+    service = XueqiuPublishService(
+        db,
+        Settings(
+            default_admin_username="admin",
+            pushplus_token="push-token",
+            pushplus_token_file=None,
+        ),
+    )
+    service.save_credential(
+        XueqiuCredentialRequest(
+            cookie_text="xq_a_token=secret-token; u=12345; device_id=device",
+            user_agent="Mozilla/5.0",
+        ),
+        admin,
+    )
+    sent_messages: list[tuple[str, str]] = []
+
+    def fake_save_draft(_credential, _record):
+        raise XueqiuPublishError("Cookie 已失效")
+
+    def fake_personal_message(self, title: str, content: str) -> str:
+        sent_messages.append((title, content))
+        return "push-message-id"
+
+    monkeypatch.setattr(service, "_save_draft", fake_save_draft)
+    monkeypatch.setattr(
+        "app.services.pushplus_client.PushplusClient.send_personal_message",
+        fake_personal_message,
+    )
+
+    try:
+        service.save_or_publish_report(
+            report.id,
+            publish=False,
+            force=True,
+            cover_pic=None,
+            user=admin,
+        )
+    except XueqiuPublishError as exc:
+        error_message = str(exc)
+    else:
+        error_message = ""
+
+    logs = list(db.scalars(select(PushplusMessageLog)).all())
+    assert "Cookie 已失效" in error_message
+    assert len(sent_messages) == 1
+    assert sent_messages[0][0] == "雪球长文发布失败"
+    assert "Cookie 已失效" in sent_messages[0][1]
+    assert logs[-1].push_status == "SENT"
+    assert logs[-1].push_message_id == "push-message-id"
