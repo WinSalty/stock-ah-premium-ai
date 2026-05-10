@@ -12,7 +12,11 @@ from app.db.models.auth import AppUser
 from app.db.models.notification import LimitUpAnalysisCache
 from app.schemas.xueqiu_publish import XueqiuCredentialRequest
 from app.services.auth_service import AuthService
-from app.services.xueqiu_publish_service import XUEQIU_MODE_DRAFT, XueqiuPublishService
+from app.services.xueqiu_publish_service import (
+    XUEQIU_MODE_DRAFT,
+    XUEQIU_STATUS_DRAFTED,
+    XueqiuPublishService,
+)
 
 
 def make_db() -> Session:
@@ -132,3 +136,31 @@ def test_publish_record_is_idempotent_for_same_mode() -> None:
     second = service._get_or_create_record(report, XUEQIU_MODE_DRAFT, None, None)
 
     assert first.id == second.id
+
+
+def test_force_retry_clears_deleted_remote_draft_identity() -> None:
+    """确认强制重试会重新创建雪球草稿而不是更新已删除草稿。
+
+    创建日期：2026-05-10
+    author: sunshengxian
+    """
+
+    db = make_db()
+    report = add_ready_report(db)
+    service = XueqiuPublishService(db, Settings())
+    record = service._get_or_create_record(report, XUEQIU_MODE_DRAFT, None, None)
+    record.status = XUEQIU_STATUS_DRAFTED
+    record.draft_id = "deleted-draft-id"
+    record.status_id = "old-status-id"
+    record.article_url = "https://xueqiu.com/old"
+    record.published_at = datetime.now(UTC).replace(tzinfo=None)
+    record.response_json = '{"draft": {"id": "deleted-draft-id"}}'
+    db.commit()
+
+    service._reset_remote_identity_for_retry(record)
+
+    assert record.draft_id is None
+    assert record.status_id is None
+    assert record.article_url is None
+    assert record.published_at is None
+    assert record.response_json is None

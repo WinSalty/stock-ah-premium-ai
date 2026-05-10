@@ -185,6 +185,8 @@ class XueqiuPublishService:
         if record.status in {XUEQIU_STATUS_DRAFTED, XUEQIU_STATUS_PUBLISHED} and not force:
             return record
         title, content_html = self._build_article(analysis)
+        if force:
+            self._reset_remote_identity_for_retry(record)
         record.title = title
         record.content_html = content_html
         record.cover_pic = cover_pic.strip() if cover_pic else None
@@ -503,6 +505,21 @@ class XueqiuPublishService:
             if existing is None:
                 raise
             return existing
+
+    def _reset_remote_identity_for_retry(self, record: XueqiuPublishRecord) -> None:
+        """强制重试前清理本地保存的雪球远端对象标识。
+
+        创建日期：2026-05-10
+        author: sunshengxian
+        """
+
+        # 管理员在雪球网页端删除草稿后，本地流水仍会保留旧 draft_id；
+        # 强制重试代表远端对象可能已经不可用，因此清空远端 ID，让保存接口重新创建草稿。
+        record.draft_id = None
+        record.status_id = None
+        record.article_url = None
+        record.published_at = None
+        record.response_json = None
 
     def _build_article(self, analysis: LimitUpAnalysisCache) -> tuple[str, str]:
         title = f"{analysis.trade_date:%Y-%m-%d} 打板复盘：涨停生态、题材强度与次日观察"

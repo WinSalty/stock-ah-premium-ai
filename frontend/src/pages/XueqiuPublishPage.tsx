@@ -191,7 +191,7 @@ function XueqiuPublishPage() {
                       value={coverPic}
                       onChange={(event) => setCoverPic(event.target.value)}
                     />
-                    <Checkbox checked={force} onChange={(event) => setForce(event.target.checked)}>强制重试</Checkbox>
+                    <Checkbox checked={force} onChange={(event) => setForce(event.target.checked)}>强制新建/重试</Checkbox>
                     <Button icon={<RefreshCw size={16} />} onClick={() => preview.refetch()}>刷新预览</Button>
                   </Space>
                   {preview.data ? (
@@ -201,6 +201,9 @@ function XueqiuPublishPage() {
                         <Typography.Text type="secondary">
                           报告 ID {preview.data.analysis_id} · 交易日 {preview.data.trade_date}
                         </Typography.Text>
+                        <Typography.Paragraph type="secondary" className="xueqiu-force-hint">
+                          默认同一报告同一模式只保留一条本地流水；如果你已在雪球网页删除草稿，请勾选“强制新建/重试”后再次保存，系统会清空旧草稿 ID 并重新创建。
+                        </Typography.Paragraph>
                         <Typography.Paragraph className="xueqiu-preview-text">
                           {preview.data.content_text.slice(0, 1200)}
                         </Typography.Paragraph>

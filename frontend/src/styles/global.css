@@ -870,6 +870,11 @@ body {
   min-width: 0;
 }
 
+.xueqiu-force-hint {
+  margin: 0;
+  line-height: 1.6;
+}
+
 .xueqiu-preview-text {
   max-height: 360px;
   overflow: auto;
