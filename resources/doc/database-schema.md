@@ -85,6 +85,7 @@ LLM 按需个股研究数据：
 - `limit_up_push_delivery`：打板报告业务推送计划与结果表，按报告、计划类型、计划时间和接收用户做幂等，实际 PushPlus 请求流水关联到 `pushplus_message_log`。
 - `limit_up_report_share`：打板报告分享链接表，保存随机 token、过期时间、撤销时间和公开访问次数；`expires_at` 为空表示永久有效，公开查看只读取已生成报告，不授予后台权限。
 - `xueqiu_publish_credential`：雪球发布登录态配置表，保存管理员提供的创作者后台 Cookie、User-Agent、Referer、过期时间和最近验证结果；接口只返回掩码摘要，不返回完整 Cookie。
+- `xueqiu_publish_setting`：雪球发布定时配置表，保存页面配置的工作日定时开关、草稿/正式发布模式、东八区小时/分钟 cron 字段和默认封面图；进程级调度注册仍由环境变量控制，任务执行时实时读取本表决定是否真正发起保存或发布。
 - `xueqiu_publish_record`：雪球长文草稿与发布流水表，记录每次草稿或发布尝试的草稿 ID、正式发布 ID、文章 URL、请求摘要、响应 JSON、失败原因和发布时间；默认操作复用同一报告同一模式的最近流水，管理员强制新建/重试时会新增流水以保留历史审计。
 - `llm_chat_session`：LLM 问答会话，用于保存投资问答主题和更新时间，按 `user_id` 隔离，`deleted_at` 非空表示会话已逻辑删除。
 - `llm_chat_message`：LLM 问答消息，用于保存用户问题、助手回答、内部查询口径和结果预览，支持后续会话上下文记忆。

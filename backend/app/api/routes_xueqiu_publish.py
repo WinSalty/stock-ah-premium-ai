@@ -14,6 +14,8 @@ from app.schemas.xueqiu_publish import (
     XueqiuPublishRecordDetail,
     XueqiuPublishRecordItem,
     XueqiuPublishRequest,
+    XueqiuPublishSettingRequest,
+    XueqiuPublishSettingSummary,
 )
 from app.services.auth_service import ROLE_ADMIN
 from app.services.xueqiu_publish_service import XueqiuPublishError, XueqiuPublishService
@@ -63,6 +65,40 @@ def save_xueqiu_credential(
     require_xueqiu_admin(current_user)
     try:
         return XueqiuPublishService(db).save_credential(payload, current_user)
+    except XueqiuPublishError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/xueqiu-publish/setting", response_model=XueqiuPublishSettingSummary)
+def get_xueqiu_publish_setting(
+    db: DbSession,
+    current_user: XueqiuPublishUser,
+) -> XueqiuPublishSettingSummary:
+    """查询雪球发布定时配置。
+
+    创建日期：2026-05-10
+    author: sunshengxian
+    """
+
+    require_xueqiu_admin(current_user)
+    return XueqiuPublishService(db).get_publish_setting()
+
+
+@router.put("/xueqiu-publish/setting", response_model=XueqiuPublishSettingSummary)
+def save_xueqiu_publish_setting(
+    payload: XueqiuPublishSettingRequest,
+    db: DbSession,
+    current_user: XueqiuPublishUser,
+) -> XueqiuPublishSettingSummary:
+    """保存雪球发布定时配置。
+
+    创建日期：2026-05-10
+    author: sunshengxian
+    """
+
+    require_xueqiu_admin(current_user)
+    try:
+        return XueqiuPublishService(db).save_publish_setting(payload, current_user)
     except XueqiuPublishError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 

@@ -696,6 +696,19 @@ export interface XueqiuPublishRequest {
   cover_pic?: string | null;
 }
 
+export interface XueqiuPublishSettingRequest {
+  scheduler_enabled: boolean;
+  auto_publish: boolean;
+  poll_hours: string;
+  poll_minutes: string;
+  default_cover_pic?: string | null;
+}
+
+export interface XueqiuPublishSettingSummary extends XueqiuPublishSettingRequest {
+  effective_scheduler_registered: boolean;
+  updated_at: string | null;
+}
+
 export interface XueqiuActionResponse {
   ok: boolean;
   message: string;

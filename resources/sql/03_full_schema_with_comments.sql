@@ -561,6 +561,21 @@ CREATE TABLE IF NOT EXISTS `xueqiu_publish_credential` (
     FOREIGN KEY (`updated_by_user_id`) REFERENCES `app_user` (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='雪球发布登录态配置表';
 
+CREATE TABLE IF NOT EXISTS `xueqiu_publish_setting` (
+  `id` INT NOT NULL AUTO_INCREMENT COMMENT '自增主键',
+  `scheduler_enabled` TINYINT(1) NOT NULL DEFAULT 0 COMMENT '是否启用工作日自动保存草稿或发布',
+  `auto_publish` TINYINT(1) NOT NULL DEFAULT 0 COMMENT '定时任务是否正式发布，0 表示仅保存草稿',
+  `poll_hours` VARCHAR(32) NOT NULL DEFAULT '8' COMMENT '东八区定时小时 cron 字段，默认 8 点',
+  `poll_minutes` VARCHAR(64) NOT NULL DEFAULT '30' COMMENT '东八区定时分钟 cron 字段，默认 30 分',
+  `default_cover_pic` VARCHAR(512) DEFAULT NULL COMMENT '定时任务和页面默认使用的雪球封面图 URL',
+  `updated_by_user_id` INT DEFAULT NULL COMMENT '最近更新配置的管理员用户 ID',
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '记录创建时间',
+  `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '记录更新时间',
+  PRIMARY KEY (`id`),
+  CONSTRAINT `fk_xueqiu_publish_setting_updated_by`
+    FOREIGN KEY (`updated_by_user_id`) REFERENCES `app_user` (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='雪球发布定时配置表';
+
 CREATE TABLE IF NOT EXISTS `xueqiu_publish_record` (
   `id` INT NOT NULL AUTO_INCREMENT COMMENT '自增主键',
   `analysis_id` INT NOT NULL COMMENT '关联的打板报告缓存 ID',

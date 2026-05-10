@@ -6,7 +6,9 @@ import type {
   XueqiuDraftPreview,
   XueqiuPublishRecordDetail,
   XueqiuPublishRecordItem,
-  XueqiuPublishRequest
+  XueqiuPublishRequest,
+  XueqiuPublishSettingRequest,
+  XueqiuPublishSettingSummary
 } from '../types/domain';
 
 export interface XueqiuRecordFilters {
@@ -43,6 +45,17 @@ export function fetchXueqiuPreview(analysisId?: number | null) {
   }
   const query = params.toString();
   return requestJson<XueqiuDraftPreview>(`/api/xueqiu-publish/preview${query ? `?${query}` : ''}`);
+}
+
+export function fetchXueqiuPublishSetting() {
+  return requestJson<XueqiuPublishSettingSummary>('/api/xueqiu-publish/setting');
+}
+
+export function saveXueqiuPublishSetting(payload: XueqiuPublishSettingRequest) {
+  return requestJson<XueqiuPublishSettingSummary>('/api/xueqiu-publish/setting', {
+    method: 'PUT',
+    body: JSON.stringify(payload)
+  });
 }
 
 export function publishXueqiuArticle(payload: XueqiuPublishRequest) {

@@ -19,6 +19,7 @@ from app.db.models.notification import (
     LimitUpAnalysisCache,
     XueqiuPublishCredential,
     XueqiuPublishRecord,
+    XueqiuPublishSetting,
 )
 from app.schemas.xueqiu_publish import (
     XueqiuCredentialRequest,
@@ -26,6 +27,8 @@ from app.schemas.xueqiu_publish import (
     XueqiuDraftPreview,
     XueqiuPublishRecordDetail,
     XueqiuPublishRecordItem,
+    XueqiuPublishSettingRequest,
+    XueqiuPublishSettingSummary,
 )
 from app.services.limit_up_push_service import ANALYSIS_STATUS_READY, LimitUpPushService
 
@@ -39,6 +42,7 @@ XUEQIU_STATUS_PUBLISHED = "PUBLISHED"
 XUEQIU_STATUS_FAILED = "FAILED"
 XUEQIU_IMAGE_STYLE_SUFFIX_PATTERN = re.compile(r"!(?:\d+\.jpg|[A-Za-z0-9_.,-]+)$")
 EAST8_TZ = ZoneInfo("Asia/Shanghai")
+DEFAULT_XUEQIU_COVER_PIC = "https://xqimg.imedao.com/19e0d23ff40328673fdcf12c.png"
 
 
 class XueqiuPublishError(ValueError):
@@ -121,6 +125,38 @@ class XueqiuPublishService:
             credential.updated_by_user_id = user.id
         self.db.commit()
         return self.get_credential_summary()
+
+    def get_publish_setting(self) -> XueqiuPublishSettingSummary:
+        """读取雪球发布定时配置。
+
+        创建日期：2026-05-10
+        author: sunshengxian
+        """
+
+        setting = self._setting_or_create()
+        return self._setting_summary(setting)
+
+    def save_publish_setting(
+        self,
+        payload: XueqiuPublishSettingRequest,
+        user: AppUser,
+    ) -> XueqiuPublishSettingSummary:
+        """保存雪球发布定时配置。
+
+        创建日期：2026-05-10
+        author: sunshengxian
+        """
+
+        setting = self._setting_or_create()
+        setting.scheduler_enabled = payload.scheduler_enabled
+        setting.auto_publish = payload.auto_publish
+        setting.poll_hours = self._normalize_cron_field(payload.poll_hours, "小时")
+        setting.poll_minutes = self._normalize_cron_field(payload.poll_minutes, "分钟")
+        setting.default_cover_pic = self._normalize_cover_pic(payload.default_cover_pic)
+        setting.updated_by_user_id = user.id
+        self.db.commit()
+        self.db.refresh(setting)
+        return self._setting_summary(setting)
 
     def verify_credential(self) -> XueqiuCredentialSummary:
         """用雪球创作者后台页面验证 Cookie 是否仍可用。
@@ -237,7 +273,10 @@ class XueqiuPublishService:
         author: sunshengxian
         """
 
-        if not self.settings.xueqiu_publish_scheduler_enabled:
+        setting = self._setting_or_create()
+        if not setting.scheduler_enabled:
+            return None
+        if not self._scheduler_time_matches(setting):
             return None
         limit_service = LimitUpPushService(self.db, self.settings)
         analysis = limit_service.ensure_analysis_for_trade_date(limit_service.latest_a_trade_date())
@@ -245,9 +284,9 @@ class XueqiuPublishService:
             return None
         return self.save_or_publish_report(
             analysis.id,
-            publish=self.settings.xueqiu_publish_auto_publish,
+            publish=setting.auto_publish,
             force=False,
-            cover_pic=None,
+            cover_pic=setting.default_cover_pic or DEFAULT_XUEQIU_COVER_PIC,
         )
 
     def list_records(
@@ -563,6 +602,111 @@ class XueqiuPublishService:
         # 雪球正文图片常带 !800.jpg 一类展示尺寸后缀，草稿接口用于封面时可能不接受；
         # 入库和提交前统一还原到原图地址，保留管理员复制现有文章图片地址的便利性。
         return XUEQIU_IMAGE_STYLE_SUFFIX_PATTERN.sub("", normalized)
+
+    def _setting_or_create(self) -> XueqiuPublishSetting:
+        """读取或初始化雪球发布页面配置。
+
+        创建日期：2026-05-10
+        author: sunshengxian
+        """
+
+        setting = self.db.scalar(
+            select(XueqiuPublishSetting).order_by(desc(XueqiuPublishSetting.id)).limit(1)
+        )
+        if setting is not None:
+            return setting
+        # 老库首次升级后如果没有配置行，使用保守默认值：不开启自动定时、不公开发布，
+        # 只预置默认封面，等待管理员在页面确认后再启用任务。
+        setting = XueqiuPublishSetting(
+            scheduler_enabled=False,
+            auto_publish=False,
+            poll_hours=self.settings.xueqiu_publish_poll_hours,
+            poll_minutes=self.settings.xueqiu_publish_poll_minutes,
+            default_cover_pic=self._normalize_cover_pic(
+                self.settings.xueqiu_publish_default_cover_pic or DEFAULT_XUEQIU_COVER_PIC
+            ),
+        )
+        self.db.add(setting)
+        self.db.flush()
+        return setting
+
+    def _setting_summary(self, setting: XueqiuPublishSetting) -> XueqiuPublishSettingSummary:
+        """转换雪球发布配置响应，包含进程级调度注册状态。
+
+        创建日期：2026-05-10
+        author: sunshengxian
+        """
+
+        return XueqiuPublishSettingSummary(
+            scheduler_enabled=setting.scheduler_enabled,
+            auto_publish=setting.auto_publish,
+            poll_hours=setting.poll_hours,
+            poll_minutes=setting.poll_minutes,
+            default_cover_pic=setting.default_cover_pic,
+            effective_scheduler_registered=self.settings.xueqiu_publish_scheduler_enabled,
+            updated_at=setting.updated_at,
+        )
+
+    def _normalize_cron_field(self, value: str, label: str) -> str:
+        """校验页面配置的 cron 小时或分钟字段。
+
+        创建日期：2026-05-10
+        author: sunshengxian
+        """
+
+        normalized = value.strip()
+        if not normalized:
+            raise XueqiuPublishError(f"雪球定时{label}不能为空")
+        if not re.fullmatch(r"[0-9,*/-]+", normalized):
+            raise XueqiuPublishError(f"雪球定时{label}只支持数字、逗号、横线、星号和步长")
+        return normalized
+
+    def _scheduler_time_matches(self, setting: XueqiuPublishSetting) -> bool:
+        """判断当前东八区时间是否命中页面配置的调度时点。
+
+        创建日期：2026-05-10
+        author: sunshengxian
+        """
+
+        now = datetime.now(EAST8_TZ)
+        return self._cron_field_matches(setting.poll_hours, now.hour) and self._cron_field_matches(
+            setting.poll_minutes,
+            now.minute,
+        )
+
+    def _cron_field_matches(self, expression: str, value: int) -> bool:
+        """匹配简化 cron 字段，支持星号、逗号、范围和步长。
+
+        创建日期：2026-05-10
+        author: sunshengxian
+        """
+
+        for part in expression.split(","):
+            if self._cron_part_matches(part.strip(), value):
+                return True
+        return False
+
+    def _cron_part_matches(self, part: str, value: int) -> bool:
+        """匹配单段 cron 表达式。
+
+        创建日期：2026-05-10
+        author: sunshengxian
+        """
+
+        if not part:
+            return False
+        base, _, step_text = part.partition("/")
+        step = int(step_text) if step_text else 1
+        if step <= 0:
+            return False
+        if base == "*":
+            return value % step == 0
+        if "-" in base:
+            start_text, end_text = base.split("-", 1)
+            start = int(start_text)
+            end = int(end_text)
+            return start <= value <= end and (value - start) % step == 0
+        return int(base) == value
 
     def _credential_or_none(self) -> XueqiuPublishCredential | None:
         return self.db.scalar(

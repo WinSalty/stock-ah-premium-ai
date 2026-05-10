@@ -39,6 +39,36 @@ class XueqiuCredentialSummary(BaseModel):
     updated_at: datetime | None = None
 
 
+class XueqiuPublishSettingRequest(BaseModel):
+    """雪球发布定时配置保存请求。
+
+    创建日期：2026-05-10
+    author: sunshengxian
+    """
+
+    scheduler_enabled: bool = False
+    auto_publish: bool = False
+    poll_hours: str = Field(default="8", max_length=32)
+    poll_minutes: str = Field(default="30", max_length=64)
+    default_cover_pic: str | None = Field(default=None, max_length=512)
+
+
+class XueqiuPublishSettingSummary(BaseModel):
+    """雪球发布定时配置响应。
+
+    创建日期：2026-05-10
+    author: sunshengxian
+    """
+
+    scheduler_enabled: bool
+    auto_publish: bool
+    poll_hours: str
+    poll_minutes: str
+    default_cover_pic: str | None = None
+    effective_scheduler_registered: bool
+    updated_at: datetime | None = None
+
+
 class XueqiuActionResponse(BaseModel):
     """雪球发布操作响应。
 

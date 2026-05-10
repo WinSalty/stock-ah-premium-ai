@@ -18,16 +18,16 @@ def register_xueqiu_publish_jobs(scheduler: BackgroundScheduler, settings: Setti
     author: sunshengxian
     """
 
-    # 雪球发布属于第三方公开内容写入，调度总开关默认关闭；启用后仍由服务层按报告缓存和发布流水幂等，
-    # 避免早盘多次轮询重复保存草稿或重复正式发文。
+    # 雪球发布属于第三方公开内容写入，进程级调度总开关默认关闭；
+    # 注册后每个工作日分钟级检查一次，具体时点、动作和封面由页面落库配置实时决定。
     scheduler.add_job(
         xueqiu_publish_latest_job,
         trigger="cron",
         id="xueqiu-publish-latest-limit-up",
         name="保存或发布最新打板报告到雪球",
         day_of_week="mon-fri",
-        hour=settings.xueqiu_publish_poll_hours,
-        minute=settings.xueqiu_publish_poll_minutes,
+        hour="*",
+        minute="*",
         second=0,
         replace_existing=True,
         coalesce=True,

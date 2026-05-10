@@ -102,15 +102,19 @@ class Settings(BaseSettings):
         alias="LIMIT_UP_PUSH_INDICATOR_STOCK_LIMIT",
     )
     xueqiu_publish_scheduler_enabled: bool = Field(
-        default=False,
+        default=True,
         alias="XUEQIU_PUBLISH_SCHEDULER_ENABLED",
     )
     xueqiu_publish_auto_publish: bool = Field(default=False, alias="XUEQIU_PUBLISH_AUTO_PUBLISH")
     xueqiu_publish_poll_minutes: str = Field(
-        default="33,38,43,48,53,58",
+        default="30",
         alias="XUEQIU_PUBLISH_POLL_MINUTES",
     )
-    xueqiu_publish_poll_hours: str = Field(default="8-9", alias="XUEQIU_PUBLISH_POLL_HOURS")
+    xueqiu_publish_poll_hours: str = Field(default="8", alias="XUEQIU_PUBLISH_POLL_HOURS")
+    xueqiu_publish_default_cover_pic: str = Field(
+        default="https://xqimg.imedao.com/19e0d23ff40328673fdcf12c.png",
+        alias="XUEQIU_PUBLISH_DEFAULT_COVER_PIC",
+    )
     xueqiu_publish_timeout_seconds: float = Field(
         default=20.0,
         alias="XUEQIU_PUBLISH_TIMEOUT_SECONDS",

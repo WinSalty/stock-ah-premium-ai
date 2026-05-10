@@ -251,6 +251,24 @@ class XueqiuPublishCredential(TimestampMixin, Base):
     updated_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("app_user.id"))
 
 
+class XueqiuPublishSetting(TimestampMixin, Base):
+    """雪球长文自动发布配置。
+
+    创建日期：2026-05-10
+    author: sunshengxian
+    """
+
+    __tablename__ = "xueqiu_publish_setting"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    scheduler_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    auto_publish: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    poll_hours: Mapped[str] = mapped_column(String(32), nullable=False, default="8")
+    poll_minutes: Mapped[str] = mapped_column(String(64), nullable=False, default="30")
+    default_cover_pic: Mapped[str | None] = mapped_column(String(512))
+    updated_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("app_user.id"))
+
+
 class XueqiuPublishRecord(TimestampMixin, Base):
     """雪球长文草稿与发布流水。
 

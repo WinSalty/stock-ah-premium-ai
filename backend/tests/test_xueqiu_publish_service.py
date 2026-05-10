@@ -10,7 +10,7 @@ from app.core.config import Settings
 from app.db.base import Base
 from app.db.models.auth import AppUser
 from app.db.models.notification import LimitUpAnalysisCache
-from app.schemas.xueqiu_publish import XueqiuCredentialRequest
+from app.schemas.xueqiu_publish import XueqiuCredentialRequest, XueqiuPublishSettingRequest
 from app.services.auth_service import AuthService
 from app.services.xueqiu_publish_service import (
     XUEQIU_MODE_DRAFT,
@@ -179,3 +179,53 @@ def test_xueqiu_cover_pic_removes_image_style_suffix() -> None:
         service._normalize_cover_pic("https://xqimg.imedao.com/19e0d23ff40328673fdcf12c.png!800.jpg")
         == "https://xqimg.imedao.com/19e0d23ff40328673fdcf12c.png"
     )
+
+
+def test_publish_setting_can_be_saved_from_admin_page() -> None:
+    """确认雪球发布页可保存定时开关、模式和默认封面。
+
+    创建日期：2026-05-10
+    author: sunshengxian
+    """
+
+    db = make_db()
+    user = AppUser(username="admin", password_hash="hash", role="ADMIN", is_active=True)
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    service = XueqiuPublishService(db, Settings(xueqiu_publish_scheduler_enabled=True))
+
+    summary = service.save_publish_setting(
+        XueqiuPublishSettingRequest(
+            scheduler_enabled=True,
+            auto_publish=True,
+            poll_hours="8",
+            poll_minutes="30",
+            default_cover_pic="https://xqimg.imedao.com/19e0d23ff40328673fdcf12c.png!800.jpg",
+        ),
+        user,
+    )
+
+    assert summary.scheduler_enabled is True
+    assert summary.auto_publish is True
+    assert summary.poll_hours == "8"
+    assert summary.poll_minutes == "30"
+    assert summary.default_cover_pic == "https://xqimg.imedao.com/19e0d23ff40328673fdcf12c.png"
+    assert summary.effective_scheduler_registered is True
+
+
+def test_scheduler_cron_field_matches_page_config() -> None:
+    """确认定时任务按页面保存的小时和分钟表达式匹配。
+
+    创建日期：2026-05-10
+    author: sunshengxian
+    """
+
+    db = make_db()
+    service = XueqiuPublishService(db, Settings())
+
+    assert service._cron_field_matches("30", 30) is True
+    assert service._cron_field_matches("31,36,41", 36) is True
+    assert service._cron_field_matches("8-9", 9) is True
+    assert service._cron_field_matches("*/5", 40) is True
+    assert service._cron_field_matches("30", 31) is False

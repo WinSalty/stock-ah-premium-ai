@@ -857,6 +857,20 @@ body {
   width: min(460px, 100%);
 }
 
+.xueqiu-setting-form {
+  padding: 14px;
+  border: 1px solid #e5ebf3;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.xueqiu-setting-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(120px, 1fr));
+  gap: 12px;
+  align-items: start;
+}
+
 .xueqiu-preview-grid {
   display: grid;
   grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
@@ -1879,6 +1893,7 @@ pre.llm-payload-viewer,
   .sync-dataset-note,
   .sync-run-filter-grid,
   .llm-metric-filter-grid,
+  .xueqiu-setting-grid,
   .premium-filter-grid {
     grid-template-columns: repeat(2, minmax(160px, 1fr));
   }
@@ -1968,6 +1983,7 @@ pre.llm-payload-viewer,
   .sync-batch-grid,
   .sync-dataset-note,
   .sync-run-filter-grid,
+  .xueqiu-setting-grid,
   .premium-filter-grid,
   .manual-import-grid,
   .llm-metric-filter-grid,

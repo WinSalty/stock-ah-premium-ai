@@ -1,25 +1,37 @@
-import { Alert, Button, Checkbox, Form, Input, Modal, Popconfirm, Space, Table, Tabs, Tag, Typography, message } from 'antd';
+import { Alert, Button, Checkbox, Form, Input, Modal, Popconfirm, Radio, Space, Switch, Table, Tabs, Tag, Typography, message } from 'antd';
 import { Eye, RefreshCw, Save, Send, ShieldCheck } from 'lucide-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import PageHeader from '../components/PageHeader';
 import {
   fetchXueqiuCredential,
   fetchXueqiuPreview,
   fetchXueqiuRecord,
   fetchXueqiuRecords,
+  fetchXueqiuPublishSetting,
   publishXueqiuArticle,
   saveXueqiuCredential,
+  saveXueqiuPublishSetting,
   verifyXueqiuCredential
 } from '../api/xueqiuPublish';
-import type { XueqiuCredentialRequest, XueqiuPublishRecordItem } from '../types/domain';
+import type { XueqiuCredentialRequest, XueqiuPublishRecordItem, XueqiuPublishSettingRequest } from '../types/domain';
 import { formatEast8DateTime } from '../utils/datetime';
+
+const DEFAULT_XUEQIU_COVER_PIC = 'https://xqimg.imedao.com/19e0d23ff40328673fdcf12c.png';
 
 interface CredentialFormValues {
   enabled: boolean;
   cookie_text: string;
   user_agent: string;
   expires_at?: string;
+}
+
+interface PublishSettingFormValues {
+  scheduler_enabled: boolean;
+  auto_publish: boolean;
+  poll_hours: string;
+  poll_minutes: string;
+  default_cover_pic?: string;
 }
 
 /**
@@ -30,11 +42,16 @@ interface CredentialFormValues {
 function XueqiuPublishPage() {
   const queryClient = useQueryClient();
   const [credentialForm] = Form.useForm<CredentialFormValues>();
+  const [settingForm] = Form.useForm<PublishSettingFormValues>();
   const [analysisId, setAnalysisId] = useState<number | null>(null);
-  const [coverPic, setCoverPic] = useState('');
+  const [coverPic, setCoverPic] = useState(DEFAULT_XUEQIU_COVER_PIC);
   const [force, setForce] = useState(false);
   const [selectedRecordId, setSelectedRecordId] = useState<number | null>(null);
   const credential = useQuery({ queryKey: ['xueqiu-credential'], queryFn: fetchXueqiuCredential });
+  const setting = useQuery({
+    queryKey: ['xueqiu-publish-setting'],
+    queryFn: fetchXueqiuPublishSetting
+  });
   const preview = useQuery({
     queryKey: ['xueqiu-preview', analysisId],
     queryFn: () => fetchXueqiuPreview(analysisId),
@@ -46,6 +63,22 @@ function XueqiuPublishPage() {
     queryFn: () => fetchXueqiuRecord(selectedRecordId as number),
     enabled: Boolean(selectedRecordId)
   });
+
+  useEffect(() => {
+    if (!setting.data) {
+      return;
+    }
+    // 配置接口异步返回后同步到表单和本次发布封面，避免 initialValues 只在首次渲染生效导致页面显示旧默认值。
+    const defaultCover = setting.data.default_cover_pic || DEFAULT_XUEQIU_COVER_PIC;
+    settingForm.setFieldsValue({
+      scheduler_enabled: setting.data.scheduler_enabled,
+      auto_publish: setting.data.auto_publish,
+      poll_hours: setting.data.poll_hours,
+      poll_minutes: setting.data.poll_minutes,
+      default_cover_pic: defaultCover
+    });
+    setCoverPic(defaultCover);
+  }, [setting.data, settingForm]);
   const saveCredential = useMutation({
     mutationFn: (values: CredentialFormValues) => {
       const payload: XueqiuCredentialRequest = {
@@ -62,6 +95,24 @@ function XueqiuPublishPage() {
       queryClient.invalidateQueries({ queryKey: ['xueqiu-credential'] });
     },
     onError: (error) => message.error(error instanceof Error ? error.message : '保存失败')
+  });
+  const saveSetting = useMutation({
+    mutationFn: (values: PublishSettingFormValues) => {
+      const payload: XueqiuPublishSettingRequest = {
+        scheduler_enabled: values.scheduler_enabled,
+        auto_publish: values.auto_publish,
+        poll_hours: values.poll_hours,
+        poll_minutes: values.poll_minutes,
+        default_cover_pic: values.default_cover_pic?.trim() || null
+      };
+      return saveXueqiuPublishSetting(payload);
+    },
+    onSuccess: (result) => {
+      message.success('雪球发布配置已保存');
+      setCoverPic(result.default_cover_pic || '');
+      queryClient.invalidateQueries({ queryKey: ['xueqiu-publish-setting'] });
+    },
+    onError: (error) => message.error(error instanceof Error ? error.message : '保存配置失败')
   });
   const verifyCredential = useMutation({
     mutationFn: verifyXueqiuCredential,
@@ -90,6 +141,12 @@ function XueqiuPublishPage() {
   const statusTag = (status: string) => {
     const color = status === 'PUBLISHED' ? 'green' : status === 'DRAFTED' ? 'blue' : status === 'FAILED' ? 'red' : 'default';
     return <Tag color={color}>{status}</Tag>;
+  };
+
+  const applyDefaultCover = (value?: string | null) => {
+    const nextCover = value || DEFAULT_XUEQIU_COVER_PIC;
+    setCoverPic(nextCover);
+    settingForm.setFieldValue('default_cover_pic', nextCover);
   };
 
   return (
@@ -175,6 +232,67 @@ function XueqiuPublishPage() {
               label: '发布',
               children: (
                 <Space direction="vertical" size={16} className="xueqiu-tab-body">
+                  <Form
+                    form={settingForm}
+                    layout="vertical"
+                    className="xueqiu-setting-form"
+                    initialValues={{
+                      scheduler_enabled: setting.data?.scheduler_enabled ?? false,
+                      auto_publish: setting.data?.auto_publish ?? false,
+                      poll_hours: setting.data?.poll_hours || '8',
+                      poll_minutes: setting.data?.poll_minutes || '30',
+                      default_cover_pic: setting.data?.default_cover_pic || DEFAULT_XUEQIU_COVER_PIC
+                    }}
+                    onFinish={(values) => saveSetting.mutate(values)}
+                  >
+                    <div className="xueqiu-setting-grid">
+                      <Form.Item
+                        label="工作日定时"
+                        name="scheduler_enabled"
+                        valuePropName="checked"
+                        extra="开启后由后端调度器在工作日触发；进程级调度总开关仍需部署环境启用。"
+                      >
+                        <Switch checkedChildren="开启" unCheckedChildren="关闭" />
+                      </Form.Item>
+                      <Form.Item label="执行动作" name="auto_publish" extra="草稿更稳妥；正式发布会公开发到雪球。">
+                        <Radio.Group optionType="button" buttonStyle="solid">
+                          <Radio.Button value={false}>保存草稿</Radio.Button>
+                          <Radio.Button value={true}>正式发布</Radio.Button>
+                        </Radio.Group>
+                      </Form.Item>
+                      <Form.Item label="小时" name="poll_hours" rules={[{ required: true, message: '请填写小时' }]}>
+                        <Input placeholder="8" />
+                      </Form.Item>
+                      <Form.Item label="分钟" name="poll_minutes" rules={[{ required: true, message: '请填写分钟' }]}>
+                        <Input placeholder="30" />
+                      </Form.Item>
+                    </div>
+                    <Form.Item label="默认封面图" name="default_cover_pic">
+                      <Input
+                        placeholder="留空表示不带封面"
+                        onChange={(event) => setCoverPic(event.target.value)}
+                      />
+                    </Form.Item>
+                    <Space wrap>
+                      <Button type="primary" htmlType="submit" loading={saveSetting.isPending}>
+                        保存定时配置
+                      </Button>
+                      <Button onClick={() => applyDefaultCover(setting.data?.default_cover_pic)}>
+                        使用默认图
+                      </Button>
+                      <Button
+                        onClick={() => {
+                          setCoverPic('');
+                          settingForm.setFieldValue('default_cover_pic', '');
+                        }}
+                      >
+                        去掉封面
+                      </Button>
+                      <Typography.Text type="secondary">
+                        当前进程调度：{setting.data?.effective_scheduler_registered ? '已注册' : '未注册'}
+                      </Typography.Text>
+                    </Space>
+                  </Form>
                   <Space wrap>
                     <Input
                       className="xueqiu-analysis-input"
@@ -187,10 +305,12 @@ function XueqiuPublishPage() {
                     />
                     <Input
                       className="xueqiu-cover-input"
-                      placeholder="封面图 URL，可选"
+                      placeholder="本次封面图 URL，留空则不带封面"
                       value={coverPic}
                       onChange={(event) => setCoverPic(event.target.value)}
                     />
+                    <Button onClick={() => applyDefaultCover(setting.data?.default_cover_pic)}>默认封面</Button>
+                    <Button onClick={() => setCoverPic('')}>去掉封面</Button>
                     <Checkbox checked={force} onChange={(event) => setForce(event.target.checked)}>强制新建/重试</Checkbox>
                     <Button icon={<RefreshCw size={16} />} onClick={() => preview.refetch()}>刷新预览</Button>
                   </Space>
