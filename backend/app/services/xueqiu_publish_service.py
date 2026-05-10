@@ -310,8 +310,10 @@ class XueqiuPublishService:
         message = self._chat_answer_message(payload.message_id, user)
         mode = XUEQIU_MODE_PUBLISH if payload.publish else XUEQIU_MODE_DRAFT
         record = self._get_or_create_chat_record(message, payload, user, mode)
-        if record.status in {XUEQIU_STATUS_DRAFTED, XUEQIU_STATUS_PUBLISHED} and not payload.force:
+        if record.status == XUEQIU_STATUS_PUBLISHED and not payload.force:
             return record
+        # 问答草稿允许重复点击“保存草稿”来刷新同一条雪球草稿内容；
+        # 只对已发布流水保持幂等返回，避免未勾选强制时重复正式发文。
         title = self._chat_article_title(message, user, payload.title)
         content_html = self._chat_markdown_to_xueqiu_html(message, user)
         record.title = title
@@ -465,6 +467,9 @@ class XueqiuPublishService:
             "text": record.content_html,
             "title": record.title,
             "cover_pic": record.cover_pic or "",
+            # 草稿接口也需要显式声明是否展示封面，否则部分草稿箱列表只保存 URL，
+            # 但不会把封面图作为长文封面渲染出来。
+            "show_cover_pic": "true" if record.cover_pic else "false",
             "flags": "false",
             "original_event": "",
             "status_id": record.status_id or "",
@@ -861,7 +866,31 @@ class XueqiuPublishService:
         sanitized = self._sanitize_chat_html(html_text)
         if not sanitized:
             raise XueqiuPublishError("LLM 未返回可发布的 HTML 内容")
+        allowed_tag_pattern = r"<\s*(h2|h3|p|ul|ol|li|table|thead|tbody|tr|th|td|br|hr)\b"
+        if not re.search(allowed_tag_pattern, sanitized, flags=re.IGNORECASE):
+            # 问答发布必须保存 HTML 源码而不是 Markdown 原文；如果模型异常返回纯文本或
+            # Markdown，这里直接失败，避免草稿箱继续沉淀不可渲染的旧格式内容。
+            raise XueqiuPublishError("LLM 未把问答内容转换为 HTML")
+        if self._contains_markdown_table(message.content) and "<table" not in sanitized.lower():
+            # 原回答包含 Markdown 表格时，雪球编辑器只认原生 table 结构；
+            # 缺少 table 说明转换不完整，应由管理员重试而不是保存半成品草稿。
+            raise XueqiuPublishError("LLM 未把 Markdown 表格转换为 HTML table")
         return sanitized
+
+    def _contains_markdown_table(self, content: str) -> bool:
+        """判断问答原文是否包含 Markdown 表格。
+
+        创建日期：2026-05-10
+        author: sunshengxian
+        """
+
+        lines = [line.strip() for line in content.splitlines()]
+        separator_pattern = r"\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?"
+        for index in range(len(lines) - 1):
+            # 只识别标准 Markdown 表头 + 分隔线，避免普通竖线文本误判为表格。
+            if "|" in lines[index] and re.fullmatch(separator_pattern, lines[index + 1]):
+                return True
+        return False
 
     def _sanitize_chat_html(self, content_html: str) -> str:
         """清理 LLM 转换结果，保留雪球长文可接受的安全 HTML 片段。

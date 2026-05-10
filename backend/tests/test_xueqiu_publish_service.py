@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import UTC, date, datetime
 from zoneinfo import ZoneInfo
 
@@ -370,6 +371,136 @@ def test_chat_answer_can_be_saved_as_xueqiu_draft(monkeypatch) -> None:
     assert len(saved.title) <= 50
     assert "<table>" in saved.content_html
     assert saved.draft_id == "chat-draft-id"
+
+
+def test_chat_answer_existing_draft_is_refreshed_as_html(monkeypatch) -> None:
+    """确认已有问答草稿再次保存时会重新转换 HTML 并更新原草稿。
+
+    创建日期：2026-05-10
+    author: sunshengxian
+    """
+
+    db = make_db()
+    admin = AppUser(username="admin", password_hash="hash", role="ADMIN", is_active=True)
+    db.add(admin)
+    db.flush()
+    session = LlmChatSession(user_id=admin.id, title="招商银行分析")
+    db.add(session)
+    db.flush()
+    answer = LlmChatMessage(
+        session_id=session.id,
+        role="assistant",
+        content="## 核心结论\n\n| 指标 | 判断 |\n| --- | --- |\n| ROE | 稳定 |",
+    )
+    db.add(answer)
+    db.flush()
+    stale_record = XueqiuPublishRecord(
+        analysis_id=None,
+        chat_message_id=answer.id,
+        source_type=XUEQIU_SOURCE_CHAT_ANSWER,
+        publish_mode=XUEQIU_MODE_DRAFT,
+        status=XUEQIU_STATUS_DRAFTED,
+        title="旧标题",
+        content_html=answer.content,
+        cover_pic=None,
+        draft_id="old-chat-draft-id",
+        created_by_user_id=admin.id,
+    )
+    db.add(stale_record)
+    db.commit()
+    db.refresh(admin)
+    db.refresh(answer)
+    db.refresh(stale_record)
+    service = XueqiuPublishService(db, Settings())
+    save_test_credential(service, admin)
+    saved_records: list[tuple[str | None, str]] = []
+
+    def fake_chat_completion(_self, _prompt, _system_prompt=None, **_kwargs):
+        if _kwargs.get("trace") and _kwargs["trace"].phase == "xueqiu_title":
+            return "招商银行财务质量与估值观察"
+        return (
+            "<h2>核心结论</h2><table><thead><tr><th>指标</th><th>判断</th></tr></thead>"
+            "<tbody><tr><td>ROE</td><td>稳定</td></tr></tbody></table>"
+        )
+
+    def fake_save_draft(_credential, record):
+        # 重复保存应沿用旧 draft_id 更新雪球草稿，同时把 Markdown 占位替换为 HTML。
+        saved_records.append((record.draft_id, record.content_html))
+        return {"id": "old-chat-draft-id"}
+
+    monkeypatch.setattr(
+        "app.services.llm_service.LlmService._chat_completion",
+        fake_chat_completion,
+    )
+    monkeypatch.setattr(service, "_save_draft", fake_save_draft)
+
+    record = service.save_or_publish_chat_answer(
+        XueqiuChatAnswerPublishRequest(
+            message_id=answer.id,
+            cover_pic="https://xqimg.imedao.com/19e0d23ff40328673fdcf12c.png!800.jpg",
+        ),
+        admin,
+    )
+
+    saved = db.get(XueqiuPublishRecord, record.id)
+    assert saved is not None
+    assert saved.id == stale_record.id
+    assert saved_records == [
+        (
+            "old-chat-draft-id",
+            (
+                "<h2>核心结论</h2><table><thead><tr><th>指标</th><th>判断</th></tr></thead>"
+                "<tbody><tr><td>ROE</td><td>稳定</td></tr></tbody></table>"
+            ),
+        )
+    ]
+    assert saved.title == "招商银行财务质量与估值观察"
+    assert "<table>" in saved.content_html
+    assert "| --- |" not in saved.content_html
+    assert saved.cover_pic == "https://xqimg.imedao.com/19e0d23ff40328673fdcf12c.png"
+
+
+def test_save_draft_payload_includes_cover_display_flag(monkeypatch) -> None:
+    """确认保存草稿时同时提交封面地址和展示封面开关。
+
+    创建日期：2026-05-10
+    author: sunshengxian
+    """
+
+    db = make_db()
+    admin = AppUser(username="admin", password_hash="hash", role="ADMIN", is_active=True)
+    db.add(admin)
+    db.commit()
+    db.refresh(admin)
+    service = XueqiuPublishService(db, Settings())
+    save_test_credential(service, admin)
+    credential = service._enabled_credential()
+    record = XueqiuPublishRecord(
+        source_type=XUEQIU_SOURCE_CHAT_ANSWER,
+        publish_mode=XUEQIU_MODE_DRAFT,
+        status=XUEQIU_STATUS_DRAFTED,
+        title="招商银行财务质量与估值观察",
+        content_html="<h2>核心结论</h2><p>ROE 稳定。</p>",
+        cover_pic="https://xqimg.imedao.com/19e0d23ff40328673fdcf12c.png",
+        draft_id="draft-id",
+        created_by_user_id=admin.id,
+    )
+    captured: dict[str, str] = {}
+
+    def fake_post_form(_credential, _path, data, _referer):
+        # 这里直接捕获发往雪球草稿接口的表单字段，避免单测依赖外部网络。
+        captured.update(data)
+        return {"id": "draft-id"}
+
+    monkeypatch.setattr(service, "_post_form", fake_post_form)
+
+    response = service._save_draft(credential, record)
+
+    safe_payload = json.loads(record.request_payload_json or "{}")
+    assert response == {"id": "draft-id"}
+    assert captured["cover_pic"] == "https://xqimg.imedao.com/19e0d23ff40328673fdcf12c.png"
+    assert captured["show_cover_pic"] == "true"
+    assert safe_payload["show_cover_pic"] == "true"
 
 
 def test_chat_answer_title_is_limited_to_xueqiu_max_length(monkeypatch) -> None:
