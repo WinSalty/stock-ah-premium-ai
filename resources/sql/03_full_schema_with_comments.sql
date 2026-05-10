@@ -580,7 +580,7 @@ CREATE TABLE IF NOT EXISTS `xueqiu_publish_record` (
   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '记录创建时间',
   `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '记录更新时间',
   PRIMARY KEY (`id`),
-  UNIQUE KEY `uk_xueqiu_publish_analysis_mode` (`analysis_id`, `publish_mode`),
+  KEY `idx_xueqiu_publish_record_mode_latest` (`analysis_id`, `publish_mode`, `created_at`),
   KEY `idx_xueqiu_publish_record_status` (`status`, `created_at`),
   KEY `idx_xueqiu_publish_record_analysis` (`analysis_id`),
   CONSTRAINT `fk_xueqiu_publish_record_analysis`

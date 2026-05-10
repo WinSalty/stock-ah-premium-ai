@@ -128,7 +128,7 @@ function XueqiuPublishPage() {
                         </Tag>
                         <Typography.Text type="secondary">Cookie: {credential.data.cookie_preview}</Typography.Text>
                         <Typography.Text type="secondary">
-                          验证：{formatEast8DateTime(credential.data.last_verified_at)}
+                          验证：{formatEast8DateTime(credential.data.last_verified_at, { naiveAsEast8: true })}
                         </Typography.Text>
                       </Space>
                     ) : (
@@ -202,7 +202,7 @@ function XueqiuPublishPage() {
                           报告 ID {preview.data.analysis_id} · 交易日 {preview.data.trade_date}
                         </Typography.Text>
                         <Typography.Paragraph type="secondary" className="xueqiu-force-hint">
-                          默认同一报告同一模式只保留一条本地流水；如果你已在雪球网页删除草稿，请勾选“强制新建/重试”后再次保存，系统会清空旧草稿 ID 并重新创建。
+                          默认复用同一报告同一模式的最近流水；如果你已在雪球网页删除草稿，请勾选“强制新建/重试”后再次保存，系统会新增流水并重新创建草稿。
                         </Typography.Paragraph>
                         <Typography.Paragraph className="xueqiu-preview-text">
                           {preview.data.content_text.slice(0, 1200)}
@@ -260,7 +260,7 @@ function XueqiuPublishPage() {
                       title: '时间',
                       dataIndex: 'created_at',
                       width: 180,
-                      render: (value: string) => formatEast8DateTime(value)
+                      render: (value: string) => formatEast8DateTime(value, { naiveAsEast8: true })
                     },
                     {
                       title: '操作',
@@ -290,7 +290,7 @@ function XueqiuPublishPage() {
             <>
               <Typography.Title level={4}>{recordDetail.data.title}</Typography.Title>
               <Typography.Text type="secondary">
-                状态 {recordDetail.data.status} · 创建 {formatEast8DateTime(recordDetail.data.created_at)}
+                状态 {recordDetail.data.status} · 创建 {formatEast8DateTime(recordDetail.data.created_at, { naiveAsEast8: true })}
               </Typography.Text>
               {recordDetail.data.error_message ? <Alert type="error" showIcon message={recordDetail.data.error_message} /> : null}
               <Typography.Paragraph copyable={{ text: recordDetail.data.request_payload_json || '' }}>

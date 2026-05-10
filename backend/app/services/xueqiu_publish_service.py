@@ -4,13 +4,13 @@ import html
 import json
 import logging
 import re
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Any
 from urllib.parse import urljoin
+from zoneinfo import ZoneInfo
 
 import httpx
 from sqlalchemy import desc, select
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.config import Settings, get_settings
@@ -37,6 +37,8 @@ XUEQIU_STATUS_PENDING = "PENDING"
 XUEQIU_STATUS_DRAFTED = "DRAFTED"
 XUEQIU_STATUS_PUBLISHED = "PUBLISHED"
 XUEQIU_STATUS_FAILED = "FAILED"
+XUEQIU_IMAGE_STYLE_SUFFIX_PATTERN = re.compile(r"!(?:\d+\.jpg|[A-Za-z0-9_.,-]+)$")
+EAST8_TZ = ZoneInfo("Asia/Shanghai")
 
 
 class XueqiuPublishError(ValueError):
@@ -181,15 +183,13 @@ class XueqiuPublishService:
         credential = self._enabled_credential()
         analysis = self._resolve_analysis(analysis_id)
         mode = XUEQIU_MODE_PUBLISH if publish else XUEQIU_MODE_DRAFT
-        record = self._get_or_create_record(analysis, mode, cover_pic, user)
+        record = self._get_or_create_record(analysis, mode, cover_pic, user, force=force)
         if record.status in {XUEQIU_STATUS_DRAFTED, XUEQIU_STATUS_PUBLISHED} and not force:
             return record
         title, content_html = self._build_article(analysis)
-        if force:
-            self._reset_remote_identity_for_retry(record)
         record.title = title
         record.content_html = content_html
-        record.cover_pic = cover_pic.strip() if cover_pic else None
+        record.cover_pic = self._normalize_cover_pic(cover_pic)
         record.status = XUEQIU_STATUS_PENDING
         record.error_message = None
         self.db.flush()
@@ -479,7 +479,12 @@ class XueqiuPublishService:
         mode: str,
         cover_pic: str | None,
         user: AppUser | None,
+        force: bool = False,
     ) -> XueqiuPublishRecord:
+        if not force:
+            existing = self._latest_record_for_mode(analysis.id, mode)
+            if existing is not None:
+                return existing
         title, content_html = self._build_article(analysis)
         record = XueqiuPublishRecord(
             analysis_id=analysis.id,
@@ -487,39 +492,35 @@ class XueqiuPublishService:
             status=XUEQIU_STATUS_PENDING,
             title=title,
             content_html=content_html,
-            cover_pic=cover_pic.strip() if cover_pic else None,
+            cover_pic=self._normalize_cover_pic(cover_pic),
             created_by_user_id=user.id if user else None,
         )
         self.db.add(record)
-        try:
-            self.db.flush()
-            return record
-        except IntegrityError:
-            self.db.rollback()
-            existing = self.db.scalar(
-                select(XueqiuPublishRecord).where(
-                    XueqiuPublishRecord.analysis_id == analysis.id,
-                    XueqiuPublishRecord.publish_mode == mode,
-                )
-            )
-            if existing is None:
-                raise
-            return existing
+        self.db.flush()
+        return record
 
-    def _reset_remote_identity_for_retry(self, record: XueqiuPublishRecord) -> None:
-        """强制重试前清理本地保存的雪球远端对象标识。
+    def _latest_record_for_mode(
+        self,
+        analysis_id: int,
+        mode: str,
+    ) -> XueqiuPublishRecord | None:
+        """读取同一报告和发布模式下最近一条流水。
 
         创建日期：2026-05-10
         author: sunshengxian
         """
 
-        # 管理员在雪球网页端删除草稿后，本地流水仍会保留旧 draft_id；
-        # 强制重试代表远端对象可能已经不可用，因此清空远端 ID，让保存接口重新创建草稿。
-        record.draft_id = None
-        record.status_id = None
-        record.article_url = None
-        record.published_at = None
-        record.response_json = None
+        # 默认保存和定时任务只复用最近流水，避免重复提交；强制新建时绕过这里，
+        # 让被雪球网页端删除的草稿也能重新创建，并保留旧流水用于审计。
+        return self.db.scalar(
+            select(XueqiuPublishRecord)
+            .where(
+                XueqiuPublishRecord.analysis_id == analysis_id,
+                XueqiuPublishRecord.publish_mode == mode,
+            )
+            .order_by(desc(XueqiuPublishRecord.created_at), desc(XueqiuPublishRecord.id))
+            .limit(1)
+        )
 
     def _build_article(self, analysis: LimitUpAnalysisCache) -> tuple[str, str]:
         title = f"{analysis.trade_date:%Y-%m-%d} 打板复盘：涨停生态、题材强度与次日观察"
@@ -546,6 +547,22 @@ class XueqiuPublishService:
         text = re.sub(r"<[^>]+>", "", text)
         text = html.unescape(text)
         return re.sub(r"\n{3,}", "\n\n", text).strip()
+
+    def _normalize_cover_pic(self, cover_pic: str | None) -> str | None:
+        """规整雪球封面图 URL，去掉网页展示用尺寸后缀。
+
+        创建日期：2026-05-10
+        author: sunshengxian
+        """
+
+        if not cover_pic:
+            return None
+        normalized = cover_pic.strip()
+        if not normalized:
+            return None
+        # 雪球正文图片常带 !800.jpg 一类展示尺寸后缀，草稿接口用于封面时可能不接受；
+        # 入库和提交前统一还原到原图地址，保留管理员复制现有文章图片地址的便利性。
+        return XUEQIU_IMAGE_STYLE_SUFFIX_PATTERN.sub("", normalized)
 
     def _credential_or_none(self) -> XueqiuPublishCredential | None:
         return self.db.scalar(
@@ -637,4 +654,4 @@ class XueqiuPublishService:
         return json.dumps(value, ensure_ascii=False, default=str)
 
     def _now_naive(self) -> datetime:
-        return datetime.now(UTC).replace(tzinfo=None)
+        return datetime.now(EAST8_TZ).replace(tzinfo=None)

@@ -121,7 +121,7 @@ def test_preview_latest_report_unwraps_pushplus_container() -> None:
 
 
 def test_publish_record_is_idempotent_for_same_mode() -> None:
-    """确认同一报告同一发布模式只生成一条流水。
+    """确认普通操作会复用同一报告同一发布模式的最近流水。
 
     创建日期：2026-05-10
     author: sunshengxian
@@ -138,8 +138,8 @@ def test_publish_record_is_idempotent_for_same_mode() -> None:
     assert first.id == second.id
 
 
-def test_force_retry_clears_deleted_remote_draft_identity() -> None:
-    """确认强制重试会重新创建雪球草稿而不是更新已删除草稿。
+def test_force_retry_creates_new_record_without_mutating_old_record() -> None:
+    """确认强制重试新增流水并保留被网页删除的旧草稿记录。
 
     创建日期：2026-05-10
     author: sunshengxian
@@ -148,19 +148,34 @@ def test_force_retry_clears_deleted_remote_draft_identity() -> None:
     db = make_db()
     report = add_ready_report(db)
     service = XueqiuPublishService(db, Settings())
-    record = service._get_or_create_record(report, XUEQIU_MODE_DRAFT, None, None)
-    record.status = XUEQIU_STATUS_DRAFTED
-    record.draft_id = "deleted-draft-id"
-    record.status_id = "old-status-id"
-    record.article_url = "https://xueqiu.com/old"
-    record.published_at = datetime.now(UTC).replace(tzinfo=None)
-    record.response_json = '{"draft": {"id": "deleted-draft-id"}}'
+    old_record = service._get_or_create_record(report, XUEQIU_MODE_DRAFT, None, None)
+    old_record.status = XUEQIU_STATUS_DRAFTED
+    old_record.draft_id = "deleted-draft-id"
+    old_record.status_id = "old-status-id"
+    old_record.article_url = "https://xueqiu.com/old"
+    old_record.published_at = datetime.now(UTC).replace(tzinfo=None)
+    old_record.response_json = '{"draft": {"id": "deleted-draft-id"}}'
     db.commit()
 
-    service._reset_remote_identity_for_retry(record)
+    new_record = service._get_or_create_record(report, XUEQIU_MODE_DRAFT, None, None, force=True)
 
-    assert record.draft_id is None
-    assert record.status_id is None
-    assert record.article_url is None
-    assert record.published_at is None
-    assert record.response_json is None
+    assert new_record.id != old_record.id
+    assert new_record.draft_id is None
+    assert old_record.draft_id == "deleted-draft-id"
+    assert old_record.article_url == "https://xueqiu.com/old"
+
+
+def test_xueqiu_cover_pic_removes_image_style_suffix() -> None:
+    """确认从既有雪球文章复制的封面图地址会还原为原图地址。
+
+    创建日期：2026-05-10
+    author: sunshengxian
+    """
+
+    db = make_db()
+    service = XueqiuPublishService(db, Settings())
+
+    assert (
+        service._normalize_cover_pic("https://xqimg.imedao.com/19e0d23ff40328673fdcf12c.png!800.jpg")
+        == "https://xqimg.imedao.com/19e0d23ff40328673fdcf12c.png"
+    )

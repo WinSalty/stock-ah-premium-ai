@@ -260,7 +260,12 @@ class XueqiuPublishRecord(TimestampMixin, Base):
 
     __tablename__ = "xueqiu_publish_record"
     __table_args__ = (
-        UniqueConstraint("analysis_id", "publish_mode", name="uk_xueqiu_publish_analysis_mode"),
+        Index(
+            "idx_xueqiu_publish_record_mode_latest",
+            "analysis_id",
+            "publish_mode",
+            "created_at",
+        ),
         Index("idx_xueqiu_publish_record_status", "status", "created_at"),
         Index("idx_xueqiu_publish_record_analysis", "analysis_id"),
     )
