@@ -313,7 +313,7 @@ def test_scheduler_cron_field_matches_page_config() -> None:
 
 
 def test_chat_answer_can_be_saved_as_xueqiu_draft(monkeypatch) -> None:
-    """确认问答回答可转成 HTML 后保存为雪球草稿流水。
+    """确认问答回答可转成雪球稳定支持的列表 HTML 后保存草稿。
 
     创建日期：2026-05-10
     author: sunshengxian
@@ -342,8 +342,9 @@ def test_chat_answer_can_be_saved_as_xueqiu_draft(monkeypatch) -> None:
         if _kwargs.get("trace") and _kwargs["trace"].phase == "xueqiu_title":
             return "招商银行财务质量与估值观察"
         return (
-            "<h2>核心结论</h2><table><thead><tr><th>指标</th><th>判断</th></tr></thead>"
-            "<tbody><tr><td>ROE</td><td>稳定</td></tr></tbody></table>"
+            "<h2>核心结论</h2><ul>"
+            "<li><strong>指标：</strong>ROE；<strong>判断：</strong>稳定</li>"
+            "</ul>"
         )
 
     monkeypatch.setattr(
@@ -369,12 +370,13 @@ def test_chat_answer_can_be_saved_as_xueqiu_draft(monkeypatch) -> None:
     assert saved.status == XUEQIU_STATUS_DRAFTED
     assert saved.title == "招商银行财务质量与估值观察"
     assert len(saved.title) <= 50
-    assert "<table>" in saved.content_html
+    assert "<li>" in saved.content_html
+    assert "<table" not in saved.content_html
     assert saved.draft_id == "chat-draft-id"
 
 
 def test_chat_answer_existing_draft_is_refreshed_as_html(monkeypatch) -> None:
-    """确认已有问答草稿再次保存时会重新转换 HTML 并更新原草稿。
+    """确认已有问答草稿再次保存时会重新转换列表 HTML 并更新原草稿。
 
     创建日期：2026-05-10
     author: sunshengxian
@@ -419,8 +421,9 @@ def test_chat_answer_existing_draft_is_refreshed_as_html(monkeypatch) -> None:
         if _kwargs.get("trace") and _kwargs["trace"].phase == "xueqiu_title":
             return "招商银行财务质量与估值观察"
         return (
-            "<h2>核心结论</h2><table><thead><tr><th>指标</th><th>判断</th></tr></thead>"
-            "<tbody><tr><td>ROE</td><td>稳定</td></tr></tbody></table>"
+            "<h2>核心结论</h2><ul>"
+            "<li><strong>指标：</strong>ROE；<strong>判断：</strong>稳定</li>"
+            "</ul>"
         )
 
     def fake_save_draft(_credential, record):
@@ -449,15 +452,121 @@ def test_chat_answer_existing_draft_is_refreshed_as_html(monkeypatch) -> None:
         (
             "old-chat-draft-id",
             (
-                "<h2>核心结论</h2><table><thead><tr><th>指标</th><th>判断</th></tr></thead>"
-                "<tbody><tr><td>ROE</td><td>稳定</td></tr></tbody></table>"
+                "<h2>核心结论</h2><ul>"
+                "<li><strong>指标：</strong>ROE；<strong>判断：</strong>稳定</li>"
+                "</ul>"
             ),
         )
     ]
     assert saved.title == "招商银行财务质量与估值观察"
-    assert "<table>" in saved.content_html
+    assert "<li>" in saved.content_html
+    assert "<table" not in saved.content_html
     assert "| --- |" not in saved.content_html
     assert saved.cover_pic == "https://xqimg.imedao.com/19e0d23ff40328673fdcf12c.png"
+
+
+def test_chat_answer_uses_default_cover_when_payload_cover_is_empty(monkeypatch) -> None:
+    """确认问答快捷发布未传封面时继承雪球发布页默认封面。
+
+    创建日期：2026-05-10
+    author: sunshengxian
+    """
+
+    db = make_db()
+    admin = AppUser(username="admin", password_hash="hash", role="ADMIN", is_active=True)
+    db.add(admin)
+    db.flush()
+    session = LlmChatSession(user_id=admin.id, title="默认封面测试")
+    db.add(session)
+    db.flush()
+    answer = LlmChatMessage(
+        session_id=session.id,
+        role="assistant",
+        content="## 核心结论\n\n腾讯经营质量改善。",
+    )
+    db.add(answer)
+    db.commit()
+    db.refresh(admin)
+    db.refresh(answer)
+    service = XueqiuPublishService(db, Settings())
+    save_test_credential(service, admin)
+    service.save_publish_setting(
+        XueqiuPublishSettingRequest(
+            scheduler_enabled=False,
+            auto_publish=False,
+            poll_hours="8",
+            poll_minutes="30",
+            default_cover_pic="https://xqimg.imedao.com/19e0d23ff40328673fdcf12c.png!800.jpg",
+        ),
+        admin,
+    )
+    captured_covers: list[str | None] = []
+
+    def fake_chat_completion(_self, _prompt, _system_prompt=None, **_kwargs):
+        if _kwargs.get("trace") and _kwargs["trace"].phase == "xueqiu_title":
+            return "腾讯经营质量改善"
+        return "<h2>核心结论</h2><p>腾讯经营质量改善。</p>"
+
+    def fake_save_draft(_credential, record):
+        # 问答页没有封面输入，服务端必须在真正保存草稿前补齐默认封面。
+        captured_covers.append(record.cover_pic)
+        return {"id": "chat-draft-id"}
+
+    monkeypatch.setattr(
+        "app.services.llm_service.LlmService._chat_completion",
+        fake_chat_completion,
+    )
+    monkeypatch.setattr(service, "_save_draft", fake_save_draft)
+
+    record = service.save_or_publish_chat_answer(
+        XueqiuChatAnswerPublishRequest(message_id=answer.id),
+        admin,
+    )
+
+    assert captured_covers == ["https://xqimg.imedao.com/19e0d23ff40328673fdcf12c.png"]
+    assert record.cover_pic == "https://xqimg.imedao.com/19e0d23ff40328673fdcf12c.png"
+
+
+def test_chat_answer_rejects_table_html_for_xueqiu_draft(monkeypatch) -> None:
+    """确认问答 HTML 转换不再接受雪球草稿箱会压扁的 table 标签。
+
+    创建日期：2026-05-10
+    author: sunshengxian
+    """
+
+    db = make_db()
+    admin = AppUser(username="admin", password_hash="hash", role="ADMIN", is_active=True)
+    db.add(admin)
+    db.flush()
+    session = LlmChatSession(user_id=admin.id, title="表格压扁测试")
+    db.add(session)
+    db.flush()
+    answer = LlmChatMessage(
+        session_id=session.id,
+        role="assistant",
+        content="## 核心结论\n\n| 指标 | 判断 |\n| --- | --- |\n| ROE | 稳定 |",
+    )
+    db.add(answer)
+    db.commit()
+    db.refresh(admin)
+    db.refresh(answer)
+    service = XueqiuPublishService(db, Settings())
+
+    monkeypatch.setattr(
+        "app.services.llm_service.LlmService._chat_completion",
+        lambda *_args, **_kwargs: (
+            "<h2>核心结论</h2><table><tbody><tr><td>ROE</td><td>稳定</td></tr></tbody></table>"
+        ),
+    )
+
+    try:
+        service._chat_markdown_to_xueqiu_html(answer, admin)
+    except XueqiuPublishError as exc:
+        error_message = str(exc)
+    else:
+        error_message = ""
+
+    assert "table 标签" in error_message
 
 
 def test_save_draft_payload_includes_cover_display_flag(monkeypatch) -> None:
