@@ -337,12 +337,17 @@ def test_chat_answer_can_be_saved_as_xueqiu_draft(monkeypatch) -> None:
     service = XueqiuPublishService(db, Settings())
     save_test_credential(service, admin)
 
-    monkeypatch.setattr(
-        "app.services.llm_service.LlmService._chat_completion",
-        lambda *_args, **_kwargs: (
+    def fake_chat_completion(_self, _prompt, _system_prompt=None, **_kwargs):
+        if _kwargs.get("trace") and _kwargs["trace"].phase == "xueqiu_title":
+            return "招商银行财务质量与估值观察"
+        return (
             "<h2>核心结论</h2><table><thead><tr><th>指标</th><th>判断</th></tr></thead>"
             "<tbody><tr><td>ROE</td><td>稳定</td></tr></tbody></table>"
-        ),
+        )
+
+    monkeypatch.setattr(
+        "app.services.llm_service.LlmService._chat_completion",
+        fake_chat_completion,
     )
     monkeypatch.setattr(
         service,
@@ -361,8 +366,49 @@ def test_chat_answer_can_be_saved_as_xueqiu_draft(monkeypatch) -> None:
     assert saved.chat_message_id == answer.id
     assert saved.source_type == XUEQIU_SOURCE_CHAT_ANSWER
     assert saved.status == XUEQIU_STATUS_DRAFTED
+    assert saved.title == "招商银行财务质量与估值观察"
+    assert len(saved.title) <= 50
     assert "<table>" in saved.content_html
     assert saved.draft_id == "chat-draft-id"
+
+
+def test_chat_answer_title_is_limited_to_xueqiu_max_length(monkeypatch) -> None:
+    """确认问答发布标题会被 LLM 生成并兜底限制到雪球 50 字以内。
+
+    创建日期：2026-05-10
+    author: sunshengxian
+    """
+
+    db = make_db()
+    admin = AppUser(username="admin", password_hash="hash", role="ADMIN", is_active=True)
+    db.add(admin)
+    db.flush()
+    session = LlmChatSession(user_id=admin.id, title="长标题测试")
+    db.add(session)
+    db.flush()
+    answer = LlmChatMessage(
+        session_id=session.id,
+        role="assistant",
+        content="## 这是一个非常长非常长非常长非常长非常长非常长非常长的问答标题",
+    )
+    db.add(answer)
+    db.commit()
+    db.refresh(admin)
+    db.refresh(answer)
+    service = XueqiuPublishService(db, Settings())
+
+    monkeypatch.setattr(
+        "app.services.llm_service.LlmService._chat_completion",
+        lambda *_args, **_kwargs: (
+            "招商银行财务质量估值红利现金流风险反证条件观察和配置建议超长标题"
+            "继续追加直到超过雪球标题限制再次追加更多文字"
+        ),
+    )
+
+    title = service._chat_article_title(answer, admin, None)
+
+    assert len(title) == 50
+    assert title.startswith("招商银行财务质量")
 
 
 def test_scheduler_publishes_current_t_minus_one_report_on_tuesday(monkeypatch) -> None:

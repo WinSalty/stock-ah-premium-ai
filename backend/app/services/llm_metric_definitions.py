@@ -16,6 +16,7 @@ PHASE_LABELS: dict[str, str] = {
     "threshold_answer_stream_first_chunk": "阈值推荐首包",
     "threshold_answer_stream": "阈值推荐流式回答",
     "limit_up_analysis": "打板报告分析",
+    "xueqiu_title": "雪球短标题",
     "xueqiu_html_convert": "雪球 HTML 转换",
     "threshold_done": "阈值推荐总耗时",
     "threshold_stream_done": "阈值推荐流式总耗时",
@@ -52,6 +53,7 @@ PHASE_DESCRIPTIONS: dict[str, str] = {
         "AI 阈值推荐快路径的流式回答主体完成记录，不经过通用路由、补数和辅助视图查询。"
     ),
     "limit_up_analysis": "打板报告生成阶段，使用 KPL 与涨停专题数据生成完整 HTML 推送报告。",
+    "xueqiu_title": "问答回答发布雪球前的短标题生成阶段，标题需满足雪球 50 字限制。",
     "xueqiu_html_convert": (
         "问答回答发布雪球前的 Markdown 到 HTML 转换阶段，要求表格输出为 HTML table。"
     ),
