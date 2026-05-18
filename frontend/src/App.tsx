@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { Button, Layout, Menu, Skeleton, Typography, message } from 'antd';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { Button, Drawer, Layout, Menu, Skeleton, Typography, message } from 'antd';
 import { useQueryClient } from '@tanstack/react-query';
 import {
   Activity,
@@ -8,6 +8,7 @@ import {
   DatabaseZap,
   LayoutDashboard,
   LogOut,
+  Menu as MenuIcon,
   MessageCircleMore,
   RadioTower,
   Send,
@@ -45,7 +46,16 @@ type PageKey =
   | 'xueqiu_publish'
   | 'profile';
 
-const allMenuItems = [
+type AppMenuItem = {
+  key: PageKey;
+  icon: ReactNode;
+  label: string;
+};
+
+const MOBILE_APP_MEDIA_QUERY = '(max-width: 720px)';
+const MOBILE_PRIMARY_PAGE_KEYS: PageKey[] = ['chat', 'premium', 'overview', 'query', 'profile'];
+
+const allMenuItems: AppMenuItem[] = [
   { key: 'overview', icon: <LayoutDashboard size={18} />, label: '总览' },
   { key: 'sync', icon: <DatabaseZap size={18} />, label: '同步' },
   { key: 'query', icon: <TableProperties size={18} />, label: '查询' },
@@ -59,6 +69,42 @@ const allMenuItems = [
   { key: 'profile', icon: <UserCircle size={18} />, label: '个人信息' }
 ];
 
+function getPermittedPageKeys(permissions: string[]) {
+  return allMenuItems.filter((item) => permissions.includes(item.key)).map((item) => item.key);
+}
+
+/**
+ * 根据当前端形态选择进入页面，移动端优先把问答作为主界面，且必须严格受菜单权限约束。
+ * 创建日期：2026-05-18
+ * author: sunshengxian
+ */
+function chooseInitialPage(user: UserInfo, isMobileApp: boolean): PageKey {
+  const permittedKeys = getPermittedPageKeys(user.permissions);
+  const preferredKeys: PageKey[] = isMobileApp ? MOBILE_PRIMARY_PAGE_KEYS : ['overview', 'chat'];
+  return preferredKeys.find((key) => permittedKeys.includes(key)) || permittedKeys[0] || 'overview';
+}
+
+/**
+ * 监听移动端断点，用独立应用壳承接手机端交互，避免改动桌面端布局路径。
+ * 创建日期：2026-05-18
+ * author: sunshengxian
+ */
+function useMobileAppViewport() {
+  const [isMobileApp, setIsMobileApp] = useState(() =>
+    typeof window === 'undefined' ? false : window.matchMedia(MOBILE_APP_MEDIA_QUERY).matches
+  );
+
+  useEffect(() => {
+    const media = window.matchMedia(MOBILE_APP_MEDIA_QUERY);
+    const handleChange = (event: MediaQueryListEvent) => setIsMobileApp(event.matches);
+    setIsMobileApp(media.matches);
+    media.addEventListener('change', handleChange);
+    return () => media.removeEventListener('change', handleChange);
+  }, []);
+
+  return isMobileApp;
+}
+
 /**
  * 应用根布局与导航。
  * 创建日期：2026-05-04
@@ -66,6 +112,8 @@ const allMenuItems = [
  */
 function App() {
   const queryClient = useQueryClient();
+  const isMobileApp = useMobileAppViewport();
+  const hasAppliedMobileDefaultRef = useRef(false);
   const shareToken = window.location.pathname.match(/^\/limit-up-share\/([^/]+)$/)?.[1];
   const [page, setPage] = useState<PageKey>('overview');
   const [user, setUser] = useState<UserInfo | null>(null);
@@ -109,10 +157,22 @@ function App() {
     }
   }, [menuItems, permittedPage]);
 
+  useEffect(() => {
+    hasAppliedMobileDefaultRef.current = false;
+  }, [user?.id]);
+
+  useEffect(() => {
+    if (!user || !isMobileApp || hasAppliedMobileDefaultRef.current) {
+      return;
+    }
+    hasAppliedMobileDefaultRef.current = true;
+    setPage(chooseInitialPage(user, true));
+  }, [isMobileApp, user]);
+
   const onAuthenticated = (result: AuthTokenResponse) => {
     queryClient.clear();
     setUser(result.user);
-    setPage(result.user.permissions.includes('overview') ? 'overview' : (result.user.permissions[0] as PageKey));
+    setPage(chooseInitialPage(result.user, isMobileApp));
   };
 
   const onLogout = () => {
@@ -138,6 +198,20 @@ function App() {
 
   if (!user) {
     return <AuthPage onAuthenticated={onAuthenticated} />;
+  }
+
+  if (isMobileApp) {
+    return (
+      <MobileAppShell
+        user={user}
+        page={page}
+        pages={pages}
+        menuItems={menuItems}
+        permittedPage={permittedPage}
+        onPageChange={setPage}
+        onLogout={onLogout}
+      />
+    );
   }
 
   return (
@@ -168,6 +242,113 @@ function App() {
       <Layout.Content className="app-content">
         {menuItems.length ? pages[permittedPage ? page : (menuItems[0]?.key as PageKey)] : null}
       </Layout.Content>
+    </Layout>
+  );
+}
+
+interface MobileAppShellProps {
+  user: UserInfo;
+  page: PageKey;
+  pages: Partial<Record<PageKey, ReactNode>>;
+  menuItems: AppMenuItem[];
+  permittedPage: boolean;
+  onPageChange: (page: PageKey) => void;
+  onLogout: () => void;
+}
+
+/**
+ * 移动端应用壳：用顶部栏、底部导航和更多抽屉替代桌面侧边栏，保证手机端主流程像 App 一样聚焦。
+ * 创建日期：2026-05-18
+ * author: sunshengxian
+ */
+function MobileAppShell({
+  user,
+  page,
+  pages,
+  menuItems,
+  permittedPage,
+  onPageChange,
+  onLogout
+}: MobileAppShellProps) {
+  const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const activePage = permittedPage ? page : (menuItems[0]?.key as PageKey);
+  const primaryItems = MOBILE_PRIMARY_PAGE_KEYS
+    .map((key) => menuItems.find((item) => item.key === key))
+    .filter((item): item is AppMenuItem => Boolean(item));
+  const fallbackPrimaryItems = primaryItems.length ? primaryItems : menuItems.slice(0, 4);
+  const overflowItems = menuItems.filter((item) => !fallbackPrimaryItems.some((primary) => primary.key === item.key));
+  const activeMenuItem = menuItems.find((item) => item.key === activePage);
+  const displayName = user.display_name || user.username;
+
+  const handlePageChange = (nextPage: PageKey) => {
+    onPageChange(nextPage);
+    setIsMenuOpen(false);
+  };
+
+  return (
+    <Layout className="mobile-app-shell">
+      <header className="mobile-app-header">
+        <div className="mobile-app-brand">
+          <span className="mobile-brand-mark">AH</span>
+          <div>
+            <Typography.Text strong>{activeMenuItem?.label || 'Premium AI'}</Typography.Text>
+            <Typography.Text type="secondary">{displayName}</Typography.Text>
+          </div>
+        </div>
+        <Button
+          type="text"
+          aria-label="打开更多菜单"
+          title="打开更多菜单"
+          icon={<MenuIcon size={20} />}
+          onClick={() => setIsMenuOpen(true)}
+        />
+      </header>
+      <Layout.Content className={`mobile-app-content mobile-page-${activePage}`}>
+        {menuItems.length && activePage ? pages[activePage] : null}
+      </Layout.Content>
+      <nav className="mobile-app-tabbar" aria-label="移动端主导航">
+        {fallbackPrimaryItems.map((item) => (
+          <button
+            type="button"
+            key={item.key}
+            className={`mobile-tab-item${activePage === item.key ? ' active' : ''}`}
+            onClick={() => handlePageChange(item.key)}
+          >
+            {item.icon}
+            <span>{item.label}</span>
+          </button>
+        ))}
+        {overflowItems.length ? (
+          <button type="button" className="mobile-tab-item" onClick={() => setIsMenuOpen(true)}>
+            <MenuIcon size={18} />
+            <span>更多</span>
+          </button>
+        ) : null}
+      </nav>
+      <Drawer
+        title="更多功能"
+        placement="right"
+        width="86vw"
+        open={isMenuOpen}
+        onClose={() => setIsMenuOpen(false)}
+        className="mobile-menu-drawer"
+      >
+        <div className="mobile-menu-user">
+          <div>
+            <Typography.Text strong>{displayName}</Typography.Text>
+            <Typography.Text type="secondary">{user.role === 'ADMIN' ? '管理员' : '普通用户'}</Typography.Text>
+          </div>
+          <Button type="text" danger icon={<LogOut size={16} />} onClick={onLogout}>
+            退出
+          </Button>
+        </div>
+        <Menu
+          mode="inline"
+          selectedKeys={[activePage]}
+          items={menuItems}
+          onClick={(info) => handlePageChange(info.key as PageKey)}
+        />
+      </Drawer>
     </Layout>
   );
 }

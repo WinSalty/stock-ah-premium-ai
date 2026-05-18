@@ -1,6 +1,6 @@
 # 开发进度记录
 
-更新日期：2026-05-10
+更新日期：2026-05-18
 
 ## 当前状态
 
@@ -8,6 +8,7 @@
 
 ## 已完成
 
+- 移动端 App 化体验改造：新增 `resources/doc/mobile-app-experience-plan.md`，记录移动端问答主界面改造目标、风险点、开发计划和验收口径；前端在不改变桌面端 `Layout.Sider` 主路径的前提下新增移动端应用壳，手机端使用顶部应用栏、底部主导航和更多菜单抽屉承载全局入口。移动端登录态恢复或登录成功后优先进入“问答”，若当前用户没有问答权限则回退到第一个授权页面。智能问答页移动端新增会话抽屉和内部顶部栏，聊天历史成为主区域，输入区固定在底部，保留模型选择、流式回答、数据摘要、单条导出、会话导出和雪球草稿能力；桌面端问答仍保持左侧会话栏和右侧工作区结构。
 - 问答回答支持发布到雪球草稿：确认雪球创作者草稿接口正文按 HTML 片段提交后，新增 `chat_xueqiu_publish` 独立动作权限，默认仅管理员拥有，用户管理页可单独授权；问答页每条已落库回答展示“发布雪球”按钮，点击后后端调用 LLM 将 Markdown 回答转换为雪球长文 HTML，其中 Markdown 表格强制转换为原生 HTML table，再复用雪球 Cookie、请求头、草稿保存/正式发布、失败 PushPlus 提醒和发布流水。雪球流水表扩展为多来源，打板报告标记 `LIMIT_UP_REPORT`，问答回答标记 `CHAT_ANSWER` 并记录对应 assistant 消息 ID，便于审计和排查。
 - 雪球定时发布已收紧为 T-1 报告发布窗口：进程级 job 仅在周二到周六按分钟级唤起，服务层再按东八区当前日期二次校验，只处理当天推导出的最新上一 A 股交易日打板报告；若报告不存在、未 READY、内容为空或交易日不匹配，则跳过本轮等待后续调度，避免周一/周日或旧报告被误保存到雪球。
 - 新增雪球发布管理模块：后端新增 `xueqiu_publish_credential`、`xueqiu_publish_setting` 和 `xueqiu_publish_record`，用于本地保存雪球创作者后台 Cookie 登录态摘要、页面定时配置、草稿/发布流水、请求摘要和雪球响应；新增 `xueqiu_publish` 菜单权限并默认授予管理员，普通用户不自动获得入口。新增 `/api/xueqiu-publish/...` 管理接口，支持保存登录态、验证登录态、配置工作日定时、预览最新 READY 打板报告转换后的雪球长文、保存草稿、正式发布和查看流水详情。`XUEQIU_PUBLISH_SCHEDULER_ENABLED=true` 默认注册分钟级工作日检查任务，页面可配置是否真正执行定时、执行保存草稿或正式发布、东八区小时/分钟和默认封面；页面默认不启用定时、不自动公开发布。前端新增“雪球发布”管理员菜单，提供登录态配置、定时配置、报告预览、保存草稿、正式发布确认和流水查看；手动勾选“强制新建/重试”时会新增一条流水并重新创建草稿，适配管理员已在雪球网页端删除草稿后重新创建草稿的场景，旧流水保留用于审计。封面 URL 会自动移除雪球 `!800.jpg` 等展示尺寸后缀后再提交，默认封面为 `https://xqimg.imedao.com/19e0d23ff40328673fdcf12c.png`，页面支持一键恢复默认图或去掉封面。雪球请求头按正常浏览器同源请求补齐 `Origin`、`Referer`、`User-Agent`、`X-Requested-With` 等字段；遇到验证码、风控或接口变更时记录失败并交由人工处理，不保存账号密码；草稿或发布失败后会通过 PushPlus 给默认管理员发送失败提醒，并保留推送流水。
@@ -242,6 +243,7 @@
 - LLM 耗时新字段迁移已在本地 MySQL 执行到 `20260505_0017`，确认 `phase_label`、`phase_description` 和 `request_payload_json` 字段存在；使用内部指标写入验证新统计可以落库。
 - A/H 双市场股价提醒改造后，`alembic upgrade head` 已应用 `20260506_0019`，确认 `watchlist_stock` 仅保留 A/H 两套股价提醒配置列；针对变更文件的 `ruff check`、`pytest tests/test_notification_service.py -q` 和前端 `npm run build` 均通过。
 - 实时溢价写回官方 AH 比价表、总览卡片移除右下角时间并改为官方表主口径读取后，`ruff check app/services/realtime_premium_service.py tests/test_realtime_premium_service.py`、`pytest tests/test_realtime_premium_service.py -q` 和前端 `npm run build` 均通过。
+- 移动端 App 化体验改造后，`npm --prefix frontend run build` 通过；使用本地 mock API 和 Chrome DevTools Protocol 验证桌面 1366x900 仍渲染桌面侧边栏布局，移动 390x844 默认渲染问答主界面、底部导航、输入区和会话抽屉。
 - 敏感信息扫描：只发现文档中的 `<local-only>` 占位符，未发现真实 Token、密码或 API Key。
 
 ## 待验证事项

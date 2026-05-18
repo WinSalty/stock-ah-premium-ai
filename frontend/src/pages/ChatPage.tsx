@@ -1,5 +1,5 @@
-import { Button, Checkbox, Form, Input, Popconfirm, Segmented, Skeleton, Table, message } from 'antd';
-import { Download, FileText, Plus, Send, SendHorizontal, Trash2 } from 'lucide-react';
+import { Button, Checkbox, Drawer, Form, Input, Popconfirm, Segmented, Skeleton, Table, message } from 'antd';
+import { Download, FileText, MessageCircleMore, Plus, Send, SendHorizontal, Trash2 } from 'lucide-react';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { useEffect, useRef, useState } from 'react';
@@ -437,6 +437,7 @@ function ChatPage({ currentUser }: ChatPageProps) {
   const [selectedModel, setSelectedModel] = useState<ChatModel>(DEFAULT_CHAT_MODEL);
   const [selectedSessionIds, setSelectedSessionIds] = useState<number[]>([]);
   const [publishingTurnId, setPublishingTurnId] = useState<string | null>(null);
+  const [isMobileSessionOpen, setIsMobileSessionOpen] = useState(false);
   const canPublishChatAnswerToXueqiu = currentUser.permissions.includes('chat_xueqiu_publish');
 
   useEffect(() => {
@@ -538,6 +539,7 @@ function ChatPage({ currentUser }: ChatPageProps) {
       setSession(detail);
       setTurns(buildTurns(detail.messages));
       window.localStorage.setItem(LAST_SESSION_KEY, String(detail.id));
+      setIsMobileSessionOpen(false);
     } catch (error) {
       message.error(error instanceof Error ? error.message : '会话加载失败');
     } finally {
@@ -561,6 +563,7 @@ function ChatPage({ currentUser }: ChatPageProps) {
       window.localStorage.setItem(LAST_SESSION_KEY, String(created.id));
       setPresetQuestions((items) => randomPresetQuestions(items));
       form.resetFields();
+      setIsMobileSessionOpen(false);
     } catch (error) {
       message.error(error instanceof Error ? error.message : '新建会话失败');
     }
@@ -785,104 +788,141 @@ function ChatPage({ currentUser }: ChatPageProps) {
     }
   };
 
+  /**
+   * 复用会话管理面板，桌面端渲染为左侧栏，移动端渲染到抽屉中，避免两套删除和批量选择逻辑分叉。
+   * 创建日期：2026-05-18
+   * author: sunshengxian
+   */
+  const renderSessionPanel = () => (
+    <>
+      <div className="chat-sidebar-head">
+        <span>会话</span>
+        <Button
+          type="text"
+          size="small"
+          aria-label="新建会话"
+          title="新建会话"
+          icon={<Plus size={16} />}
+          onClick={handleNewSession}
+          disabled={isSending}
+        />
+      </div>
+      {sessions.length ? (
+        <div className="chat-session-bulkbar">
+          <span>{selectedSessionIds.length ? `已选 ${selectedSessionIds.length}` : '批量管理'}</span>
+          <div>
+            <Button type="link" size="small" onClick={handleSelectAllSessions} disabled={isSending}>
+              全选
+            </Button>
+            <Button
+              type="link"
+              size="small"
+              onClick={handleClearSessionSelection}
+              disabled={isSending || selectedSessionIds.length === 0}
+            >
+              清空
+            </Button>
+            <Popconfirm
+              title="批量删除会话"
+              description={`确认删除选中的 ${selectedSessionIds.length} 个会话？`}
+              okText="删除"
+              cancelText="取消"
+              onConfirm={() => void handleBatchDeleteSessions()}
+              disabled={isSending || selectedSessionIds.length === 0}
+            >
+              <Button
+                type="text"
+                size="small"
+                danger
+                icon={<Trash2 size={14} />}
+                disabled={isSending || selectedSessionIds.length === 0}
+              />
+            </Popconfirm>
+          </div>
+        </div>
+      ) : null}
+      <div className="chat-session-list">
+        {isLoadingSessions ? <Skeleton active paragraph={{ rows: 5 }} /> : null}
+        {!isLoadingSessions && sessions.length === 0 ? (
+          <div className="chat-session-empty">暂无会话</div>
+        ) : null}
+        {sessions.map((item) => (
+          <div
+            key={item.id}
+            className={`chat-session-item${session?.id === item.id ? ' active' : ''}`}
+          >
+            <Checkbox
+              checked={selectedSessionIds.includes(item.id)}
+              onChange={(event) => toggleSessionSelection(item.id, event.target.checked)}
+              disabled={isSending}
+              aria-label={`选择会话 ${item.title}`}
+            />
+            <button
+              type="button"
+              className="chat-session-open"
+              onClick={() => void openSession(item.id)}
+              disabled={isSending}
+            >
+              <strong>{item.title}</strong>
+              <span>{formatEast8DateTime(item.updated_at, { naiveAsEast8: true })}</span>
+            </button>
+            <Popconfirm
+              title="删除会话"
+              description="删除后将不再显示该会话"
+              okText="删除"
+              cancelText="取消"
+              onConfirm={() => void handleDeleteSession(item.id)}
+              disabled={isSending}
+            >
+              <Button
+                type="text"
+                size="small"
+                danger
+                aria-label="删除会话"
+                title="删除会话"
+                icon={<Trash2 size={15} />}
+                disabled={isSending}
+              />
+            </Popconfirm>
+          </div>
+        ))}
+      </div>
+    </>
+  );
+
   return (
     <main className="page chat-page">
       <PageHeader title="智能问答" />
       <div className="chat-workspace">
-        <aside className="chat-sidebar">
-          <div className="chat-sidebar-head">
-            <span>会话</span>
-            <Button
-              type="text"
-              size="small"
-              aria-label="新建会话"
-              title="新建会话"
-              icon={<Plus size={16} />}
-              onClick={handleNewSession}
-              disabled={isSending}
-            />
-          </div>
-          {sessions.length ? (
-            <div className="chat-session-bulkbar">
-              <span>{selectedSessionIds.length ? `已选 ${selectedSessionIds.length}` : '批量管理'}</span>
-              <div>
-                <Button type="link" size="small" onClick={handleSelectAllSessions} disabled={isSending}>
-                  全选
-                </Button>
-                <Button
-                  type="link"
-                  size="small"
-                  onClick={handleClearSessionSelection}
-                  disabled={isSending || selectedSessionIds.length === 0}
-                >
-                  清空
-                </Button>
-                <Popconfirm
-                  title="批量删除会话"
-                  description={`确认删除选中的 ${selectedSessionIds.length} 个会话？`}
-                  okText="删除"
-                  cancelText="取消"
-                  onConfirm={() => void handleBatchDeleteSessions()}
-                  disabled={isSending || selectedSessionIds.length === 0}
-                >
-                  <Button
-                    type="text"
-                    size="small"
-                    danger
-                    icon={<Trash2 size={14} />}
-                    disabled={isSending || selectedSessionIds.length === 0}
-                  />
-                </Popconfirm>
-              </div>
-            </div>
-          ) : null}
-          <div className="chat-session-list">
-            {isLoadingSessions ? <Skeleton active paragraph={{ rows: 5 }} /> : null}
-            {!isLoadingSessions && sessions.length === 0 ? (
-              <div className="chat-session-empty">暂无会话</div>
-            ) : null}
-            {sessions.map((item) => (
-              <div
-                key={item.id}
-                className={`chat-session-item${session?.id === item.id ? ' active' : ''}`}
-              >
-                <Checkbox
-                  checked={selectedSessionIds.includes(item.id)}
-                  onChange={(event) => toggleSessionSelection(item.id, event.target.checked)}
-                  disabled={isSending}
-                  aria-label={`选择会话 ${item.title}`}
-                />
-                <button
-                  type="button"
-                  className="chat-session-open"
-                  onClick={() => void openSession(item.id)}
-                  disabled={isSending}
-                >
-                  <strong>{item.title}</strong>
-                  <span>{formatEast8DateTime(item.updated_at, { naiveAsEast8: true })}</span>
-                </button>
-                <Popconfirm
-                  title="删除会话"
-                  description="删除后将不再显示该会话"
-                  okText="删除"
-                  cancelText="取消"
-                  onConfirm={() => void handleDeleteSession(item.id)}
-                  disabled={isSending}
-                >
-                  <Button
-                    type="text"
-                    size="small"
-                    danger
-                    aria-label="删除会话"
-                    title="删除会话"
-                    icon={<Trash2 size={15} />}
-                    disabled={isSending}
-                  />
-                </Popconfirm>
-              </div>
-            ))}
-          </div>
-        </aside>
+        <div className="chat-mobile-topbar">
+          <Button
+            icon={<MessageCircleMore size={16} />}
+            onClick={() => setIsMobileSessionOpen(true)}
+            disabled={isSending && isLoadingSessions}
+          >
+            会话
+          </Button>
+          <span>{session ? session.title : '新会话'}</span>
+          <Button
+            type="primary"
+            aria-label="新建会话"
+            title="新建会话"
+            icon={<Plus size={16} />}
+            onClick={handleNewSession}
+            disabled={isSending}
+          />
+        </div>
+        <aside className="chat-sidebar">{renderSessionPanel()}</aside>
+        <Drawer
+          title={null}
+          placement="left"
+          width="88vw"
+          open={isMobileSessionOpen}
+          onClose={() => setIsMobileSessionOpen(false)}
+          className="chat-mobile-session-drawer"
+        >
+          <div className="chat-mobile-session-panel">{renderSessionPanel()}</div>
+        </Drawer>
 
         <div className="chat-main">
           <div className="chat-main-toolbar">
