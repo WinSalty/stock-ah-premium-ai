@@ -1,6 +1,6 @@
 # 数据库表结构说明
 
-更新日期：2026-05-10
+更新日期：2026-05-19
 
 ## 维护口径
 
@@ -34,7 +34,7 @@ A/H 溢价与可交易性：
 - `official_ah_comparison`：Tushare 官方 AH 比价快照，当前主展示口径。
 - `historical_ah_unadjusted_backfill_run`：腾讯不复权历史 AH 比价补数执行记录；追跑时允许删除并替换 `BAIDU_HISTORY_BACKFILL` 行，但不覆盖 `TUSHARE_OFFICIAL` 行。
 - `realtime_quote_snapshot`：实时行情快照表，作为 `RealtimeQuoteProvider` 的首个落地数据源；外部任务写入 A 股、港股和 HKD/CNY 报价，本项目按最新有效快照计算实时 AH/H/A 溢价。
-- `watchlist_stock`：用户自选 AH 股票，按 `user_id` 隔离。
+- `watchlist_stock`：用户关注标的，按 `user_id` 隔离；`target_type` 区分 `PAIR`、`A_ONLY`、`H_ONLY`，`target_key` 作为用户维度统一唯一键。A/H 配对用于机会筛选、溢价阈值和双市场股价提醒，单 A 股和单 H 股仅用于对应市场股价提醒。
 
 用户、角色与邀请码：
 
@@ -43,7 +43,7 @@ A/H 溢价与可交易性：
 
 官方 AH 比价只保留 A 股交易日历、港股交易日历同时开市的日期；任一市场休市时，同步服务会跳过该日期的溢价结果，并清理该日期已有误落数据。历史自算结果表 `ah_premium_daily` 已由迁移 `20260504_0006` 删除。
 
-溢价均值、中位数、20/80 分位和历史分位均按最近 N 条有效官方交易记录计算，不按自然日区间计算；`v_watchlist_opportunity.premium_percentile_60` 也使用最近 60 条有效官方溢价记录。
+溢价均值、中位数、20/80 分位和历史分位均按最近 N 条有效官方交易记录计算，不按自然日区间计算；`v_watchlist_opportunity.premium_percentile_60` 也使用最近 60 条有效官方溢价记录。`v_watchlist_opportunity` 只返回 `target_type = 'PAIR'` 且 A/H 代码齐全的关注标的，单 A 股和单 H 股关注不会进入价差机会视图。
 
 A 股选股因子：
 

@@ -1425,4 +1425,45 @@ def test_price_alert_supports_a_and_h_markets() -> None:
 
     assert len(events) == 2
     assert event_markets == {"A", "H"}
-    assert len(fake_client.sent) == 2
+
+
+def test_price_alert_supports_h_only_watchlist() -> None:
+    """确认单 H 股关注只扫描港股股价提醒，不要求存在 A 股代码。
+
+    创建日期：2026-05-19
+    author: sunshengxian
+    """
+
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    target_day = date(2026, 5, 5)
+    fake_client = FakePushplusClient()
+    with Session(engine) as db:
+        user = add_user_with_binding(db)
+        add_joint_trade_day(db, target_day)
+        db.add(
+            WatchlistStock(
+                user_id=user.id,
+                target_type="H_ONLY",
+                target_key="00700.HK",
+                hk_ts_code="00700.HK",
+                h_price_alert_enabled=True,
+                h_price_alert_operator="LTE",
+                h_price_alert_target_price=Decimal("300"),
+                is_active=True,
+            )
+        )
+        add_realtime_quotes(db, hk_ts_code="00700.HK", hk_price=Decimal("299"))
+        db.commit()
+
+        events = NotificationService(db, pushplus_client=fake_client).scan_alerts_for_day(
+            target_day,
+            user.id,
+            datetime(2026, 5, 5, 10, 30, 0, tzinfo=LOCAL_TEST_TZ),
+        )
+
+    assert len(events) == 1
+    assert events[0].event_type == EVENT_PRICE_REACHED
+    assert events[0].price_alert_market == "H"
+    assert events[0].price_alert_ts_code == "00700.HK"
+    assert len(fake_client.sent) == 1

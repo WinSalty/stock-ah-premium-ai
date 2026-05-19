@@ -427,12 +427,15 @@ export interface DataQueryParams {
 export type PremiumDirection = 'AH' | 'HA';
 export type HoldingMarket = 'A' | 'H' | 'UNKNOWN';
 export type OpportunityStatus = 'REACHED' | 'NEAR' | 'WATCH' | 'DATA_ISSUE' | 'NOT_CONNECT';
+export type WatchlistTargetType = 'PAIR' | 'A_ONLY' | 'H_ONLY';
 
 export interface WatchlistStock {
   id: number;
   user_id: number;
-  a_ts_code: string;
-  hk_ts_code: string;
+  target_type: WatchlistTargetType | string;
+  target_key: string;
+  a_ts_code: string | null;
+  hk_ts_code: string | null;
   display_name: string | null;
   preferred_direction: PremiumDirection;
   target_premium_pct: string | null;
@@ -457,8 +460,9 @@ export interface WatchlistOpportunity {
 }
 
 export interface WatchlistCreate {
-  a_ts_code: string;
-  hk_ts_code: string;
+  target_type?: WatchlistTargetType;
+  a_ts_code?: string | null;
+  hk_ts_code?: string | null;
   display_name?: string;
   preferred_direction?: PremiumDirection;
   target_premium_pct?: string | number;
@@ -490,6 +494,14 @@ export interface WatchlistUpdate {
   sort_order?: number;
   note?: string | null;
   is_active?: boolean;
+}
+
+export interface WatchlistCandidate {
+  target_type: WatchlistTargetType | string;
+  a_ts_code: string | null;
+  hk_ts_code: string | null;
+  name: string;
+  display_label: string;
 }
 
 export type PriceAlertMarket = 'A' | 'H' | 'UNKNOWN';

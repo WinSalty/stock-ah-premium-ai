@@ -51,6 +51,9 @@ PRICE_OPERATOR_GTE = "GTE"
 PRICE_OPERATOR_LTE = "LTE"
 MARKET_A = "A"
 MARKET_H = "H"
+WATCHLIST_TARGET_PAIR = "PAIR"
+WATCHLIST_TARGET_A_ONLY = "A_ONLY"
+WATCHLIST_TARGET_H_ONLY = "H_ONLY"
 LOCAL_TZ = ZoneInfo("Asia/Shanghai")
 A_REALTIME_SESSIONS = ((time(9, 30), time(11, 30)), (time(13, 0), time(15, 0)))
 H_REALTIME_SESSIONS = ((time(9, 30), time(12, 0)), (time(13, 0), time(16, 0)))
@@ -359,7 +362,7 @@ class NotificationService:
             threshold_event = self._scan_threshold_alert(item, target_day, local_scan_time)
             if threshold_event is not None:
                 events.append(threshold_event)
-            for market in (MARKET_A, MARKET_H):
+            for market in self._price_alert_markets(item):
                 price_event = self._scan_price_alert(item, target_day, local_scan_time, market)
                 if price_event is not None:
                     events.append(price_event)
@@ -454,6 +457,9 @@ class NotificationService:
     ) -> AlertEvent | None:
         if (
             item.target_premium_pct is None
+            or item.target_type != WATCHLIST_TARGET_PAIR
+            or not item.a_ts_code
+            or not item.hk_ts_code
             or not self._is_joint_trade_day(trading_day)
             or not self._is_joint_realtime_session(scan_time)
         ):
@@ -516,6 +522,7 @@ class NotificationService:
             ts_code = item.hk_ts_code
         if (
             not enabled
+            or not ts_code
             or target_price is None
             or not self._is_market_trade_day(market, trading_day)
             or not self._is_market_realtime_session(market, scan_time)
@@ -884,6 +891,19 @@ class NotificationService:
             return self.realtime_market_data_service.provider.get_hk_quote(ts_code)
         return None
 
+    def _price_alert_markets(self, item: WatchlistStock) -> tuple[str, ...]:
+        """按关注类型返回需要扫描的股价提醒市场。
+
+        创建日期：2026-05-19
+        author: sunshengxian
+        """
+
+        if item.target_type == WATCHLIST_TARGET_A_ONLY:
+            return (MARKET_A,)
+        if item.target_type == WATCHLIST_TARGET_H_ONLY:
+            return (MARKET_H,)
+        return (MARKET_A, MARKET_H)
+
     def _is_realtime_quote_usable(self, quote: RealtimeQuote | None) -> bool:
         return bool(
             quote is not None
@@ -1122,7 +1142,7 @@ class NotificationService:
         return normalized or None
 
     def _stock_label(self, item: WatchlistStock) -> str:
-        return item.display_name or item.a_ts_code
+        return item.display_name or item.a_ts_code or item.hk_ts_code or f"自选标的 {item.id}"
 
     def _today(self) -> date:
         return datetime.now(LOCAL_TZ).date()

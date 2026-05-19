@@ -42,7 +42,8 @@ import type {
   PriceAlertOperator,
   ThresholdRecommendationContext,
   UserInfo,
-  WatchlistOpportunity
+  WatchlistOpportunity,
+  WatchlistTargetType
 } from '../types/domain';
 import {
   getCachedThresholdRecommendation,
@@ -89,6 +90,7 @@ const CHART_INDICATOR_OPTIONS: Array<{
 ];
 
 interface WatchlistFormValues {
+  target_type?: WatchlistTargetType;
   display_name?: string;
   preferred_direction: PremiumDirection;
   target_premium_pct?: number | null;
@@ -299,14 +301,31 @@ function opportunityName(item: WatchlistOpportunity) {
     item.watchlist.display_name ||
     item.premium?.a_name ||
     item.premium?.hk_name ||
-    `${item.watchlist.a_ts_code} / ${item.watchlist.hk_ts_code}`
+    item.watchlist.a_ts_code ||
+    item.watchlist.hk_ts_code ||
+    `自选标的 ${item.watchlist.id}`
   );
+}
+
+function opportunityTargetType(item: WatchlistOpportunity): WatchlistTargetType {
+  return (item.watchlist.target_type as WatchlistTargetType) || 'PAIR';
+}
+
+function isPairOpportunity(item: WatchlistOpportunity) {
+  return opportunityTargetType(item) === 'PAIR';
+}
+
+function opportunityCodeLabel(item: WatchlistOpportunity) {
+  if (isPairOpportunity(item)) {
+    return `${item.watchlist.a_ts_code || '-'} / ${item.watchlist.hk_ts_code || '-'}`;
+  }
+  return item.watchlist.a_ts_code || item.watchlist.hk_ts_code || '-';
 }
 
 function opportunityPairKey(item: WatchlistOpportunity) {
   const aTsCode = item.premium?.a_ts_code || item.watchlist.a_ts_code;
   const hkTsCode = item.premium?.hk_ts_code || item.watchlist.hk_ts_code;
-  return `${aTsCode}|${hkTsCode}`;
+  return aTsCode && hkTsCode ? `${aTsCode}|${hkTsCode}` : '';
 }
 
 function opportunityDirection(item: WatchlistOpportunity): PremiumDirection {
@@ -429,6 +448,7 @@ const OVERVIEW_CHART_MODE_OPTIONS: Array<{ label: string; value: OverviewChartMo
  */
 function OverviewPage({ currentUser }: OverviewPageProps) {
   const [watchlistForm] = Form.useForm<WatchlistFormValues>();
+  const watchlistTargetType = Form.useWatch('target_type', watchlistForm) || 'PAIR';
   const watchlistDirection = Form.useWatch('preferred_direction', watchlistForm);
   const watchlistPushEnabled = Form.useWatch('push_enabled', watchlistForm);
   const watchlistTargetPremium = Form.useWatch('target_premium_pct', watchlistForm);
@@ -539,8 +559,9 @@ function OverviewPage({ currentUser }: OverviewPageProps) {
   const opportunities = orderedOpportunities;
   const selectedOpportunity = opportunities.find((item) => item.watchlist.id === selectedWatchlistId) || null;
   const modalHasAlertConfig = hasAlertConfig({
+    target_type: watchlistTargetType,
     preferred_direction: watchlistDirection || 'HA',
-    target_premium_pct: watchlistTargetPremium,
+    target_premium_pct: watchlistTargetType === 'PAIR' ? watchlistTargetPremium : null,
     a_price_alert_enabled: watchlistAPriceAlertEnabled,
     a_price_alert_target_price: watchlistAPriceAlertTarget,
     h_price_alert_enabled: watchlistHPriceAlertEnabled,
@@ -580,21 +601,23 @@ function OverviewPage({ currentUser }: OverviewPageProps) {
       updateWatchlistItem(item.watchlist.id, {
         display_name: values.display_name?.trim() || null,
         preferred_direction: values.preferred_direction,
-        target_premium_pct: values.target_premium_pct ?? null,
+        target_premium_pct: isPairOpportunity(item) ? values.target_premium_pct ?? null : null,
         push_enabled: values.push_enabled ?? true,
-        a_price_alert_enabled: Boolean(values.a_price_alert_enabled),
+        a_price_alert_enabled: item.watchlist.target_type !== 'H_ONLY' && Boolean(values.a_price_alert_enabled),
         a_price_alert_operator: values.a_price_alert_operator || 'GTE',
-        a_price_alert_target_price: values.a_price_alert_target_price ?? null,
-        h_price_alert_enabled: Boolean(values.h_price_alert_enabled),
+        a_price_alert_target_price:
+          item.watchlist.target_type !== 'H_ONLY' ? values.a_price_alert_target_price ?? null : null,
+        h_price_alert_enabled: item.watchlist.target_type !== 'A_ONLY' && Boolean(values.h_price_alert_enabled),
         h_price_alert_operator: values.h_price_alert_operator || 'GTE',
-        h_price_alert_target_price: values.h_price_alert_target_price ?? null,
+        h_price_alert_target_price:
+          item.watchlist.target_type !== 'A_ONLY' ? values.h_price_alert_target_price ?? null : null,
         holding_market: values.holding_market
       }),
     onSuccess: (_, variables) => {
       message.success('自选配置已更新');
       setWatchlistSettingItem(null);
       watchlistForm.resetFields();
-      if (variables.item.watchlist.id === selectedWatchlistId) {
+      if (variables.item.watchlist.id === selectedWatchlistId && isPairOpportunity(variables.item)) {
         setFallbackDirection(variables.values.preferred_direction);
       }
       queryClient.invalidateQueries({ queryKey: ['watchlist'] });
@@ -622,6 +645,9 @@ function OverviewPage({ currentUser }: OverviewPageProps) {
   });
   const aiRecommendationMutation = useMutation({
     mutationFn: async (item: WatchlistOpportunity) => {
+      if (!item.watchlist.a_ts_code || !item.watchlist.hk_ts_code) {
+        throw new Error('AI 阈值推荐仅支持 A/H 配对关注');
+      }
       setAiRecommendationProgress(THRESHOLD_RECOMMENDATION_PROGRESS_STEPS[0]);
       let progressIndex = 0;
       let progressTimer: number | null = window.setInterval(() => {
@@ -692,12 +718,14 @@ function OverviewPage({ currentUser }: OverviewPageProps) {
     if (isManualChart) {
       return;
     }
-    if (!opportunities.length) {
+    const pairOpportunities = opportunities.filter(isPairOpportunity);
+    if (!pairOpportunities.length) {
       setSelectedWatchlistId(null);
       return;
     }
     const nextOpportunity =
-      opportunities.find((item) => item.watchlist.id === selectedWatchlistId) || opportunities[0];
+      pairOpportunities.find((item) => item.watchlist.id === selectedWatchlistId) ||
+      pairOpportunities[0];
     setSelectedWatchlistId(nextOpportunity.watchlist.id);
     setPairKey(opportunityPairKey(nextOpportunity));
     setFallbackDirection(opportunityDirection(nextOpportunity));
@@ -757,6 +785,9 @@ function OverviewPage({ currentUser }: OverviewPageProps) {
   );
 
   const onSelectOpportunity = (item: WatchlistOpportunity) => {
+    if (!isPairOpportunity(item)) {
+      return;
+    }
     setIsManualChart(false);
     setSelectedWatchlistId(item.watchlist.id);
     setPairKey(opportunityPairKey(item));
@@ -789,8 +820,8 @@ function OverviewPage({ currentUser }: OverviewPageProps) {
   };
 
   const onStartThresholdRecommendation = () => {
-    if (!selectedOpportunity) {
-      message.info('先选择一只自选股票');
+    if (!selectedOpportunity || !isPairOpportunity(selectedOpportunity)) {
+      message.info('AI 阈值推荐仅支持 A/H 配对关注');
       return;
     }
     setAiRecommendation('');
@@ -801,6 +832,7 @@ function OverviewPage({ currentUser }: OverviewPageProps) {
 
   const onOpenWatchlistSetting = (item: WatchlistOpportunity) => {
     watchlistForm.setFieldsValue({
+      target_type: opportunityTargetType(item),
       display_name: item.watchlist.display_name || opportunityName(item),
       preferred_direction: item.watchlist.preferred_direction || opportunityDirection(item),
       target_premium_pct: numberValue(item.watchlist.target_premium_pct),
@@ -834,7 +866,7 @@ function OverviewPage({ currentUser }: OverviewPageProps) {
   const onRemoveWatchlist = (item: WatchlistOpportunity) => {
     Modal.confirm({
       title: '取消自选',
-      content: `${opportunityName(item)}（${item.watchlist.a_ts_code} / ${item.watchlist.hk_ts_code}）`,
+      content: `${opportunityName(item)}（${opportunityCodeLabel(item)}）`,
       okText: '取消自选',
       okButtonProps: { danger: true },
       cancelText: '保留',
@@ -1182,6 +1214,7 @@ function OverviewPage({ currentUser }: OverviewPageProps) {
           <Button
             icon={<Bot size={16} />}
             loading={aiRecommendationMutation.isPending}
+            disabled={!selectedOpportunity || !isPairOpportunity(selectedOpportunity)}
             onClick={onStartThresholdRecommendation}
           >
             AI 推荐阈值
@@ -1252,55 +1285,71 @@ function OverviewPage({ currentUser }: OverviewPageProps) {
                   </span>
                 </div>
                 <div className="opportunity-card-codes">
-                  {item.watchlist.a_ts_code} / {item.watchlist.hk_ts_code}
+                  {opportunityCodeLabel(item)}
                 </div>
                 <div className="opportunity-card-prices">
-                  <span>
-                    A 最新价
-                    <b>{formatPrice(item.premium?.a_close, 'A')}</b>
-                  </span>
-                  <span>
-                    H 最新价
-                    <b>{formatPrice(item.premium?.hk_close, 'H')}</b>
-                  </span>
+                  {item.watchlist.target_type !== 'H_ONLY' ? (
+                    <span>
+                      A 最新价
+                      <b>{formatPrice(item.premium?.a_close, 'A')}</b>
+                    </span>
+                  ) : null}
+                  {item.watchlist.target_type !== 'A_ONLY' ? (
+                    <span>
+                      H 最新价
+                      <b>{formatPrice(item.premium?.hk_close, 'H')}</b>
+                    </span>
+                  ) : null}
                 </div>
-                <div className="opportunity-card-metrics">
-                  <span>
-                    {item.premium?.metric_direction || item.watchlist.preferred_direction}
-                    <b className={opportunityDirection(item) === 'HA' ? 'metric-ha' : 'metric-ah'}>
-                      {formatPercent(item.premium?.metric_premium_pct)}
-                    </b>
-                  </span>
-                  <span>
-                    目标阈值
-                    <b className="metric-target">{formatPercent(item.watchlist.target_premium_pct)}</b>
-                  </span>
-                  <span>
-                    距阈值
-                    <b className={metricToneClass(item.premium?.distance_to_target_pct)}>
-                      {formatPercent(item.premium?.distance_to_target_pct)}
-                    </b>
-                  </span>
-                  <span>
-                    60日分位
-                    <b className={percentileToneClass(item.premium?.premium_percentile_60)}>
-                      {formatPercent(item.premium?.premium_percentile_60)}
-                    </b>
-                  </span>
-                </div>
+                {isPairOpportunity(item) ? (
+                  <div className="opportunity-card-metrics">
+                    <span>
+                      {item.premium?.metric_direction || item.watchlist.preferred_direction}
+                      <b className={opportunityDirection(item) === 'HA' ? 'metric-ha' : 'metric-ah'}>
+                        {formatPercent(item.premium?.metric_premium_pct)}
+                      </b>
+                    </span>
+                    <span>
+                      目标阈值
+                      <b className="metric-target">{formatPercent(item.watchlist.target_premium_pct)}</b>
+                    </span>
+                    <span>
+                      距阈值
+                      <b className={metricToneClass(item.premium?.distance_to_target_pct)}>
+                        {formatPercent(item.premium?.distance_to_target_pct)}
+                      </b>
+                    </span>
+                    <span>
+                      60日分位
+                      <b className={percentileToneClass(item.premium?.premium_percentile_60)}>
+                        {formatPercent(item.premium?.premium_percentile_60)}
+                      </b>
+                    </span>
+                  </div>
+                ) : null}
                 <div className="opportunity-card-thresholds">
-                  <span>
-                    溢价阈值：{opportunityDirection(item)} {formatPercent(item.watchlist.target_premium_pct)}
-                  </span>
+                  {isPairOpportunity(item) ? (
+                    <span>
+                      溢价阈值：{opportunityDirection(item)} {formatPercent(item.watchlist.target_premium_pct)}
+                    </span>
+                  ) : (
+                    <span>单股股价提醒</span>
+                  )}
                   <span>{priceAlertText(item)}</span>
                 </div>
                 <div className="opportunity-card-foot">
-                  <Tag color={item.premium?.is_hk_connect ? 'green' : 'default'}>
-                    {item.premium?.connect_channels || '非港股通'}
-                  </Tag>
-                  <Tag color={item.premium?.is_realtime ? 'green' : 'blue'}>
-                    {item.premium?.is_realtime ? '实时' : '快照'}
-                  </Tag>
+                  {isPairOpportunity(item) ? (
+                    <>
+                      <Tag color={item.premium?.is_hk_connect ? 'green' : 'default'}>
+                        {item.premium?.connect_channels || '非港股通'}
+                      </Tag>
+                      <Tag color={item.premium?.is_realtime ? 'green' : 'blue'}>
+                        {item.premium?.is_realtime ? '实时' : '快照'}
+                      </Tag>
+                    </>
+                  ) : (
+                    <Tag color="blue">{opportunityTargetType(item) === 'A_ONLY' ? '仅 A 股' : '仅 H 股'}</Tag>
+                  )}
                 </div>
               </div>
             ))}
@@ -1422,24 +1471,45 @@ function OverviewPage({ currentUser }: OverviewPageProps) {
         cancelText="取消"
       >
         <Form form={watchlistForm} layout="vertical">
-          <Form.Item label="展示名" name="display_name">
-            <Input maxLength={128} />
-          </Form.Item>
-          <Form.Item label="关注方向" name="preferred_direction" rules={[{ required: true }]}>
+          <Form.Item label="关注类型" name="target_type">
             <Select
+              disabled
               options={[
-                { value: 'HA', label: 'H/A' },
-                { value: 'AH', label: 'A/H' }
+                { value: 'PAIR', label: 'A/H 配对' },
+                { value: 'A_ONLY', label: '仅 A 股' },
+                { value: 'H_ONLY', label: '仅 H 股' }
               ]}
             />
           </Form.Item>
-          <Form.Item
-            label="目标阈值"
-            name="target_premium_pct"
-            extra={thresholdHelpText(watchlistDirection)}
-          >
-            <InputNumber className="full-width" addonAfter="%" precision={2} placeholder="例如 -15 或 30" />
+          <Form.Item label="展示名" name="display_name">
+            <Input maxLength={128} />
           </Form.Item>
+          {watchlistTargetType === 'PAIR' ? (
+            <>
+              <Form.Item label="关注方向" name="preferred_direction" rules={[{ required: true }]}>
+                <Select
+                  options={[
+                    { value: 'HA', label: 'H/A' },
+                    { value: 'AH', label: 'A/H' }
+                  ]}
+                />
+              </Form.Item>
+              <Form.Item
+                label="目标阈值"
+                name="target_premium_pct"
+                extra={thresholdHelpText(watchlistDirection)}
+              >
+                <InputNumber className="full-width" addonAfter="%" precision={2} placeholder="例如 -15 或 30" />
+              </Form.Item>
+            </>
+          ) : (
+            <Alert
+              showIcon
+              type="info"
+              message="单 A / 单 H 关注只支持股价提醒"
+              description="溢价阈值和 AI 阈值推荐需要 A/H 两侧报价与汇率，单股关注不会展示这些配置。"
+            />
+          )}
           <Form.Item
             label="消息推送"
             name="push_enabled"
@@ -1474,6 +1544,7 @@ function OverviewPage({ currentUser }: OverviewPageProps) {
               </Space>
             </div>
           ) : null}
+          {watchlistTargetType !== 'H_ONLY' ? (
           <div className="watchlist-price-alert-grid">
             <Form.Item label="A 股提醒" name="a_price_alert_enabled" valuePropName="checked">
               <Switch checkedChildren="开启" unCheckedChildren="关闭" />
@@ -1490,6 +1561,8 @@ function OverviewPage({ currentUser }: OverviewPageProps) {
               <InputNumber className="full-width" precision={3} placeholder="人民币触发价" />
             </Form.Item>
           </div>
+          ) : null}
+          {watchlistTargetType !== 'A_ONLY' ? (
           <div className="watchlist-price-alert-grid">
             <Form.Item label="H 股提醒" name="h_price_alert_enabled" valuePropName="checked">
               <Switch checkedChildren="开启" unCheckedChildren="关闭" />
@@ -1506,6 +1579,8 @@ function OverviewPage({ currentUser }: OverviewPageProps) {
               <InputNumber className="full-width" precision={3} placeholder="港币触发价" />
             </Form.Item>
           </div>
+          ) : null}
+          {watchlistTargetType === 'PAIR' ? (
           <Form.Item label="持有侧" name="holding_market" rules={[{ required: true }]}>
             <Select
               options={[
@@ -1515,6 +1590,7 @@ function OverviewPage({ currentUser }: OverviewPageProps) {
               ]}
             />
           </Form.Item>
+          ) : null}
         </Form>
       </Modal>
     </main>

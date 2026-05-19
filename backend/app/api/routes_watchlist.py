@@ -2,13 +2,14 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.api.deps_auth import CurrentUser
 from app.db.models.market import WatchlistStock
 from app.db.session import get_db
 from app.schemas.watchlist import (
+    WatchlistCandidateResponse,
     WatchlistCreate,
     WatchlistOpportunityResponse,
     WatchlistResponse,
@@ -37,6 +38,24 @@ def list_watchlist(
     """
 
     return WatchlistService(db).list_opportunities(active_only, current_user.id)
+
+
+@router.get("/watchlist/candidates", response_model=list[WatchlistCandidateResponse])
+def list_watchlist_candidates(
+    db: DbSession,
+    current_user: CurrentUser,
+    target_type: str = "PAIR",
+    keyword: str | None = Query(default=None, max_length=64),
+    limit: int = Query(default=20, ge=1, le=50),
+) -> list[WatchlistCandidateResponse]:
+    """查询新增关注弹窗可选标的。
+
+    创建日期：2026-05-19
+    author: sunshengxian
+    """
+
+    _ = current_user
+    return WatchlistService(db).search_candidates(target_type, keyword, limit)
 
 
 @router.post("/watchlist", response_model=WatchlistResponse)
@@ -114,6 +133,8 @@ def _enqueue_unadjusted_backfill_if_needed(
     """
 
     if not item.is_active:
+        return
+    if item.target_type != "PAIR" or not item.a_ts_code or not item.hk_ts_code:
         return
     # 请求线程只做是否已有追跑记录的轻量判断；真正拉腾讯日线和写 AH 主表放到后台任务中，
     # 避免用户保存自选股时等待多年历史 K 线同步完成。

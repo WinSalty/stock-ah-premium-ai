@@ -47,6 +47,8 @@ CREATE OR REPLACE VIEW v_watchlist_opportunity AS
 SELECT
   w.id AS watchlist_id,
   w.user_id,
+  w.target_type,
+  w.target_key,
   w.a_ts_code,
   w.hk_ts_code,
   COALESCE(w.display_name, p.a_name, w.a_ts_code) AS display_name,
@@ -126,7 +128,10 @@ SELECT
 FROM watchlist_stock w
 LEFT JOIN v_latest_official_ah_premium p
   ON p.a_ts_code = w.a_ts_code AND p.hk_ts_code = w.hk_ts_code
-WHERE w.is_active = 1;
+WHERE w.is_active = 1
+  AND w.target_type = 'PAIR'
+  AND w.a_ts_code IS NOT NULL
+  AND w.hk_ts_code IS NOT NULL;
 
 -- 兼容旧 LLM 白名单名称，但口径已切换为官方 AH 比价表。
 CREATE OR REPLACE VIEW v_latest_ah_premium AS

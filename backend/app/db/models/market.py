@@ -13,6 +13,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    event,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -252,7 +253,7 @@ class AHStockPair(TimestampMixin, Base):
 
 
 class WatchlistStock(TimestampMixin, Base):
-    """用户自选 AH 股票表。
+    """用户自选关注标的表。
 
     创建日期：2026-05-04
     author: sunshengxian
@@ -260,14 +261,18 @@ class WatchlistStock(TimestampMixin, Base):
 
     __tablename__ = "watchlist_stock"
     __table_args__ = (
-        UniqueConstraint("user_id", "a_ts_code", "hk_ts_code", name="uk_watchlist_user_pair"),
+        UniqueConstraint("user_id", "target_type", "target_key", name="uk_watchlist_user_target"),
         Index("idx_watchlist_active_order", "is_active", "sort_order"),
+        Index("idx_watchlist_a_code", "a_ts_code"),
+        Index("idx_watchlist_hk_code", "hk_ts_code"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
-    a_ts_code: Mapped[str] = mapped_column(String(16), nullable=False)
-    hk_ts_code: Mapped[str] = mapped_column(String(16), nullable=False)
+    target_type: Mapped[str] = mapped_column(String(16), nullable=False, default="PAIR")
+    target_key: Mapped[str] = mapped_column(String(40), nullable=False, default="")
+    a_ts_code: Mapped[str | None] = mapped_column(String(16))
+    hk_ts_code: Mapped[str | None] = mapped_column(String(16))
     display_name: Mapped[str | None] = mapped_column(String(128))
     preferred_direction: Mapped[str] = mapped_column(String(8), nullable=False, default="HA")
     target_premium_pct: Mapped[Decimal | None] = mapped_column(DECIMAL(20, 8))
@@ -282,6 +287,34 @@ class WatchlistStock(TimestampMixin, Base):
     sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=1000)
     note: Mapped[str | None] = mapped_column(Text)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
+
+@event.listens_for(WatchlistStock, "before_insert")
+@event.listens_for(WatchlistStock, "before_update")
+def _fill_watchlist_target_key(_mapper, _connection, target: WatchlistStock) -> None:
+    """写入自选股前补齐统一关注身份键。
+
+    创建日期：2026-05-19
+    author: sunshengxian
+    """
+
+    # 测试、迁移脚本或历史代码可能直接构造 WatchlistStock；这里兜底生成 target_key，
+    # 保证新唯一键不会因为默认空字符串导致多条配对关注互相冲突。
+    if not target.target_type:
+        if target.a_ts_code and target.hk_ts_code:
+            target.target_type = "PAIR"
+        elif target.a_ts_code:
+            target.target_type = "A_ONLY"
+        else:
+            target.target_type = "H_ONLY"
+    if target.target_type == "PAIR" and target.a_ts_code and target.hk_ts_code:
+        target.target_key = f"{target.a_ts_code}|{target.hk_ts_code}"
+    elif target.target_type == "A_ONLY" and target.a_ts_code:
+        target.target_key = target.a_ts_code
+        target.hk_ts_code = None
+    elif target.target_type == "H_ONLY" and target.hk_ts_code:
+        target.target_key = target.hk_ts_code
+        target.a_ts_code = None
 
 
 class StockSelectionFactorSnapshot(TimestampMixin, Base):

@@ -354,8 +354,10 @@ CREATE TABLE IF NOT EXISTS `invitation_code` (
 CREATE TABLE IF NOT EXISTS `watchlist_stock` (
   `id` INT NOT NULL AUTO_INCREMENT COMMENT '自增主键',
   `user_id` INT NOT NULL DEFAULT 1 COMMENT '所属用户 ID',
-  `a_ts_code` VARCHAR(16) NOT NULL COMMENT 'A 股 Tushare 代码',
-  `hk_ts_code` VARCHAR(16) NOT NULL COMMENT 'H 股 Tushare 代码',
+  `target_type` VARCHAR(16) NOT NULL DEFAULT 'PAIR' COMMENT '关注标的类型，PAIR 为 A/H 配对，A_ONLY 为单 A 股，H_ONLY 为单 H 股',
+  `target_key` VARCHAR(40) NOT NULL COMMENT '关注标的统一唯一键，PAIR 使用 A|H，单侧关注使用对应 Tushare 代码',
+  `a_ts_code` VARCHAR(16) DEFAULT NULL COMMENT 'A 股 Tushare 代码，单 H 股关注时为空',
+  `hk_ts_code` VARCHAR(16) DEFAULT NULL COMMENT 'H 股 Tushare 代码，单 A 股关注时为空',
   `display_name` VARCHAR(128) DEFAULT NULL COMMENT '用户自定义展示名',
   `preferred_direction` VARCHAR(8) NOT NULL DEFAULT 'HA' COMMENT '关注方向，AH 或 HA',
   `target_premium_pct` DECIMAL(20,8) DEFAULT NULL COMMENT '目标溢价或折价阈值，单位百分比',
@@ -373,9 +375,11 @@ CREATE TABLE IF NOT EXISTS `watchlist_stock` (
   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '记录创建时间',
   `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '记录更新时间',
   PRIMARY KEY (`id`),
-  UNIQUE KEY `uk_watchlist_user_pair` (`user_id`, `a_ts_code`, `hk_ts_code`),
-  KEY `idx_watchlist_active_order` (`is_active`, `sort_order`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='用户自选 AH 股票表';
+  UNIQUE KEY `uk_watchlist_user_target` (`user_id`, `target_type`, `target_key`),
+  KEY `idx_watchlist_active_order` (`is_active`, `sort_order`),
+  KEY `idx_watchlist_a_code` (`a_ts_code`),
+  KEY `idx_watchlist_hk_code` (`hk_ts_code`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='用户关注标的表，支持 A/H 配对机会和单市场股价提醒';
 
 CREATE TABLE IF NOT EXISTS `pushplus_binding` (
   `id` INT NOT NULL AUTO_INCREMENT COMMENT '自增主键',

@@ -165,7 +165,7 @@ class PremiumQueryService:
             calculated_count=calculated_count,
             issue_count=issue_count,
             hk_connect_count=len(hk_connect_rows),
-            watchlist_count=len(watchlist_map),
+            watchlist_count=self._active_watchlist_count(user_id),
             top_premiums=[
                 self.to_response(item, "AH", watchlist_map.get((item.a_ts_code, item.hk_ts_code)))
                 for item in top
@@ -488,7 +488,18 @@ class PremiumQueryService:
                 statement.order_by(WatchlistStock.sort_order, WatchlistStock.id)
             ).all()
         )
-        return {(item.a_ts_code, item.hk_ts_code): item for item in rows}
+        # 官方 AH 表只能和成对关注项合并；单 A/单 H 自选留在自选接口中展示股价提醒状态。
+        return {
+            (item.a_ts_code, item.hk_ts_code): item
+            for item in rows
+            if item.target_type == "PAIR" and item.a_ts_code and item.hk_ts_code
+        }
+
+    def _active_watchlist_count(self, user_id: int | None = None) -> int:
+        statement = select(func.count(WatchlistStock.id)).where(WatchlistStock.is_active.is_(True))
+        if user_id is not None:
+            statement = statement.where(WatchlistStock.user_id == user_id)
+        return self.db.scalar(statement) or 0
 
     def _metric_bundle(
         self,

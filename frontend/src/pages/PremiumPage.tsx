@@ -17,7 +17,7 @@ import {
 } from 'antd';
 import ReactECharts from 'echarts-for-react';
 import ReactMarkdown from 'react-markdown';
-import { Bot, QrCode, Search } from 'lucide-react';
+import { Bot, Plus, QrCode, Search } from 'lucide-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useMemo, useState } from 'react';
 import dayjs from 'dayjs';
@@ -27,14 +27,21 @@ import PremiumTable from '../components/PremiumTable';
 import { createChatSession, sendChatMessageStream } from '../api/chat';
 import { fetchPremiumTrend, fetchPremiums } from '../api/market';
 import { createPushplusQrCode, fetchPushplusBinding } from '../api/notifications';
-import { createWatchlistItem, deleteWatchlistItem, updateWatchlistItem } from '../api/watchlist';
+import {
+  createWatchlistItem,
+  deleteWatchlistItem,
+  fetchWatchlistCandidates,
+  updateWatchlistItem
+} from '../api/watchlist';
 import type {
   HoldingMarket,
   PremiumDirection,
   PremiumItem,
   PriceAlertOperator,
   ThresholdRecommendationContext,
-  UserInfo
+  UserInfo,
+  WatchlistCandidate,
+  WatchlistTargetType
 } from '../types/domain';
 import type { PremiumQueryParams } from '../api/market';
 import {
@@ -64,6 +71,10 @@ interface FilterValues {
 }
 
 interface WatchlistFormValues {
+  target_type?: WatchlistTargetType;
+  candidate_key?: string;
+  a_ts_code?: string | null;
+  hk_ts_code?: string | null;
   display_name?: string;
   preferred_direction: PremiumDirection;
   target_premium_pct?: number | null;
@@ -80,7 +91,7 @@ interface WatchlistFormValues {
 
 interface WatchlistModalState {
   mode: 'create' | 'edit';
-  item: PremiumItem;
+  item?: PremiumItem;
 }
 
 function numberValue(value?: string | number | null) {
@@ -112,6 +123,19 @@ function hasAlertConfig(values: WatchlistFormValues) {
         values.h_price_alert_target_price !== null &&
         values.h_price_alert_target_price !== undefined)
   );
+}
+
+function targetTypeLabel(value?: WatchlistTargetType) {
+  const map: Record<WatchlistTargetType, string> = {
+    PAIR: 'A/H 配对',
+    A_ONLY: '仅 A 股',
+    H_ONLY: '仅 H 股'
+  };
+  return map[value || 'PAIR'];
+}
+
+function candidateOptionLabel(item: WatchlistCandidate) {
+  return item.display_label || item.name;
 }
 
 function holdingMarketLabel(value?: HoldingMarket | string | null) {
@@ -201,6 +225,7 @@ interface PremiumPageProps {
 function PremiumPage({ currentUser }: PremiumPageProps) {
   const [form] = Form.useForm<FilterValues>();
   const [watchlistForm] = Form.useForm<WatchlistFormValues>();
+  const watchlistTargetType = Form.useWatch('target_type', watchlistForm) || 'PAIR';
   const watchlistDirection = Form.useWatch('preferred_direction', watchlistForm);
   const watchlistPushEnabled = Form.useWatch('push_enabled', watchlistForm);
   const watchlistTargetPremium = Form.useWatch('target_premium_pct', watchlistForm);
@@ -215,6 +240,7 @@ function PremiumPage({ currentUser }: PremiumPageProps) {
   });
   const [selected, setSelected] = useState<PremiumItem | null>(null);
   const [watchlistModal, setWatchlistModal] = useState<WatchlistModalState | null>(null);
+  const [candidateKeyword, setCandidateKeyword] = useState('');
   const [thresholdRecommendation, setThresholdRecommendation] = useState('');
   const [thresholdRecommendationProgress, setThresholdRecommendationProgress] = useState('');
   const [thresholdRecommendationSource, setThresholdRecommendationSource] =
@@ -227,6 +253,11 @@ function PremiumPage({ currentUser }: PremiumPageProps) {
   const pushplusBinding = useQuery({
     queryKey: ['pushplus-binding'],
     queryFn: fetchPushplusBinding
+  });
+  const watchlistCandidates = useQuery({
+    queryKey: ['watchlist-candidates', watchlistTargetType, candidateKeyword],
+    queryFn: () => fetchWatchlistCandidates(watchlistTargetType, candidateKeyword),
+    enabled: Boolean(watchlistModal?.mode === 'create' && !watchlistModal.item)
   });
   const hasPushplusChannel = Boolean(
     pushplusBinding.data?.is_bound || currentUser.can_use_personal_pushplus
@@ -245,7 +276,7 @@ function PremiumPage({ currentUser }: PremiumPageProps) {
       const displayName = values.display_name?.trim();
       const note = values.note?.trim();
       if (mode === 'edit') {
-        if (!item.watchlist_id) {
+        if (!item?.watchlist_id) {
           throw new Error('自选股不存在');
         }
         return updateWatchlistItem(item.watchlist_id, {
@@ -263,8 +294,9 @@ function PremiumPage({ currentUser }: PremiumPageProps) {
         });
       }
       return createWatchlistItem({
-        a_ts_code: item.a_ts_code,
-        hk_ts_code: item.hk_ts_code,
+        target_type: values.target_type || 'PAIR',
+        a_ts_code: item?.a_ts_code || values.a_ts_code || null,
+        hk_ts_code: item?.hk_ts_code || values.hk_ts_code || null,
         display_name: displayName || undefined,
         preferred_direction: values.preferred_direction,
         target_premium_pct: values.target_premium_pct ?? undefined,
@@ -306,8 +338,8 @@ function PremiumPage({ currentUser }: PremiumPageProps) {
   });
   const thresholdRecommendationMutation = useMutation({
     mutationFn: async () => {
-      if (!watchlistModal) {
-        throw new Error('请选择股票');
+      if (!watchlistModal?.item) {
+        throw new Error('AI 阈值推荐仅支持 A/H 配对关注');
       }
       setThresholdRecommendationProgress(THRESHOLD_RECOMMENDATION_PROGRESS_STEPS[0]);
       let progressIndex = 0;
@@ -368,8 +400,9 @@ function PremiumPage({ currentUser }: PremiumPageProps) {
 
   const trendMetricColor = selected?.metric_direction === 'AH' ? AH_COLOR : HA_COLOR;
   const modalHasAlertConfig = hasAlertConfig({
+    target_type: watchlistTargetType,
     preferred_direction: watchlistDirection || 'HA',
-    target_premium_pct: watchlistTargetPremium,
+    target_premium_pct: watchlistTargetType === 'PAIR' ? watchlistTargetPremium : null,
     a_price_alert_enabled: watchlistAPriceAlertEnabled,
     a_price_alert_target_price: watchlistAPriceAlertTarget,
     h_price_alert_enabled: watchlistHPriceAlertEnabled,
@@ -456,6 +489,9 @@ function PremiumPage({ currentUser }: PremiumPageProps) {
 
   const onAddWatchlist = (item: PremiumItem) => {
     watchlistForm.setFieldsValue({
+      target_type: 'PAIR',
+      a_ts_code: item.a_ts_code,
+      hk_ts_code: item.hk_ts_code,
       display_name: item.a_name || item.hk_name || undefined,
       preferred_direction: item.metric_direction || filters.direction || 'HA',
       target_premium_pct: undefined,
@@ -475,8 +511,73 @@ function PremiumPage({ currentUser }: PremiumPageProps) {
     setWatchlistModal({ mode: 'create', item });
   };
 
+  const onManualAddWatchlist = () => {
+    watchlistForm.setFieldsValue({
+      target_type: 'A_ONLY',
+      a_ts_code: undefined,
+      hk_ts_code: undefined,
+      candidate_key: undefined,
+      display_name: undefined,
+      preferred_direction: 'HA',
+      target_premium_pct: undefined,
+      push_enabled: true,
+      a_price_alert_enabled: true,
+      a_price_alert_operator: 'GTE',
+      a_price_alert_target_price: undefined,
+      h_price_alert_enabled: false,
+      h_price_alert_operator: 'GTE',
+      h_price_alert_target_price: undefined,
+      holding_market: 'A',
+      note: undefined
+    });
+    setCandidateKeyword('');
+    setThresholdRecommendation('');
+    setThresholdRecommendationProgress('');
+    setThresholdRecommendationSource('fresh');
+    setWatchlistModal({ mode: 'create' });
+  };
+
+  const onChangeTargetType = (value: WatchlistTargetType) => {
+    watchlistForm.setFieldsValue({
+      a_ts_code: undefined,
+      hk_ts_code: undefined,
+      candidate_key: undefined,
+      display_name: undefined,
+      preferred_direction: 'HA',
+      target_premium_pct: undefined,
+      a_price_alert_enabled: value !== 'H_ONLY',
+      a_price_alert_operator: 'GTE',
+      a_price_alert_target_price: undefined,
+      h_price_alert_enabled: value === 'H_ONLY',
+      h_price_alert_operator: 'GTE',
+      h_price_alert_target_price: undefined,
+      holding_market: value === 'A_ONLY' ? 'A' : value === 'H_ONLY' ? 'H' : 'UNKNOWN'
+    });
+    setCandidateKeyword('');
+    setThresholdRecommendation('');
+    setThresholdRecommendationProgress('');
+    setThresholdRecommendationSource('fresh');
+  };
+
+  const onSelectCandidate = (encoded: string) => {
+    const item = watchlistCandidates.data?.find(
+      (candidate) => `${candidate.target_type}|${candidate.a_ts_code || ''}|${candidate.hk_ts_code || ''}` === encoded
+    );
+    if (!item) {
+      return;
+    }
+    watchlistForm.setFieldsValue({
+      a_ts_code: item.a_ts_code,
+      hk_ts_code: item.hk_ts_code,
+      display_name: item.name
+    });
+  };
+
   const onEditWatchlist = (item: PremiumItem) => {
     watchlistForm.setFieldsValue({
+      target_type: 'PAIR',
+      a_ts_code: item.a_ts_code,
+      hk_ts_code: item.hk_ts_code,
       display_name: item.watchlist_display_name || item.a_name || item.hk_name || undefined,
       preferred_direction: item.preferred_direction || item.metric_direction || 'HA',
       target_premium_pct: numberValue(item.target_premium_pct),
@@ -522,9 +623,15 @@ function PremiumPage({ currentUser }: PremiumPageProps) {
     });
   };
 
+  const candidateOptions =
+    watchlistCandidates.data?.map((item) => ({
+      value: `${item.target_type}|${item.a_ts_code || ''}|${item.hk_ts_code || ''}`,
+      label: candidateOptionLabel(item)
+    })) || [];
+
   return (
     <main className="page">
-      <PageHeader title="AH 机会筛选" />
+      <PageHeader title="机会筛选与关注" />
       <section className="panel">
         <Form
           form={form}
@@ -580,6 +687,9 @@ function PremiumPage({ currentUser }: PremiumPageProps) {
                 <Button type="primary" htmlType="submit" icon={<Search size={16} />}>
                   查询
                 </Button>
+                <Button htmlType="button" icon={<Plus size={16} />} onClick={onManualAddWatchlist}>
+                  添加关注
+                </Button>
               </Space>
             </Form.Item>
           </div>
@@ -628,41 +738,85 @@ function PremiumPage({ currentUser }: PremiumPageProps) {
         cancelText="取消"
       >
         <Form form={watchlistForm} layout="vertical">
+          <Form.Item label="关注类型" name="target_type" rules={[{ required: true }]}>
+            <Select
+              disabled={Boolean(watchlistModal?.item) || watchlistModal?.mode === 'edit'}
+              options={[
+                { value: 'PAIR', label: 'A/H 配对' },
+                { value: 'A_ONLY', label: '仅 A 股' },
+                { value: 'H_ONLY', label: '仅 H 股' }
+              ]}
+              onChange={onChangeTargetType}
+            />
+          </Form.Item>
+          {!watchlistModal?.item && watchlistModal?.mode === 'create' ? (
+            <Form.Item
+              label="关注标的"
+              name="candidate_key"
+              rules={[{ required: true, message: `请选择${targetTypeLabel(watchlistTargetType)}` }]}
+            >
+              <Select
+                showSearch
+                filterOption={false}
+                placeholder="输入代码或名称搜索"
+                loading={watchlistCandidates.isLoading}
+                options={candidateOptions}
+                onSearch={setCandidateKeyword}
+                onChange={onSelectCandidate}
+              />
+            </Form.Item>
+          ) : null}
+          <Form.Item name="a_ts_code" hidden>
+            <Input />
+          </Form.Item>
+          <Form.Item name="hk_ts_code" hidden>
+            <Input />
+          </Form.Item>
           <Form.Item label="展示名" name="display_name">
             <Input maxLength={128} />
           </Form.Item>
-          <Form.Item label="关注方向" name="preferred_direction" rules={[{ required: true }]}>
-            <Select
-              options={[
-                { value: 'HA', label: 'H/A' },
-                { value: 'AH', label: 'A/H' }
-              ]}
-            />
-          </Form.Item>
-          <Form.Item
-            label="目标阈值"
-            extra={thresholdHelpText(watchlistDirection)}
-          >
-            <Space.Compact className="threshold-recommend-control">
-              <Form.Item name="target_premium_pct" noStyle>
-                <InputNumber addonAfter="%" precision={2} placeholder="例如 -15 或 30" />
+          {watchlistTargetType === 'PAIR' ? (
+            <>
+              <Form.Item label="关注方向" name="preferred_direction" rules={[{ required: true }]}>
+                <Select
+                  options={[
+                    { value: 'HA', label: 'H/A' },
+                    { value: 'AH', label: 'A/H' }
+                  ]}
+                />
               </Form.Item>
-              <Button
-                htmlType="button"
-                icon={<Bot size={16} />}
-                loading={thresholdRecommendationMutation.isPending}
-                onClick={() => {
-                  setThresholdRecommendation('');
-                  setThresholdRecommendationProgress('');
-                  setThresholdRecommendationSource('fresh');
-                  thresholdRecommendationMutation.mutate();
-                }}
-              >
-                AI 推荐
-              </Button>
-            </Space.Compact>
-          </Form.Item>
-          {thresholdRecommendation || thresholdRecommendationMutation.isPending ? (
+              <Form.Item label="目标阈值" extra={thresholdHelpText(watchlistDirection)}>
+                <Space.Compact className="threshold-recommend-control">
+                  <Form.Item name="target_premium_pct" noStyle>
+                    <InputNumber addonAfter="%" precision={2} placeholder="例如 -15 或 30" />
+                  </Form.Item>
+                  <Button
+                    htmlType="button"
+                    icon={<Bot size={16} />}
+                    loading={thresholdRecommendationMutation.isPending}
+                    disabled={!watchlistModal?.item}
+                    onClick={() => {
+                      setThresholdRecommendation('');
+                      setThresholdRecommendationProgress('');
+                      setThresholdRecommendationSource('fresh');
+                      thresholdRecommendationMutation.mutate();
+                    }}
+                  >
+                    AI 推荐
+                  </Button>
+                </Space.Compact>
+              </Form.Item>
+            </>
+          ) : (
+            <Alert
+              showIcon
+              type="info"
+              message="单 A / 单 H 关注只支持股价提醒"
+              description="溢价阈值和 AI 阈值推荐需要 A/H 两侧报价与汇率，单股关注不会展示这些配置。"
+            />
+          )}
+          {watchlistTargetType === 'PAIR' &&
+          (thresholdRecommendation || thresholdRecommendationMutation.isPending) ? (
             <div className="ai-recommendation-box modal-ai-recommendation">
               <div className="ai-recommendation-head">
                 <Bot size={16} />
@@ -717,6 +871,7 @@ function PremiumPage({ currentUser }: PremiumPageProps) {
               </Space>
             </div>
           ) : null}
+          {watchlistTargetType !== 'H_ONLY' ? (
           <div className="watchlist-price-alert-grid">
             <Form.Item label="A 股提醒" name="a_price_alert_enabled" valuePropName="checked">
               <Switch checkedChildren="开启" unCheckedChildren="关闭" />
@@ -733,6 +888,8 @@ function PremiumPage({ currentUser }: PremiumPageProps) {
               <InputNumber className="full-width" precision={3} placeholder="人民币触发价" />
             </Form.Item>
           </div>
+          ) : null}
+          {watchlistTargetType !== 'A_ONLY' ? (
           <div className="watchlist-price-alert-grid">
             <Form.Item label="H 股提醒" name="h_price_alert_enabled" valuePropName="checked">
               <Switch checkedChildren="开启" unCheckedChildren="关闭" />
@@ -749,6 +906,8 @@ function PremiumPage({ currentUser }: PremiumPageProps) {
               <InputNumber className="full-width" precision={3} placeholder="港币触发价" />
             </Form.Item>
           </div>
+          ) : null}
+          {watchlistTargetType === 'PAIR' ? (
           <Form.Item label="持有侧" name="holding_market" rules={[{ required: true }]}>
             <Select
               options={[
@@ -758,6 +917,7 @@ function PremiumPage({ currentUser }: PremiumPageProps) {
               ]}
             />
           </Form.Item>
+          ) : null}
           {watchlistModal?.mode === 'create' ? (
             <Form.Item label="备注" name="note">
               <Input.TextArea rows={3} />

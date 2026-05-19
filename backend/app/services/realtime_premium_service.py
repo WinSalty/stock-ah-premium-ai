@@ -153,6 +153,9 @@ class RealtimePremiumService:
             statement = select(WatchlistStock).where(
                 WatchlistStock.user_id == user_id,
                 WatchlistStock.is_active.is_(True),
+                WatchlistStock.target_type == "PAIR",
+                WatchlistStock.a_ts_code.is_not(None),
+                WatchlistStock.hk_ts_code.is_not(None),
             )
             if a_ts_code:
                 statement = statement.where(WatchlistStock.a_ts_code == a_ts_code.upper())
@@ -172,6 +175,7 @@ class RealtimePremiumService:
                     "watchlist": item,
                 }
                 for item in rows
+                if item.a_ts_code and item.hk_ts_code
             ]
         if a_ts_code and hk_ts_code:
             watchlist = self._watchlist_for_pair(user_id, a_ts_code.upper(), hk_ts_code.upper())

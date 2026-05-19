@@ -16,8 +16,9 @@ class WatchlistCreate(BaseModel):
     author: sunshengxian
     """
 
-    a_ts_code: str = Field(min_length=1, max_length=16)
-    hk_ts_code: str = Field(min_length=1, max_length=16)
+    target_type: str = Field(default="PAIR", max_length=16)
+    a_ts_code: str | None = Field(default=None, max_length=16)
+    hk_ts_code: str | None = Field(default=None, max_length=16)
     display_name: str | None = Field(default=None, max_length=128)
     preferred_direction: str = "HA"
     target_premium_pct: Decimal | None = None
@@ -66,8 +67,10 @@ class WatchlistResponse(OrmModel):
 
     id: int
     user_id: int
-    a_ts_code: str
-    hk_ts_code: str
+    target_type: str = "PAIR"
+    target_key: str
+    a_ts_code: str | None
+    hk_ts_code: str | None
     display_name: str | None
     preferred_direction: str
     target_premium_pct: Decimal | None
@@ -95,3 +98,17 @@ class WatchlistOpportunityResponse(BaseModel):
 
     watchlist: WatchlistResponse
     premium: PremiumQueryResponse | None = None
+
+
+class WatchlistCandidateResponse(BaseModel):
+    """自选关注弹窗的股票候选项。
+
+    创建日期：2026-05-19
+    author: sunshengxian
+    """
+
+    target_type: str
+    a_ts_code: str | None = None
+    hk_ts_code: str | None = None
+    name: str
+    display_label: str
