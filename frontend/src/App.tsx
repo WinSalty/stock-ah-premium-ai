@@ -270,6 +270,7 @@ function MobileAppShell({
   onPageChange,
   onLogout
 }: MobileAppShellProps) {
+  const contentRef = useRef<HTMLElement | null>(null);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const activePage = permittedPage ? page : (menuItems[0]?.key as PageKey);
   const primaryItems = MOBILE_PRIMARY_PAGE_KEYS
@@ -284,6 +285,19 @@ function MobileAppShell({
     onPageChange(nextPage);
     setIsMenuOpen(false);
   };
+
+  useEffect(() => {
+    const content = contentRef.current;
+    if (!content) {
+      return;
+    }
+    // 移动端页面复用同一个滚动容器，切换菜单后必须回到顶部，避免沿用上个页面的滚动位置。
+    content.scrollTo({ top: 0, left: 0 });
+    window.scrollTo({ top: 0, left: 0 });
+    window.requestAnimationFrame(() => {
+      content.scrollTo({ top: 0, left: 0 });
+    });
+  }, [activePage]);
 
   return (
     <Layout className="mobile-app-shell">
@@ -303,7 +317,7 @@ function MobileAppShell({
           onClick={() => setIsMenuOpen(true)}
         />
       </header>
-      <Layout.Content className={`mobile-app-content mobile-page-${activePage}`}>
+      <Layout.Content ref={contentRef} className={`mobile-app-content mobile-page-${activePage}`}>
         {menuItems.length && activePage ? pages[activePage] : null}
       </Layout.Content>
       <nav className="mobile-app-tabbar" aria-label="移动端主导航">

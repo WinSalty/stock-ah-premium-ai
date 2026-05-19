@@ -5,14 +5,22 @@
   text-rendering: optimizeLegibility;
 }
 
+html {
+  width: 100%;
+  overflow-x: hidden;
+  -webkit-text-size-adjust: 100%;
+}
+
 * {
   box-sizing: border-box;
 }
 
 body {
+  width: 100%;
   margin: 0;
   min-width: 320px;
   min-height: 100vh;
+  overflow-x: hidden;
   background: #f5f7fb;
 }
 
@@ -146,6 +154,9 @@ body {
   flex: 1;
   min-height: 0;
   overflow: auto;
+  overscroll-behavior-y: contain;
+  touch-action: pan-x pan-y;
+  -webkit-overflow-scrolling: touch;
   background: #f5f7fb;
 }
 
@@ -2103,6 +2114,46 @@ pre.llm-payload-viewer,
 @media (max-width: 720px) {
   .page {
     padding: 16px;
+  }
+
+  input,
+  textarea,
+  select,
+  .ant-input,
+  .ant-input-number-input,
+  .ant-select-selection-search-input,
+  .ant-picker-input > input {
+    font-size: 16px !important;
+  }
+
+  .mobile-app-shell,
+  .mobile-app-content,
+  .mobile-app-content > .page {
+    max-width: 100vw;
+  }
+
+  .mobile-app-content .ant-table-wrapper {
+    max-width: 100%;
+    touch-action: pan-x pan-y;
+  }
+
+  .mobile-app-content .ant-table-container,
+  .mobile-app-content .ant-table-content,
+  .mobile-app-content .ant-table-body {
+    max-width: 100%;
+    overflow: auto;
+    overscroll-behavior: contain;
+    touch-action: pan-x pan-y;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .mobile-app-content.mobile-page-premium .panel {
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  .mobile-app-content.mobile-page-premium .ant-table-wrapper {
+    margin-inline: -2px;
   }
 
   .chat-page {
