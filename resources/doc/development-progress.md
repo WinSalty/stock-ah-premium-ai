@@ -245,6 +245,7 @@
 - 实时溢价写回官方 AH 比价表、总览卡片移除右下角时间并改为官方表主口径读取后，`ruff check app/services/realtime_premium_service.py tests/test_realtime_premium_service.py`、`pytest tests/test_realtime_premium_service.py -q` 和前端 `npm run build` 均通过。
 - 移动端 App 化体验改造后，`npm --prefix frontend run build` 通过；使用本地 mock API 和 Chrome DevTools Protocol 验证桌面 1366x900 仍渲染桌面侧边栏布局，移动 390x844 默认渲染问答主界面、底部导航、输入区和会话抽屉。
 - 移动端体验回归修复后，补充严格 viewport 配置、移动端输入控件 16px 字号、移动端页面切换回顶和表格触摸滚动策略；`npm --prefix frontend run build` 通过，使用本地 mock API 和 Chrome DevTools Protocol 验证 390x844 视口下问答首次渲染宽度正确、菜单切换到 AH 机会筛选后滚动位置归零、机会筛选表格支持触摸横向拖动且页面支持纵向拖动。
+- AH 机会筛选表格移动端横向拖动修复后，移动视口下自动取消溢价表固定列，避免 Ant Design fixed column 覆盖层拦截触摸滑动；`npm --prefix frontend run build` 通过，使用本地 mock API 和 Chrome DevTools Protocol 验证 390x844 视口下表格不存在固定列覆盖层，并可从表格左侧区域手势横向拖动。
 - 敏感信息扫描：只发现文档中的 `<local-only>` 占位符，未发现真实 Token、密码或 API Key。
 
 ## 待验证事项

@@ -1,6 +1,7 @@
 import { Button, Space, Table, Tag, Tooltip } from 'antd';
 import { Info, LineChart, Settings, Star, StarOff } from 'lucide-react';
 import type { ColumnsType } from 'antd/es/table';
+import { useEffect, useState } from 'react';
 import type { PremiumItem } from '../types/domain';
 import { formatEast8DateTime } from '../utils/datetime';
 
@@ -12,6 +13,29 @@ interface PremiumTableProps {
   onAddWatchlist?: (item: PremiumItem) => void;
   onEditWatchlist?: (item: PremiumItem) => void;
   onRemoveWatchlist?: (item: PremiumItem) => void;
+}
+
+const MOBILE_TABLE_MEDIA_QUERY = '(max-width: 720px)';
+
+/**
+ * 判断溢价表是否处于移动端视口。
+ * 创建日期：2026-05-19
+ * author: sunshengxian
+ */
+function useMobileTableViewport() {
+  const [isMobileTable, setIsMobileTable] = useState(() =>
+    typeof window === 'undefined' ? false : window.matchMedia(MOBILE_TABLE_MEDIA_QUERY).matches
+  );
+
+  useEffect(() => {
+    const media = window.matchMedia(MOBILE_TABLE_MEDIA_QUERY);
+    const handleChange = (event: MediaQueryListEvent) => setIsMobileTable(event.matches);
+    setIsMobileTable(media.matches);
+    media.addEventListener('change', handleChange);
+    return () => media.removeEventListener('change', handleChange);
+  }, []);
+
+  return isMobileTable;
 }
 
 function formatNumber(value: string | null, digits = 2) {
@@ -107,11 +131,13 @@ function PremiumTable({
   onEditWatchlist,
   onRemoveWatchlist
 }: PremiumTableProps) {
+  const isMobileTable = useMobileTableViewport();
   const columns: ColumnsType<PremiumItem> = [
     {
       title: '关注',
       width: 104,
-      fixed: 'left',
+      // 移动端禁用固定列，避免 fixed overlay 吃掉触摸事件导致横向拖动无响应。
+      fixed: isMobileTable ? undefined : 'left',
       render: (_, record) => (
         <div className="premium-watch-cell">
           {record.is_watchlist ? <Tag color="purple">自选</Tag> : <Tag color="default">未加</Tag>}
@@ -123,7 +149,7 @@ function PremiumTable({
       title: '日期',
       dataIndex: 'trade_date',
       width: 128,
-      fixed: 'left'
+      fixed: isMobileTable ? undefined : 'left'
     },
     {
       title: 'A 股',
@@ -251,7 +277,7 @@ function PremiumTable({
     {
       title: '',
       width: 132,
-      fixed: 'right',
+      fixed: isMobileTable ? undefined : 'right',
       render: (_, record) => (
         <Space>
           <Button
