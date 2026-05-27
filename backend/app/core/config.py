@@ -21,7 +21,7 @@ class Settings(BaseSettings):
         default="mysql+pymysql://root@127.0.0.1:3306/stock_ah_ai?charset=utf8mb4",
         alias="STOCK_AH_DB_URL",
     )
-    tushare_api_url: str = Field(default="http://tsy.xiaodefa.cn", alias="TUSHARE_API_URL")
+    tushare_api_url: str = Field(default="https://tt.xiaodefa.cn", alias="TUSHARE_API_URL")
     tushare_token: str | None = Field(default=None, alias="TUSHARE_TOKEN")
     tushare_token_file: Path | None = Field(
         default=Path("/Users/salty/codeProject/ai/doc/tushare-token.txt"),
@@ -40,6 +40,22 @@ class Settings(BaseSettings):
     )
     llm_model: str | None = Field(default="deepseek-v4-flash", alias="LLM_MODEL")
     llm_daily_call_limit: int = Field(default=100, alias="LLM_DAILY_CALL_LIMIT")
+    image_gen_base_url: str = Field(
+        default="https://api.86gamestore.com",
+        alias="IMAGE_GEN_BASE_URL",
+    )
+    image_gen_api_key: str | None = Field(default=None, alias="IMAGE_GEN_API_KEY")
+    image_gen_api_key_file: Path | None = Field(
+        default=Path("/Users/salty/codeProject/ai/doc/86gamestore-image-apikey.txt"),
+        alias="IMAGE_GEN_API_KEY_FILE",
+    )
+    image_gen_model: str = Field(default="gpt-image-2", alias="IMAGE_GEN_MODEL")
+    image_gen_timeout_seconds: float = Field(default=300.0, alias="IMAGE_GEN_TIMEOUT_SECONDS")
+    image_gen_daily_limit_default: int = Field(default=10, alias="IMAGE_GEN_DAILY_LIMIT_DEFAULT")
+    image_gen_storage_dir: Path = Field(
+        default=Path("/opt/stock-ah-premium-ai/data/generated-images"),
+        alias="IMAGE_GEN_STORAGE_DIR",
+    )
     qwen_base_url: str = Field(
         default="https://dashscope.aliyuncs.com/compatible-mode/v1",
         alias="QWEN_BASE_URL",
@@ -205,6 +221,21 @@ class Settings(BaseSettings):
                 return api_key
         if self.qwen_api_key:
             return self.qwen_api_key.strip()
+        return None
+
+    def resolve_image_gen_api_key(self) -> str | None:
+        """按本机数据盘外密钥文件优先、环境变量兜底的顺序读取文生图 API Key。
+
+        创建日期：2026-05-27
+        author: sunshengxian
+        """
+
+        if self.image_gen_api_key_file and self.image_gen_api_key_file.exists():
+            api_key = self.image_gen_api_key_file.read_text(encoding="utf-8").strip()
+            if api_key:
+                return api_key
+        if self.image_gen_api_key:
+            return self.image_gen_api_key.strip()
         return None
 
     def resolve_question_router_model(self) -> str | None:

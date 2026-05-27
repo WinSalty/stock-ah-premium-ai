@@ -23,8 +23,9 @@ cd /Users/salty/codeProject/ai/coding/stock-ah-premium-ai
 - Python：3.11+，本机已验证 `/opt/homebrew/bin/python3.13`。
 - Node.js：支持 Vite 5 的版本。
 - MySQL：本机 MySQL 5.7，连接说明见 `/Users/salty/codeProject/ai/doc/mysqluse.md`。
-- Tushare：使用 Python `tushare` SDK，默认中转地址 `http://tsy.xiaodefa.cn`，同步接口运行时优先读取本机文件 `/Users/salty/codeProject/ai/doc/tushare-token.txt`，环境变量 `TUSHARE_TOKEN` 作为兜底。
+- Tushare：使用 Python `tushare` SDK，默认中转地址 `https://tt.xiaodefa.cn`，同步接口运行时优先读取本机文件 `/Users/salty/codeProject/ai/doc/tushare-token.txt`，环境变量 `TUSHARE_TOKEN` 作为兜底。
 - LLM：运行智能问答时默认接入 DeepSeek OpenAI-compatible API，优先读取本机文件 `/Users/salty/codeProject/ai/doc/deepseek-apikey.txt`，环境变量 `LLM_API_KEY` 作为兜底，默认 API 模型 `deepseek-v4-flash`；页面可切换 DeepSeek Pro `deepseek-v4-pro` 或阿里 Qwen `qwen3.6-flash`，Qwen Key 优先读取 `/Users/salty/codeProject/ai/doc/qwen-apikey.txt`；项目级外部模型调用默认日限额为 `LLM_DAILY_CALL_LIMIT=100`。
+- 文生图：默认接入 86GameStore OpenAI Images 兼容接口，优先读取本机文件 `/Users/salty/codeProject/ai/doc/86gamestore-image-apikey.txt`，环境变量 `IMAGE_GEN_API_KEY` 作为兜底；图片默认保存到 `/opt/stock-ah-premium-ai/data/generated-images`，用于和代码目录分离，部署时需确保后端运行用户可写。
 
 启动 MySQL：
 
@@ -75,7 +76,7 @@ STOCK_AH_DB_URL=mysql+pymysql://root@127.0.0.1:3306/stock_ah_ai?charset=utf8mb4
 ```bash
 TUSHARE_TOKEN=
 TUSHARE_TOKEN_FILE=/Users/salty/codeProject/ai/doc/tushare-token.txt
-TUSHARE_API_URL=http://tsy.xiaodefa.cn
+TUSHARE_API_URL=https://tt.xiaodefa.cn
 TUSHARE_REQUEST_INTERVAL_SECONDS=0.6
 SYNC_SCHEDULER_ENABLED=true
 SYNC_SCHEDULER_TIMEZONE=Asia/Shanghai
@@ -88,20 +89,27 @@ QWEN_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
 QWEN_API_KEY_FILE=/Users/salty/codeProject/ai/doc/qwen-apikey.txt
 QWEN_API_KEY=
 QWEN_QUESTION_ROUTER_MODEL=deepseek-v4-flash
+IMAGE_GEN_BASE_URL=https://api.86gamestore.com
+IMAGE_GEN_API_KEY_FILE=/Users/salty/codeProject/ai/doc/86gamestore-image-apikey.txt
+IMAGE_GEN_API_KEY=
+IMAGE_GEN_MODEL=gpt-image-2
+IMAGE_GEN_TIMEOUT_SECONDS=300
+IMAGE_GEN_DAILY_LIMIT_DEFAULT=10
+IMAGE_GEN_STORAGE_DIR=/opt/stock-ah-premium-ai/data/generated-images
 APP_CORS_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
 ```
 
-不要把真实 Token、数据库密码或 LLM Key 写入仓库。若 shell 中残留旧 `TUSHARE_TOKEN`，项目仍会优先使用 `TUSHARE_TOKEN_FILE` 指向的文件，避免误用旧 token；DeepSeek 和 Qwen Key 同理优先使用本机文件。
+不要把真实 Token、数据库密码、LLM Key 或文生图 Key 写入仓库。若 shell 中残留旧 `TUSHARE_TOKEN`，项目仍会优先使用 `TUSHARE_TOKEN_FILE` 指向的文件，避免误用旧 token；DeepSeek、Qwen 和文生图 Key 同理优先使用本机文件。
 
 智能问答仅面向投资研究问题。后端会先用 `deepseek-v4-flash` 做单次 JSON 前置路由，同时判断是否可答、是否需要结构化数据、是否需要按需补充市场数据，再为选定问答模型注入专业金融投资分析顾问角色、最近会话上下文、页面上下文、数据摘要和按需补数结果；前端只展示报告和数据摘要表格，不展示 SQL 或底层查询过程。若历史环境中仍配置 `deepseek-v4-pro[1m]`，后端会在请求 DeepSeek 时自动归一化为 API 支持的 `deepseek-v4-pro`；当前不额外传 `reasoning_effort`。
 
-Tushare 中转服务文档见 `http://tsy.xiaodefa.cn/docs`。项目后端已按其 SDK 方式设置。文档示例使用 `ts.set_token(token)`，项目实现采用 `ts.pro_api(token, timeout=...)` 直接传入 token，避免 SDK 把 token 额外写到用户目录缓存文件：
+Tushare 中转服务文档见 `https://tt.xiaodefa.cn/docs`。项目后端已按其 SDK 方式设置。文档示例使用 `ts.set_token(token)`，项目实现采用 `ts.pro_api(token, timeout=...)` 直接传入 token，避免 SDK 把 token 额外写到用户目录缓存文件：
 
 ```python
 import tushare as ts
 
 pro = ts.pro_api(token, timeout=30)
-pro._DataApi__http_url = "http://tsy.xiaodefa.cn"
+pro._DataApi__http_url = "https://tt.xiaodefa.cn"
 ```
 
 如中转服务返回超时或冷却提示，优先调大 `TUSHARE_REQUEST_INTERVAL_SECONDS`，不要高频重试。

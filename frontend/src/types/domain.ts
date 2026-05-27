@@ -71,6 +71,58 @@ export interface UserUpdateRequest {
   permissions?: string[];
 }
 
+export interface ImageGenerationQuota {
+  daily_limit: number;
+  used_count: number;
+  remaining_count: number;
+  quota_date: string;
+}
+
+export interface ImageGenerationItem {
+  id: number;
+  user_id: number;
+  username: string | null;
+  display_name: string | null;
+  prompt: string;
+  model: string;
+  size: string;
+  status: 'GENERATING' | 'READY' | 'FAILED' | string;
+  provider: string;
+  generation_mode: 'TEXT_TO_IMAGE' | 'IMAGE_REFERENCE' | string;
+  image_url: string | null;
+  reference_image_url: string | null;
+  mime_type: string | null;
+  file_size_bytes: number | null;
+  file_sha256: string | null;
+  reference_mime_type: string | null;
+  reference_file_size_bytes: number | null;
+  reference_file_sha256: string | null;
+  elapsed_ms: number | null;
+  error_message: string | null;
+  quota: ImageGenerationQuota | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ImageGenerationListResponse {
+  total: number;
+  items: ImageGenerationItem[];
+}
+
+export interface ImageGenerationAdminQuota {
+  user_id: number;
+  username: string;
+  display_name: string | null;
+  role: 'ADMIN' | 'USER' | string;
+  is_active: boolean;
+  daily_limit: number;
+  used_count: number;
+  remaining_count: number;
+  quota_date: string;
+  last_reset_at: string | null;
+  updated_at: string | null;
+}
+
 export interface ProfileUpdateRequest {
   display_name?: string | null;
   email?: string | null;

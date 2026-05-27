@@ -1,10 +1,16 @@
-import { Button, Checkbox, Form, Input, Modal, Select, Space, Switch, Table, Tag, Typography, message } from 'antd';
+import { Button, Checkbox, Form, Input, InputNumber, Modal, Select, Space, Switch, Table, Tag, Typography, message } from 'antd';
 import { Edit3, KeyRound, Plus } from 'lucide-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import PageHeader from '../components/PageHeader';
 import { createInvitation, fetchInvitations, fetchUsers, updateUser } from '../api/auth';
+import {
+  fetchImageGenerationQuotas,
+  resetImageGenerationQuota,
+  updateImageGenerationQuota
+} from '../api/imageGeneration';
 import type {
+  ImageGenerationAdminQuota,
   InvitationResponse,
   UserInfo,
   UserUpdateRequest
@@ -17,6 +23,7 @@ const menuPermissionOptions = [
   { label: '查询', value: 'query' },
   { label: '机会筛选与关注', value: 'premium' },
   { label: '问答', value: 'chat' },
+  { label: '图片生成', value: 'image_generation' },
   { label: 'LLM 耗时', value: 'llm_metrics' },
   { label: '用户管理', value: 'users' },
   { label: 'PushPlus', value: 'pushplus' },
@@ -40,6 +47,7 @@ function UserAdminPage({ currentUser, onUserUpdated }: UserAdminPageProps) {
   const [invitationForm] = Form.useForm<{ note?: string }>();
   const [editForm] = Form.useForm<UserUpdateRequest>();
   const [editingUser, setEditingUser] = useState<UserInfo | null>(null);
+  const [quotaDrafts, setQuotaDrafts] = useState<Record<number, number>>({});
   const queryClient = useQueryClient();
   const users = useQuery({
     queryKey: ['users'],
@@ -48,6 +56,10 @@ function UserAdminPage({ currentUser, onUserUpdated }: UserAdminPageProps) {
   const invitations = useQuery({
     queryKey: ['invitations'],
     queryFn: fetchInvitations
+  });
+  const imageQuotas = useQuery({
+    queryKey: ['image-generation-admin-quotas'],
+    queryFn: fetchImageGenerationQuotas
   });
   const createMutation = useMutation({
     mutationFn: createInvitation,
@@ -70,6 +82,32 @@ function UserAdminPage({ currentUser, onUserUpdated }: UserAdminPageProps) {
     },
     onError: (error) => message.error(error instanceof Error ? error.message : '保存失败')
   });
+  const updateQuotaMutation = useMutation({
+    mutationFn: ({ userId, dailyLimit }: { userId: number; dailyLimit: number }) =>
+      updateImageGenerationQuota(userId, dailyLimit),
+    onSuccess: () => {
+      message.success('图片生成次数已更新');
+      queryClient.invalidateQueries({ queryKey: ['image-generation-admin-quotas'] });
+    },
+    onError: (error) => message.error(error instanceof Error ? error.message : '保存次数失败')
+  });
+  const resetQuotaMutation = useMutation({
+    mutationFn: resetImageGenerationQuota,
+    onSuccess: () => {
+      message.success('今日已用次数已重置');
+      queryClient.invalidateQueries({ queryKey: ['image-generation-admin-quotas'] });
+    },
+    onError: (error) => message.error(error instanceof Error ? error.message : '重置失败')
+  });
+
+  useEffect(() => {
+    if (!imageQuotas.data) {
+      return;
+    }
+    // 管理员维护次数时先把服务端配置映射为本地草稿，避免输入框改动立刻写库。
+    setQuotaDrafts(Object.fromEntries(imageQuotas.data.map((item) => [item.user_id, item.daily_limit])));
+  }, [imageQuotas.data]);
+
   const openEditModal = (user: UserInfo) => {
     setEditingUser(user);
     editForm.setFieldsValue({
@@ -145,6 +183,90 @@ function UserAdminPage({ currentUser, onUserUpdated }: UserAdminPageProps) {
                 <Button icon={<Edit3 size={16} />} onClick={() => openEditModal(record)}>
                   编辑
                 </Button>
+              )
+            }
+          ]}
+        />
+      </section>
+      <section className="panel user-admin-table-panel">
+        <div className="query-result-head">
+          <div>
+            <div className="panel-title">文生图次数</div>
+            <Typography.Text type="secondary">
+              默认每人每天 10 次；调用失败会返还次数，管理员可在这里调整上限或重置今日已用次数。
+            </Typography.Text>
+          </div>
+        </div>
+        <Table<ImageGenerationAdminQuota>
+          rowKey="user_id"
+          loading={imageQuotas.isLoading}
+          dataSource={imageQuotas.data || []}
+          pagination={false}
+          scroll={{ x: 920 }}
+          columns={[
+            {
+              title: '用户',
+              width: 180,
+              render: (_, record) => (
+                <div className="user-cell">
+                  <Typography.Text strong>{record.display_name || record.username}</Typography.Text>
+                  <Typography.Text type="secondary">{record.username}</Typography.Text>
+                </div>
+              )
+            },
+            {
+              title: '角色',
+              width: 110,
+              render: (_, record) => (record.role === 'ADMIN' ? <Tag color="blue">管理员</Tag> : <Tag>普通用户</Tag>)
+            },
+            {
+              title: '每日上限',
+              width: 170,
+              render: (_, record) => (
+                <InputNumber
+                  min={0}
+                  max={100}
+                  value={quotaDrafts[record.user_id] ?? record.daily_limit}
+                  onChange={(value) =>
+                    setQuotaDrafts((items) => ({ ...items, [record.user_id]: Number(value ?? 0) }))
+                  }
+                />
+              )
+            },
+            { title: '今日已用', dataIndex: 'used_count', width: 100 },
+            { title: '今日剩余', dataIndex: 'remaining_count', width: 100 },
+            { title: '计数日期', dataIndex: 'quota_date', width: 130 },
+            {
+              title: '最近重置',
+              width: 180,
+              render: (_, record) => (record.last_reset_at ? formatEast8DateTime(record.last_reset_at) : '-')
+            },
+            {
+              title: '操作',
+              width: 180,
+              fixed: 'right',
+              render: (_, record) => (
+                <Space>
+                  <Button
+                    size="small"
+                    loading={updateQuotaMutation.isPending}
+                    onClick={() =>
+                      updateQuotaMutation.mutate({
+                        userId: record.user_id,
+                        dailyLimit: quotaDrafts[record.user_id] ?? record.daily_limit
+                      })
+                    }
+                  >
+                    保存
+                  </Button>
+                  <Button
+                    size="small"
+                    onClick={() => resetQuotaMutation.mutate(record.user_id)}
+                    loading={resetQuotaMutation.isPending}
+                  >
+                    重置
+                  </Button>
+                </Space>
               )
             }
           ]}

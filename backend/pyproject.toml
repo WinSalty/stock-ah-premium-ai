@@ -12,6 +12,7 @@ dependencies = [
   "pydantic>=2.8.0,<3.0",
   "pydantic-settings>=2.4.0,<3.0",
   "pymysql>=1.1.1,<2.0",
+  "python-multipart>=0.0.20,<1.0",
   "python-dateutil>=2.9.0,<3.0",
   "sqlalchemy>=2.0.34,<3.0",
   "sqlglot>=25.20.0,<26.0",

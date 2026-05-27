@@ -29,6 +29,7 @@ ALL_MENU_PERMISSIONS: dict[str, str] = {
     "query": "查询",
     "premium": "AH 机会筛选",
     "chat": "问答",
+    "image_generation": "图片生成",
     "llm_metrics": "LLM 耗时",
     "users": "用户管理",
     "pushplus": "PushPlus",
@@ -45,6 +46,7 @@ DEFAULT_ROLE_PERMISSIONS: dict[str, list[str]] = {
         "query",
         "premium",
         "chat",
+        "image_generation",
         "llm_metrics",
         "users",
         "pushplus",
@@ -53,7 +55,7 @@ DEFAULT_ROLE_PERMISSIONS: dict[str, list[str]] = {
         "chat_xueqiu_publish",
         "profile",
     ],
-    ROLE_USER: ["overview", "premium", "chat", "profile"],
+    ROLE_USER: ["overview", "premium", "chat", "image_generation", "profile"],
 }
 
 DEFAULT_OVERVIEW_CHART_SETTINGS = OverviewChartSettings()

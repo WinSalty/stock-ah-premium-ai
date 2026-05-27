@@ -61,6 +61,7 @@ def test_admin_default_permissions_include_admin_action_menus() -> None:
     assert "pushplus" in response.permissions
     assert "xueqiu_publish" in response.permissions
     assert "chat_xueqiu_publish" in response.permissions
+    assert "image_generation" in response.permissions
 
 
 def test_profile_update_only_changes_basic_fields() -> None:
@@ -89,7 +90,7 @@ def test_profile_update_only_changes_basic_fields() -> None:
         assert response.email == "bob@example.com"
         assert response.phone == "13800138000"
         assert response.role == ROLE_USER
-        assert response.permissions == ["overview", "premium", "chat", "profile"]
+    assert response.permissions == ["overview", "premium", "chat", "image_generation", "profile"]
 
 
 def test_overview_chart_settings_are_stored_per_user() -> None:

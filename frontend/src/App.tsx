@@ -6,6 +6,7 @@ import {
   BarChart3,
   Bot,
   DatabaseZap,
+  Image as ImageIcon,
   LayoutDashboard,
   LogOut,
   Menu as MenuIcon,
@@ -29,6 +30,7 @@ import LimitUpSharePage from './pages/LimitUpSharePage';
 import ProfilePage from './pages/ProfilePage';
 import LlmMetricsPage from './pages/LlmMetricsPage';
 import XueqiuPublishPage from './pages/XueqiuPublishPage';
+import ImageGenerationPage from './pages/ImageGenerationPage';
 import { fetchCurrentUser } from './api/auth';
 import { clearAuthToken, getAuthToken } from './api/client';
 import type { AuthTokenResponse, UserInfo } from './types/domain';
@@ -39,6 +41,7 @@ type PageKey =
   | 'query'
   | 'premium'
   | 'chat'
+  | 'image_generation'
   | 'llm_metrics'
   | 'users'
   | 'pushplus'
@@ -53,7 +56,7 @@ type AppMenuItem = {
 };
 
 const MOBILE_APP_MEDIA_QUERY = '(max-width: 720px)';
-const MOBILE_PRIMARY_PAGE_KEYS: PageKey[] = ['chat', 'premium', 'overview', 'query', 'profile'];
+const MOBILE_PRIMARY_PAGE_KEYS: PageKey[] = ['chat', 'image_generation', 'premium', 'overview', 'profile'];
 
 const allMenuItems: AppMenuItem[] = [
   { key: 'overview', icon: <LayoutDashboard size={18} />, label: '总览' },
@@ -61,6 +64,7 @@ const allMenuItems: AppMenuItem[] = [
   { key: 'query', icon: <TableProperties size={18} />, label: '查询' },
   { key: 'premium', icon: <BarChart3 size={18} />, label: '机会筛选与关注' },
   { key: 'chat', icon: <Bot size={18} />, label: '问答' },
+  { key: 'image_generation', icon: <ImageIcon size={18} />, label: '图片生成' },
   { key: 'llm_metrics', icon: <Activity size={18} />, label: 'LLM 耗时' },
   { key: 'users', icon: <Users size={18} />, label: '用户管理' },
   { key: 'pushplus', icon: <MessageCircleMore size={18} />, label: 'PushPlus' },
@@ -124,6 +128,7 @@ function App() {
     query: <DataQueryPage />,
     premium: user ? <PremiumPage currentUser={user} /> : null,
     chat: user ? <ChatPage currentUser={user} /> : null,
+    image_generation: user ? <ImageGenerationPage currentUser={user} /> : null,
     llm_metrics: <LlmMetricsPage />,
     users: user ? <UserAdminPage currentUser={user} onUserUpdated={setUser} /> : null,
     pushplus: <PushplusAdminPage />,

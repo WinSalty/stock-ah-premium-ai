@@ -351,6 +351,53 @@ CREATE TABLE IF NOT EXISTS `invitation_code` (
   KEY `idx_invitation_used_by` (`used_by_user_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='注册邀请码表';
 
+CREATE TABLE IF NOT EXISTS `ai_image_generation` (
+  `id` INT NOT NULL AUTO_INCREMENT COMMENT '自增主键',
+  `user_id` INT NOT NULL COMMENT '创建图片的系统用户 ID，普通用户查询按此字段隔离',
+  `prompt` TEXT NOT NULL COMMENT '用户提交的原始图片提示词',
+  `model` VARCHAR(64) NOT NULL COMMENT '实际调用的文生图模型',
+  `size` VARCHAR(32) NOT NULL COMMENT '实际请求的图片尺寸',
+  `status` VARCHAR(32) NOT NULL DEFAULT 'PENDING' COMMENT '生成状态，GENERATING、READY、FAILED',
+  `provider` VARCHAR(64) NOT NULL DEFAULT '86gamestore' COMMENT '图片生成供应商标识',
+  `generation_mode` VARCHAR(32) NOT NULL DEFAULT 'TEXT_TO_IMAGE' COMMENT '生成模式，TEXT_TO_IMAGE 或 IMAGE_REFERENCE',
+  `mime_type` VARCHAR(64) DEFAULT NULL COMMENT '输出图片 MIME 类型',
+  `file_relative_path` VARCHAR(512) DEFAULT NULL COMMENT '输出图片相对独立数据盘存储路径',
+  `file_size_bytes` INT DEFAULT NULL COMMENT '输出图片字节数',
+  `file_sha256` VARCHAR(64) DEFAULT NULL COMMENT '输出图片 SHA256',
+  `reference_file_relative_path` VARCHAR(512) DEFAULT NULL COMMENT '参考图相对独立数据盘存储路径',
+  `reference_mime_type` VARCHAR(64) DEFAULT NULL COMMENT '参考图 MIME 类型',
+  `reference_file_size_bytes` INT DEFAULT NULL COMMENT '参考图字节数',
+  `reference_file_sha256` VARCHAR(64) DEFAULT NULL COMMENT '参考图 SHA256',
+  `external_url_expires_unknown` TINYINT(1) NOT NULL DEFAULT 0 COMMENT '供应商返回的外部 URL 是否可能过期',
+  `request_payload_json` LONGTEXT DEFAULT NULL COMMENT '脱敏后的供应商请求摘要，不含鉴权头和 API Key',
+  `response_summary_json` LONGTEXT DEFAULT NULL COMMENT '脱敏后的供应商响应摘要',
+  `elapsed_ms` DOUBLE DEFAULT NULL COMMENT '生成、下载和落盘总耗时毫秒',
+  `error_message` VARCHAR(512) DEFAULT NULL COMMENT '失败摘要，不包含密钥',
+  `deleted_at` DATETIME DEFAULT NULL COMMENT '逻辑删除时间',
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '记录创建时间',
+  `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '记录更新时间',
+  PRIMARY KEY (`id`),
+  KEY `idx_ai_image_generation_user_created` (`user_id`, `created_at`),
+  KEY `idx_ai_image_generation_status_created` (`status`, `created_at`),
+  KEY `idx_ai_image_generation_file_sha` (`file_sha256`),
+  KEY `idx_ai_image_generation_reference_sha` (`reference_file_sha256`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='AI 图片生成记录表';
+
+CREATE TABLE IF NOT EXISTS `ai_image_user_quota` (
+  `id` INT NOT NULL AUTO_INCREMENT COMMENT '自增主键',
+  `user_id` INT NOT NULL COMMENT '系统用户 ID',
+  `daily_limit` INT NOT NULL DEFAULT 10 COMMENT '每日可生成次数，0 表示不可生成',
+  `quota_date` DATE DEFAULT NULL COMMENT '当前计数日期，按东八区计算',
+  `used_count` INT NOT NULL DEFAULT 0 COMMENT '当日已使用次数，调用失败会返还',
+  `last_reset_at` DATETIME DEFAULT NULL COMMENT '管理员最近重置时间',
+  `updated_by_user_id` INT DEFAULT NULL COMMENT '最近维护管理员用户 ID',
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '记录创建时间',
+  `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '记录更新时间',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_ai_image_user_quota_user` (`user_id`),
+  KEY `idx_ai_image_user_quota_user` (`user_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='AI 图片生成用户每日次数配置表';
+
 CREATE TABLE IF NOT EXISTS `watchlist_stock` (
   `id` INT NOT NULL AUTO_INCREMENT COMMENT '自增主键',
   `user_id` INT NOT NULL DEFAULT 1 COMMENT '所属用户 ID',
