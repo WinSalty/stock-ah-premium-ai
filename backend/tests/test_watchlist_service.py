@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+from datetime import datetime
 from decimal import Decimal
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 from app.db.base import Base
-from app.db.models.market import AHStockPair, AStockBasic, HKStockBasic
+from app.db.models.market import AHStockPair, AStockBasic, HKStockBasic, RealtimeQuoteSnapshot
 from app.schemas.watchlist import WatchlistCreate
 from app.services.watchlist_service import WatchlistService
 
@@ -53,6 +54,44 @@ def test_create_a_only_watchlist_clears_pair_only_alerts() -> None:
     assert item.h_price_alert_enabled is False
     assert item.h_price_alert_target_price is None
     assert item.holding_market == "A"
+
+
+def test_list_a_only_watchlist_returns_single_realtime_quote() -> None:
+    """确认单 A 股首页卡片可从实时快照表读取最新股价。
+
+    创建日期：2026-05-27
+    author: sunshengxian
+    """
+
+    db = _session()
+    WatchlistService(db).create(
+        WatchlistCreate(
+            target_type="A_ONLY",
+            a_ts_code="600519.SH",
+            push_enabled=False,
+        )
+    )
+    db.add(
+        RealtimeQuoteSnapshot(
+            market="A",
+            symbol="600519.SH",
+            last_price=Decimal("1666.66"),
+            currency="CNY",
+            quote_time=datetime.now(),
+            source="BAIDU_FINANCE",
+            quality="REALTIME",
+            is_active=True,
+        )
+    )
+    db.commit()
+
+    [opportunity] = WatchlistService(db).list_opportunities()
+
+    assert opportunity.premium is None
+    assert opportunity.single_quote is not None
+    assert opportunity.single_quote.market == "A"
+    assert opportunity.single_quote.symbol == "600519.SH"
+    assert opportunity.single_quote.last_price == Decimal("1666.66")
 
 
 def test_search_watchlist_candidates_by_target_type() -> None:

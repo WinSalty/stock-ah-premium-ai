@@ -457,6 +457,7 @@ export interface WatchlistStock {
 export interface WatchlistOpportunity {
   watchlist: WatchlistStock;
   premium: PremiumItem | null;
+  single_quote: RealtimeQuoteItem | null;
 }
 
 export interface WatchlistCreate {

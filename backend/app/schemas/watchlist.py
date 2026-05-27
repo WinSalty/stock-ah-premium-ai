@@ -6,7 +6,7 @@ from decimal import Decimal
 from pydantic import BaseModel, Field
 
 from app.schemas.common import OrmModel
-from app.schemas.market import PremiumQueryResponse
+from app.schemas.market import PremiumQueryResponse, RealtimeQuoteItem
 
 
 class WatchlistCreate(BaseModel):
@@ -98,6 +98,7 @@ class WatchlistOpportunityResponse(BaseModel):
 
     watchlist: WatchlistResponse
     premium: PremiumQueryResponse | None = None
+    single_quote: RealtimeQuoteItem | None = None
 
 
 class WatchlistCandidateResponse(BaseModel):

@@ -7,6 +7,7 @@ from app.core.config import Settings, get_settings
 from app.db.models.auth import AppUser
 from app.db.models.market import AHStockPair, AStockBasic, HKStockBasic, WatchlistStock
 from app.db.models.notification import PushplusBinding
+from app.schemas.market import RealtimeQuoteItem
 from app.schemas.watchlist import (
     WatchlistCandidateResponse,
     WatchlistCreate,
@@ -14,6 +15,13 @@ from app.schemas.watchlist import (
     WatchlistUpdate,
 )
 from app.services.premium_query_service import PremiumQueryService
+from app.services.realtime_market_service import (
+    DEFAULT_QUOTE_QUALITY,
+    REALTIME_MARKET_A,
+    REALTIME_MARKET_HK,
+    RealtimeMarketDataService,
+    RealtimeQuote,
+)
 
 WATCHLIST_TARGET_PAIR = "PAIR"
 WATCHLIST_TARGET_A_ONLY = "A_ONLY"
@@ -45,6 +53,7 @@ class WatchlistService:
         self.db = db
         self.settings = settings or get_settings()
         self.premium_query_service = PremiumQueryService(db)
+        self.realtime_market_data_service = RealtimeMarketDataService.from_db(db)
 
     def list_opportunities(
         self,
@@ -85,7 +94,13 @@ class WatchlistService:
                 if premium_row is not None
                 else None
             )
-            result.append(WatchlistOpportunityResponse(watchlist=item, premium=premium))
+            result.append(
+                WatchlistOpportunityResponse(
+                    watchlist=item,
+                    premium=premium,
+                    single_quote=self._single_quote(item),
+                )
+            )
         return result
 
     def create(self, payload: WatchlistCreate, user_id: int = 1) -> WatchlistStock:
@@ -322,6 +337,53 @@ class WatchlistService:
             item.a_price_alert_target_price = None
             item.a_price_alert_operator = "GTE"
             item.holding_market = "H"
+
+    def _single_quote(self, item: WatchlistStock) -> RealtimeQuoteItem | None:
+        """为单市场关注读取实时行情快照，供首页卡片展示股价。
+
+        创建日期：2026-05-27
+        author: sunshengxian
+        """
+
+        # A/H 配对仍走官方 AH 主表和实时溢价回写链路；单 A/单 H 没有 premium，
+        # 需要直接读取 water-stock 写入的 realtime_quote_snapshot。
+        if item.target_type == WATCHLIST_TARGET_A_ONLY and item.a_ts_code:
+            quote = self.realtime_market_data_service.provider.get_a_quote(item.a_ts_code)
+            return self._quote_response(
+                quote or self._unavailable_single_quote(REALTIME_MARKET_A, item.a_ts_code, "CNY")
+            )
+        if item.target_type == WATCHLIST_TARGET_H_ONLY and item.hk_ts_code:
+            quote = self.realtime_market_data_service.provider.get_hk_quote(item.hk_ts_code)
+            return self._quote_response(
+                quote or self._unavailable_single_quote(REALTIME_MARKET_HK, item.hk_ts_code, "HKD")
+            )
+        return None
+
+    def _unavailable_single_quote(self, market: str, symbol: str, currency: str) -> RealtimeQuote:
+        """构造无快照占位，前端可明确显示暂无报价而不是误判接口缺字段。"""
+
+        return RealtimeQuote(
+            market=market,
+            symbol=symbol,
+            last_price=None,
+            currency=currency,
+            quote_time=None,
+            source=None,
+            quality=DEFAULT_QUOTE_QUALITY,
+        )
+
+    def _quote_response(self, quote: RealtimeQuote) -> RealtimeQuoteItem:
+        """把实时快照 dataclass 转成 API 响应模型。"""
+
+        return RealtimeQuoteItem(
+            market=quote.market,
+            symbol=quote.symbol,
+            last_price=quote.last_price,
+            currency=quote.currency,
+            quote_time=quote.quote_time,
+            source=quote.source,
+            quality=quote.quality,
+        )
 
     def _search_a_candidates(self, keyword: str, limit: int) -> list[WatchlistCandidateResponse]:
         statement = select(AStockBasic).where(

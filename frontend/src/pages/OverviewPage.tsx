@@ -218,6 +218,41 @@ function formatPrice(value?: string | null, market: 'A' | 'H' = 'A') {
   return `${symbol}${parsed.toFixed(market === 'H' ? 3 : 2)}`;
 }
 
+function opportunityPrice(item: WatchlistOpportunity, market: 'A' | 'H') {
+  if (isPairOpportunity(item)) {
+    return market === 'A'
+      ? formatPrice(item.premium?.a_close, 'A')
+      : formatPrice(item.premium?.hk_close, 'H');
+  }
+  return formatPrice(item.single_quote?.last_price, market);
+}
+
+function singleQuoteStatusTag(item: WatchlistOpportunity) {
+  const quality = item.single_quote?.quality || 'UNAVAILABLE';
+  const labelMap: Record<string, string> = {
+    REALTIME: '实时',
+    STALE: '最近快照',
+    UNAVAILABLE: '暂无报价'
+  };
+  const colorMap: Record<string, string> = {
+    REALTIME: 'green',
+    STALE: 'orange',
+    UNAVAILABLE: 'default'
+  };
+  return <Tag color={colorMap[quality] || 'default'}>{labelMap[quality] || quality}</Tag>;
+}
+
+function singleQuoteTimeText(item: WatchlistOpportunity) {
+  if (!item.single_quote?.quote_time) {
+    return '报价时间缺失';
+  }
+  const date = new Date(item.single_quote.quote_time);
+  if (Number.isNaN(date.getTime())) {
+    return '报价时间缺失';
+  }
+  return `报价时间 ${date.toLocaleString('zh-CN', { hour12: false })}`;
+}
+
 function priceAlertText(item: WatchlistOpportunity) {
   const alerts: string[] = [];
   if (item.watchlist.a_price_alert_enabled && item.watchlist.a_price_alert_target_price !== null) {
@@ -1257,7 +1292,9 @@ function OverviewPage({ currentUser }: OverviewPageProps) {
                     <strong>{opportunityName(item)}</strong>
                   </span>
                   <span className="opportunity-card-head-actions">
-                    {statusTag(item.premium?.opportunity_status)}
+                    {isPairOpportunity(item)
+                      ? statusTag(item.premium?.opportunity_status)
+                      : singleQuoteStatusTag(item)}
                     <Button
                       size="small"
                       type="text"
@@ -1291,13 +1328,13 @@ function OverviewPage({ currentUser }: OverviewPageProps) {
                   {item.watchlist.target_type !== 'H_ONLY' ? (
                     <span>
                       A 最新价
-                      <b>{formatPrice(item.premium?.a_close, 'A')}</b>
+                      <b>{opportunityPrice(item, 'A')}</b>
                     </span>
                   ) : null}
                   {item.watchlist.target_type !== 'A_ONLY' ? (
                     <span>
                       H 最新价
-                      <b>{formatPrice(item.premium?.hk_close, 'H')}</b>
+                      <b>{opportunityPrice(item, 'H')}</b>
                     </span>
                   ) : null}
                 </div>
@@ -1348,7 +1385,10 @@ function OverviewPage({ currentUser }: OverviewPageProps) {
                       </Tag>
                     </>
                   ) : (
-                    <Tag color="blue">{opportunityTargetType(item) === 'A_ONLY' ? '仅 A 股' : '仅 H 股'}</Tag>
+                    <>
+                      <Tag color="blue">{opportunityTargetType(item) === 'A_ONLY' ? '仅 A 股' : '仅 H 股'}</Tag>
+                      <Tag color="default">{singleQuoteTimeText(item)}</Tag>
+                    </>
                   )}
                 </div>
               </div>
