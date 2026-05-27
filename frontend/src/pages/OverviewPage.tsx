@@ -244,13 +244,13 @@ function singleQuoteStatusTag(item: WatchlistOpportunity) {
 
 function singleQuoteTimeText(item: WatchlistOpportunity) {
   if (!item.single_quote?.quote_time) {
-    return '报价时间缺失';
+    return '行情日期缺失';
   }
   const date = new Date(item.single_quote.quote_time);
   if (Number.isNaN(date.getTime())) {
-    return '报价时间缺失';
+    return '行情日期缺失';
   }
-  return `报价时间 ${date.toLocaleString('zh-CN', { hour12: false })}`;
+  return `行情日期 ${date.toLocaleDateString('zh-CN')}`;
 }
 
 function priceAlertText(item: WatchlistOpportunity) {
