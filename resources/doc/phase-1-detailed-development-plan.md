@@ -36,7 +36,7 @@
 - 语言与框架：Python 3.11+、FastAPI。
 - 数据访问：SQLAlchemy 2.x、Alembic、PyMySQL。
 - 数据处理：pandas、pydantic v2、python-dateutil。
-- Tushare 接入：使用 Tushare Python SDK，并将 SDK 内部请求地址切到中转服务 `http://tsy.xiaodefa.cn`；Token 优先从本机文件读取。
+- Tushare 接入：使用 Tushare Python SDK，并将 SDK 内部请求地址切到中转服务 `https://tt.xiaodefa.cn`；Token 优先从本机文件读取。
 - 后台任务：一阶段使用 APScheduler + 后端进程内任务；若后续任务量变大，再引入 Redis/RQ 或 Celery。
 - 测试：pytest、respx 或 responses、freezegun。
 
@@ -65,7 +65,7 @@
 ```bash
 STOCK_AH_DB_URL=mysql+pymysql://<user>:<password>@127.0.0.1:3306/stock_ah_ai?charset=utf8mb4
 TUSHARE_TOKEN_FILE=/Users/salty/codeProject/ai/doc/tushare-token.txt
-TUSHARE_API_URL=http://tsy.xiaodefa.cn
+TUSHARE_API_URL=https://tt.xiaodefa.cn
 SYNC_SCHEDULER_ENABLED=true
 SYNC_SCHEDULER_TIMEZONE=Asia/Shanghai
 LLM_BASE_URL=https://api.deepseek.com

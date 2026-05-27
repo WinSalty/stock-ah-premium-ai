@@ -21,8 +21,8 @@
 ## Git Push 操作口径
 
 - 本项目远端为 `https://github.com/WinSalty/stock-ah-premium-ai.git`，本机命令行 Git 使用 macOS `osxkeychain` 凭据；IDEA 推送成功通常说明 IDEA 自身登录态有效，但 Codex/终端推送可直接走同一套命令行 Git 配置。
-- 完成正式编码或正式项目文档交付后，除非用户明确说“不用 push”或“只本地提交”，默认都要在 commit 后直接 push。先执行 `git -C /Users/salty/codeProject/ai/coding/stock-ah-premium-ai status --short --branch` 确认工作区状态，再直接执行 `git -C /Users/salty/codeProject/ai/coding/stock-ah-premium-ai push origin main`，不要额外执行 `push --dry-run`。
-- `git push origin main` 只允许尝试一次；如果失败或超时，立即停止并在交付说明中明确“本地已提交但未 push”以及失败原因，不要自动重试、不要改协议参数、不要改 Git 配置、不要切换凭据。
+- 完成正式编码或正式项目文档交付后，除非用户明确说“不用 push”或“只本地提交”，默认都要在 commit 后直接 push。先执行 `git -C /Users/salty/codeProject/ai/coding/stock-ah-premium-ai status --short --branch` 确认工作区状态，再通过 `zsh -lc 'cd /Users/salty/codeProject/ai/coding/stock-ah-premium-ai && git push origin main'` 执行一次 push；这样可加载本机 `~/.zprofile` 里的终端代理环境，避免 Codex 当前会话未继承代理导致 GitHub 连接超时。不要额外执行 `push --dry-run`。
+- `git push origin main` 只允许尝试一次；如果失败或超时，立即停止并在交付说明中明确“本地已提交但未 push”以及失败原因，不要自动重试、不要改协议参数、不要改 Git 配置、不要切换凭据。若确需再次尝试，必须由用户重新明确要求。
 - 如果 `git push origin main` 提示认证失败，再检查 `printf 'protocol=https\nhost=github.com\n\n' | git credential-osxkeychain get` 是否能返回 `username` 和已打码的 `password`；不要打印真实 token。若 keychain 没有凭据，再询问用户是否允许使用 `/Users/salty/codeProject/ai/doc/github-token.txt` 重新写入 GitHub HTTPS 凭据。
 - 如果用户说“不用 push”或“只本地提交”，则保持本地提交即可，并在交付说明里明确“本地领先远端，未 push”。
 

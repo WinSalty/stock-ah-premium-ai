@@ -45,7 +45,7 @@ def test_tushare_client_uses_sdk_proxy(monkeypatch) -> None:
     settings = Settings(
         tushare_token="local-token",
         tushare_token_file=None,
-        tushare_api_url="http://tsy.xiaodefa.cn/",
+        tushare_api_url="https://tt.xiaodefa.cn/",
         tushare_timeout_seconds=12.0,
         tushare_request_interval_seconds=0,
     )
@@ -57,7 +57,7 @@ def test_tushare_client_uses_sdk_proxy(monkeypatch) -> None:
     )
 
     assert pro_api_calls == [("local-token", 12.0)]
-    assert fake_pro._DataApi__http_url == "http://tsy.xiaodefa.cn"
+    assert fake_pro._DataApi__http_url == "https://tt.xiaodefa.cn"
     assert fake_pro.calls == [
         ("stock_basic", "ts_code,name,close", {"list_status": "L"}),
     ]
