@@ -166,10 +166,10 @@
 | `stock_basic` | 全量一次 | 1 | 正常上市 A 股基础信息。 |
 | `trade_cal` | 日期范围 | 1 到 3 | 2016 至当前日历。 |
 | `daily` | 按 `trade_date` 拉全市场 | 约 2500 | 每个交易日一次，避免单股逐只拉取导致请求量爆炸。 |
-| `dividend` | 按 `ex_date` 拉全市场 | 约 3800 | 每个自然日一次；无数据日期返回 0 行也记录进度。 |
+| `dividend` | 按开市日的 `ex_date` 拉全市场 | 约 2500 | 除权除息日按交易日发生，跳过周末和节假日以减少无效请求。 |
 | `daily_basic` | 最新交易日和少量兜底日 | 20 到 40 | 第一版只做最新筛选指标。 |
 
-合计约 6300 到 6500 次请求。按 100 次/分钟保守速度估算，首次全量回补约 65 分钟。实际耗时还取决于网络、中转服务延迟、MySQL 写入速度和失败重试次数。
+合计约 5000 到 5100 次请求。按 100 次/分钟保守速度估算，首次全量回补约 50 分钟。实际耗时还取决于网络、中转服务延迟、MySQL 写入速度和失败重试次数。
 
 ### 4.2 日常增量
 
@@ -206,7 +206,7 @@
    - 写入 `a_daily_quote`，按 `ts_code + trade_date` 幂等 upsert。
 
 4. `backfill_dividend`
-   - 按自然日循环调用 `dividend(ex_date=YYYYMMDD)`。
+   - 按开市交易日循环调用 `dividend(ex_date=YYYYMMDD)`。
    - 只将 `ex_date` 有效的数据写入 `a_dividend`。
    - 后续计算时只采用 `div_proc=实施` 或等价已实施状态。
 
@@ -226,7 +226,7 @@
 | 阶段 | checkpoint key | checkpoint value |
 | --- | --- | --- |
 | `backfill_daily_quote` | `dividend_reinvestment.daily.last_trade_date` | 最近成功写入的交易日。 |
-| `backfill_dividend` | `dividend_reinvestment.dividend.last_ex_date` | 最近成功处理的自然日。 |
+| `backfill_dividend` | `dividend_reinvestment.dividend.last_ex_date` | 最近成功处理的除权除息交易日。 |
 | `backfill_latest_daily_basic` | `dividend_reinvestment.daily_basic.latest_trade_date` | 最新可用每日指标日期。 |
 | `calculate_backtest` | `dividend_reinvestment.backtest.last_ts_code` | 最近成功计算的股票代码。 |
 
@@ -246,6 +246,7 @@
 - 如果已有 `RUNNING` 状态的红利回补任务，新的同类任务直接拒绝。
 - 如果全局已有其他 Tushare 长任务运行，红利回补任务排队或拒绝，避免并发超限。
 - 所有阶段写入 `sync_run` 或专用 run 表，页面显示当前阶段、进度日期、请求数、行数和失败原因。
+- 回测 summary/yearly 结果按 500 行分块 upsert，避免年度明细批量过大触发 MySQL `max_allowed_packet` 或连接断开。
 
 ## 6. 计算口径
 
@@ -335,32 +336,45 @@
 
 ### 8.1 后端 API
 
-建议新增：
+当前已落地：
 
 - `POST /api/sync/batches/dividend-reinvestment-data`
   - 触发数据落地和回测计算。
   - 参数包括 `mode`、`start_date`、`end_date`、`initial_amount`、`cash_div_field`。
 
-- `GET /api/dividend-reinvestment/screens`
-  - 查询摘要结果列表。
-  - 支持行业、市值、年化收益率、连续分红年数、数据质量、分页和排序。
+- `GET /api/dividend-reinvestment/health`
+  - 查询股票池、日线、分红、最新每日指标和最近成功回测批次。
 
-- `GET /api/dividend-reinvestment/screens/{run_id}/{ts_code}/yearly`
+- `GET /api/dividend-reinvestment/summaries`
+  - 查询摘要结果列表。
+  - 支持关键词、行业、数据质量、年化收益率、分红年数、连续分红年数、股息率、PE、分页和排序。
+
+- `GET /api/dividend-reinvestment/yearly/{ts_code}`
   - 查询单只股票年度明细。
+  - 可传 `run_id`；不传时默认读取最近成功批次。
 
 - `GET /api/dividend-reinvestment/runs`
   - 查询回测批次。
 
 ### 8.2 前端页面
 
-建议新增菜单：“红利再投筛选”。
+已新增菜单：“分红再投筛选”。
 
 页面结构：
 
-- 顶部筛选区：回测批次、行业、最低年化收益率、最低连续分红年数、市值区间、股息率区间。
-- 摘要表：股票、行业、年化收益率、累计收益率、连续分红年数、分红次数、最新股息率、最新市值、数据质量。
-- 明细抽屉或弹窗：展示年度表，字段对齐截图里的“年份、股价、每股分红、分红金额、再投入可买股数、持仓股数、市值、收益、收益率”。
-- 批次状态区：显示全量回补进度、当前阶段、最后成功日期、失败原因。
+- 顶部健康区：展示 A 股基础、日线行情、分红数据、最新指标覆盖范围。
+- 筛选区：回测批次、关键词、数据质量、最低年化收益率、最低分红年数、最低连续分红、最低股息率、最高 PE。
+- 摘要表：股票、行业、年化收益率、累计收益率、连续分红年数、累计分红、最新股息率、PE、PB、数据质量。
+- 明细抽屉：展示年度表，字段对齐截图里的“年份、股价、每股分红、分红金额、再投入可买股数、持仓股数、市值、收益、收益率”。
+
+### 8.3 中转稳定性处理
+
+历史同步测试中，`tt.xiaodefa.cn` 在长时间 `daily` 回补时出现过 SSL EOF、IncompleteRead 和短暂维护响应。当前已在 `TushareClient` 增加请求级重试：
+
+- `TUSHARE_REQUEST_MAX_ATTEMPTS` 默认 `5`。
+- `TUSHARE_RETRY_BACKOFF_SECONDS` 默认 `3.0`。
+- 对 SSL EOF、IncompleteRead、连接断开、短暂维护、超时做退避重试并重建 SDK 连接。
+- 对权限不足类错误不重试，直接失败，避免误消耗请求。
 
 ## 9. 与现有能力的关系
 

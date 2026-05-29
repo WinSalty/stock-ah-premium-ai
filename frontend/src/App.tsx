@@ -5,6 +5,7 @@ import {
   Activity,
   BarChart3,
   Bot,
+  Coins,
   DatabaseZap,
   Image as ImageIcon,
   LayoutDashboard,
@@ -31,6 +32,7 @@ import ProfilePage from './pages/ProfilePage';
 import LlmMetricsPage from './pages/LlmMetricsPage';
 import XueqiuPublishPage from './pages/XueqiuPublishPage';
 import ImageGenerationPage from './pages/ImageGenerationPage';
+import DividendReinvestmentPage from './pages/DividendReinvestmentPage';
 import { fetchCurrentUser } from './api/auth';
 import { clearAuthToken, getAuthToken } from './api/client';
 import type { AuthTokenResponse, UserInfo } from './types/domain';
@@ -40,6 +42,7 @@ type PageKey =
   | 'sync'
   | 'query'
   | 'premium'
+  | 'dividend_reinvestment'
   | 'chat'
   | 'image_generation'
   | 'llm_metrics'
@@ -63,6 +66,7 @@ const allMenuItems: AppMenuItem[] = [
   { key: 'sync', icon: <DatabaseZap size={18} />, label: '同步' },
   { key: 'query', icon: <TableProperties size={18} />, label: '查询' },
   { key: 'premium', icon: <BarChart3 size={18} />, label: '机会筛选与关注' },
+  { key: 'dividend_reinvestment', icon: <Coins size={18} />, label: '分红再投筛选' },
   { key: 'chat', icon: <Bot size={18} />, label: '问答' },
   { key: 'image_generation', icon: <ImageIcon size={18} />, label: '图片生成' },
   { key: 'llm_metrics', icon: <Activity size={18} />, label: 'LLM 耗时' },
@@ -127,6 +131,7 @@ function App() {
     sync: <SyncPage />,
     query: <DataQueryPage />,
     premium: user ? <PremiumPage currentUser={user} /> : null,
+    dividend_reinvestment: <DividendReinvestmentPage />,
     chat: user ? <ChatPage currentUser={user} /> : null,
     image_generation: user ? <ImageGenerationPage currentUser={user} /> : null,
     llm_metrics: <LlmMetricsPage />,

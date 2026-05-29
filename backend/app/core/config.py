@@ -32,6 +32,8 @@ class Settings(BaseSettings):
         default=0.6,
         alias="TUSHARE_REQUEST_INTERVAL_SECONDS",
     )
+    tushare_request_max_attempts: int = Field(default=5, alias="TUSHARE_REQUEST_MAX_ATTEMPTS")
+    tushare_retry_backoff_seconds: float = Field(default=3.0, alias="TUSHARE_RETRY_BACKOFF_SECONDS")
     llm_base_url: str = Field(default="https://api.deepseek.com", alias="LLM_BASE_URL")
     llm_api_key: str | None = Field(default=None, alias="LLM_API_KEY")
     llm_api_key_file: Path | None = Field(

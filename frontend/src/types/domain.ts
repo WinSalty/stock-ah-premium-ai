@@ -224,6 +224,111 @@ export interface SyncRunFilters {
   limit?: number;
 }
 
+export interface DataRangeHealth {
+  row_count: number;
+  min_date: string | null;
+  max_date: string | null;
+}
+
+export interface DividendReinvestmentHealth {
+  stock_count: number;
+  daily_quote: DataRangeHealth;
+  dividend: DataRangeHealth;
+  daily_basic: DataRangeHealth;
+  latest_success_run_id: number | null;
+}
+
+export interface DividendReinvestmentRun {
+  id: number;
+  run_key: string;
+  start_date: string;
+  end_date: string;
+  initial_amount: string;
+  cash_div_field: string;
+  status: string;
+  stock_count: number;
+  summary_count: number;
+  error_message: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+}
+
+export interface DividendReinvestmentSummaryItem {
+  run_id: number;
+  ts_code: string;
+  symbol: string | null;
+  name: string;
+  industry: string | null;
+  list_date: string | null;
+  start_trade_date: string | null;
+  end_trade_date: string | null;
+  initial_amount: string;
+  initial_price: string | null;
+  initial_shares: string | null;
+  final_price: string | null;
+  final_shares: string | null;
+  final_market_value: string | null;
+  total_cash_dividend: string | null;
+  total_reinvested_amount: string | null;
+  total_reinvested_shares: string | null;
+  dividend_event_count: number;
+  dividend_year_count: number;
+  consecutive_dividend_years: number;
+  total_return_amount: string | null;
+  total_return_pct: string | null;
+  annualized_return_pct: string | null;
+  latest_dividend_yield_ttm: string | null;
+  latest_total_mv: string | null;
+  latest_pe_ttm: string | null;
+  latest_pb: string | null;
+  rank_score: string | null;
+  data_quality: string;
+  data_issue: string | null;
+}
+
+export interface DividendReinvestmentSummaryParams {
+  run_id?: number;
+  keyword?: string;
+  industry?: string;
+  data_quality?: string;
+  min_annualized_return_pct?: number;
+  min_dividend_year_count?: number;
+  min_consecutive_dividend_years?: number;
+  min_latest_dividend_yield_ttm?: number;
+  max_latest_pe_ttm?: number;
+  page: number;
+  page_size: number;
+}
+
+export interface DividendReinvestmentSummaryResponse {
+  run_id: number | null;
+  total: number;
+  page: number;
+  page_size: number;
+  items: DividendReinvestmentSummaryItem[];
+}
+
+export interface DividendReinvestmentYearlyItem {
+  run_id: number;
+  ts_code: string;
+  year: number;
+  year_end_trade_date: string | null;
+  year_end_price: string | null;
+  cash_div_per_share: string | null;
+  cash_div_amount: string | null;
+  stock_div_per_share: string | null;
+  stock_div_shares: string | null;
+  reinvest_price_avg: string | null;
+  reinvested_shares: string | null;
+  holding_shares: string | null;
+  market_value: string | null;
+  return_amount: string | null;
+  return_pct: string | null;
+  annualized_return_pct: string | null;
+  dividend_event_count: number;
+  note: string | null;
+}
+
 export interface PremiumItem {
   trade_date: string;
   a_ts_code: string;

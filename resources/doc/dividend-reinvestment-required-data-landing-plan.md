@@ -21,8 +21,9 @@
 当前代码已按本文档第一版口径接入统一同步入口：
 
 - 后端批量接口：`POST /api/sync/batches/dividend-reinvestment-data`。
+- 后端筛选接口：`GET /api/dividend-reinvestment/health`、`GET /api/dividend-reinvestment/summaries`、`GET /api/dividend-reinvestment/yearly/{ts_code}`、`GET /api/dividend-reinvestment/runs`。
 - 同步数据集名：`dividend_reinvestment_data_landing`。
-- 前端入口：数据同步页“同步分红再投数据”按钮。
+- 前端入口：数据同步页“同步分红再投数据”按钮，以及“分红再投筛选”菜单。
 - 结果查询：数据查询页可查看 `dividend_reinvestment_backtest_run`、`dividend_reinvestment_backtest_summary`、`dividend_reinvestment_backtest_yearly`。
 
 | 数据域 | Tushare 接口 | 本地表 | 是否必须 | 落地粒度 | 用途 |
@@ -142,7 +143,7 @@
 
 | 参数 | 值 | 说明 |
 | --- | --- | --- |
-| `ex_date` | 单个自然日 | 按除权除息日拉全市场，适合分红再投入计算。 |
+| `ex_date` | 单个开市交易日 | 按除权除息日拉全市场；除权除息日应落在交易日，跳过周末和节假日以减少无效请求。 |
 
 备选参数：
 
@@ -170,7 +171,7 @@
 落地规则：
 
 - 按 `ts_code + end_date + ann_date + div_proc` upsert，沿用现有模型唯一键。
-- 第一版请求时按 `ex_date` 循环；返回数据必须保存 `ex_date`。
+- 第一版请求时按开市交易日的 `ex_date` 循环；返回数据必须保存 `ex_date`。
 - `ex_date` 为空的数据不参与回测，可不写入或写入后计算阶段过滤。
 - `cash_div_tax`、`cash_div`、`stk_div` 全为空或全为 0 的记录不参与回测。
 - 计算阶段只取实施类状态，状态枚举以真实返回值抽样后固化；初版可以先支持 `实施`，其他状态进入待确认列表。
@@ -387,6 +388,7 @@ npm --prefix /Users/salty/codeProject/ai/coding/stock-ah-premium-ai/frontend run
 
 验收结果：
 
-- Ruff：通过。
-- 后端目标测试：6 个用例全部通过。
-- 前端构建：通过；仅保留 Vite 对既有大 chunk 的体积提示。
+- Ruff：已重新通过。
+- 后端目标测试：13 个用例全部通过。
+- 前端构建：已重新通过；仅保留 Vite 对既有大 chunk 的体积提示。
+- 真实数据：最新成功回测批次为 `3`，生成股票摘要 2392 条、年度明细 26312 条；筛选查询和单股年度明细查询已通过本地 MySQL 验收。

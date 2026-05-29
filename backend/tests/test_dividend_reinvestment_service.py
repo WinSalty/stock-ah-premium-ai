@@ -10,9 +10,11 @@ from sqlalchemy.orm import Session
 
 from app.db.base import Base
 from app.db.models.market import (
+    DividendReinvestmentBacktestRun,
     DividendReinvestmentBacktestSummary,
     DividendReinvestmentBacktestYearly,
 )
+from app.db.models.sync import SyncCheckpoint
 from app.services.dividend_reinvestment_service import DividendReinvestmentDataLandingService
 from app.services.tushare_client import TushareResult
 
@@ -47,6 +49,7 @@ class FakeTushareClient:
                     "ts_code": "000001.SZ",
                     "symbol": "000001",
                     "name": "平安银行",
+                    "area": None,
                     "industry": "银行",
                     "list_status": "L",
                     "list_date": "19910403",
@@ -120,7 +123,7 @@ class FakeTushareClient:
         author: sunshengxian
         """
 
-        if ex_date != "20260103":
+        if ex_date != "20260105":
             return []
         return [
             {
@@ -132,8 +135,8 @@ class FakeTushareClient:
                 "cash_div": Decimal("1"),
                 "cash_div_tax": Decimal("1"),
                 "record_date": "20260102",
-                "ex_date": "20260103",
-                "pay_date": "20260103",
+                "ex_date": "20260105",
+                "pay_date": "20260105",
             }
         ]
 
@@ -180,6 +183,27 @@ class SqliteUpsertRepository:
         return len(rows)
 
 
+class RecordingRepository:
+    """记录分块写入批次的测试仓储。
+
+    创建日期：2026-05-30
+    author: sunshengxian
+    """
+
+    def __init__(self) -> None:
+        self.batch_sizes: list[int] = []
+
+    def upsert_many(self, model: type, rows: list[dict[str, Any]]) -> int:
+        """只记录每次写入行数，用于验证大结果集会被拆分提交。
+
+        创建日期：2026-05-30
+        author: sunshengxian
+        """
+
+        self.batch_sizes.append(len(rows))
+        return len(rows)
+
+
 def test_dividend_reinvestment_sync_lands_data_and_calculates_backtest() -> None:
     """确认分红再投入同步会落基础数据并生成股票级和年度回测结果。
 
@@ -222,3 +246,167 @@ def test_dividend_reinvestment_sync_lands_data_and_calculates_backtest() -> None
     assert yearly.reinvested_shares == Decimal("833.33333333")
     assert ("daily", {"trade_date": "20260102"}) in client.calls
     assert ("daily", {"trade_date": "20260105"}) in client.calls
+    assert ("dividend", {"ex_date": "20260105"}) in client.calls
+    assert ("dividend", {"ex_date": "20260103"}) not in client.calls
+
+
+def test_model_row_keeps_null_values_for_bulk_upsert() -> None:
+    """确认可空字段不会被过滤，避免 MySQL 批量 upsert 字段集合不一致。
+
+    创建日期：2026-05-29
+    author: sunshengxian
+    """
+
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    with Session(engine) as db:
+        service = DividendReinvestmentDataLandingService(
+            db,
+            client=FakeTushareClient(calls=[]),
+            repository=SqliteUpsertRepository(db),
+        )
+        row = service._normalize_stock_basic_row(
+            {
+                "ts_code": "000001.SZ",
+                "symbol": "000001",
+                "name": "平安银行",
+                "area": None,
+                "industry": "银行",
+                "list_status": "L",
+                "list_date": "19910403",
+            }
+        )
+
+    assert "area" in row
+    assert row["area"] is None
+
+
+def test_incremental_params_keep_backtest_start_when_daily_checkpoint_exists() -> None:
+    """确认增量断点只影响数据同步阶段，不改变分红再投入回测起点。
+
+    创建日期：2026-05-30
+    author: sunshengxian
+    """
+
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    with Session(engine) as db:
+        db.add(
+            SyncCheckpoint(
+                dataset="dividend_reinvestment_data_landing",
+                scope_key="daily",
+                last_success_date=date(2026, 5, 29),
+            )
+        )
+        db.commit()
+        service = DividendReinvestmentDataLandingService(
+            db,
+            client=FakeTushareClient(calls=[]),
+            repository=SqliteUpsertRepository(db),
+        )
+
+        params = service._normalize_params({"mode": "incremental"})
+
+    assert params.start_date == date(2016, 1, 1)
+
+
+def test_upsert_many_chunked_splits_large_backtest_result() -> None:
+    """确认回测结果按固定大小分块写入，避免真实 MySQL 大 SQL 断连。
+
+    创建日期：2026-05-30
+    author: sunshengxian
+    """
+
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    repository = RecordingRepository()
+    with Session(engine) as db:
+        service = DividendReinvestmentDataLandingService(
+            db,
+            client=FakeTushareClient(calls=[]),
+            repository=repository,  # type: ignore[arg-type]
+        )
+
+        total = service._upsert_many_chunked(
+            DividendReinvestmentBacktestSummary,
+            [{"run_id": 1}, {"run_id": 1}, {"run_id": 1}, {"run_id": 1}, {"run_id": 1}],
+            chunk_size=2,
+        )
+
+    assert total == 5
+    assert repository.batch_sizes == [2, 2, 1]
+
+
+def test_query_summaries_uses_latest_success_run_and_filters() -> None:
+    """确认分红再投榜单默认读取最新成功批次并支持核心筛选条件。
+
+    创建日期：2026-05-30
+    author: sunshengxian
+    """
+
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    with Session(engine) as db:
+        run = DividendReinvestmentBacktestRun(
+            run_key="test-run",
+            start_date=date(2026, 1, 2),
+            end_date=date(2026, 1, 5),
+            initial_amount=Decimal("100000"),
+            cash_div_field="cash_div_tax",
+            status="SUCCESS",
+        )
+        db.add(run)
+        db.flush()
+        db.add_all(
+            [
+                DividendReinvestmentBacktestSummary(
+                    run_id=run.id,
+                    ts_code="000001.SZ",
+                    symbol="000001",
+                    name="平安银行",
+                    industry="银行",
+                    initial_amount=Decimal("100000"),
+                    dividend_year_count=10,
+                    consecutive_dividend_years=8,
+                    annualized_return_pct=Decimal("12.5"),
+                    latest_dividend_yield_ttm=Decimal("4.2"),
+                    latest_pe_ttm=Decimal("8.5"),
+                    rank_score=Decimal("24.7"),
+                    data_quality="COMPLETE",
+                ),
+                DividendReinvestmentBacktestSummary(
+                    run_id=run.id,
+                    ts_code="000002.SZ",
+                    symbol="000002",
+                    name="万科A",
+                    industry="房地产",
+                    initial_amount=Decimal("100000"),
+                    dividend_year_count=2,
+                    consecutive_dividend_years=0,
+                    annualized_return_pct=Decimal("1.2"),
+                    latest_dividend_yield_ttm=Decimal("0.5"),
+                    latest_pe_ttm=Decimal("40"),
+                    rank_score=Decimal("3.7"),
+                    data_quality="COMPLETE",
+                ),
+            ]
+        )
+        db.commit()
+
+        target_run_id, total, rows = DividendReinvestmentDataLandingService(db).query_summaries(
+            run_id=None,
+            keyword="银行",
+            industry=None,
+            data_quality="COMPLETE",
+            min_annualized_return_pct=Decimal("10"),
+            min_dividend_year_count=5,
+            min_consecutive_dividend_years=5,
+            min_latest_dividend_yield_ttm=Decimal("3"),
+            max_latest_pe_ttm=Decimal("12"),
+            page=1,
+            page_size=10,
+        )
+
+    assert target_run_id == run.id
+    assert total == 1
+    assert rows[0].ts_code == "000001.SZ"

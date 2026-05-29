@@ -1016,6 +1016,29 @@ body {
   align-items: end;
 }
 
+.dividend-health-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.dividend-health-card {
+  display: grid;
+  gap: 4px;
+}
+
+.dividend-health-card .ant-typography {
+  margin: 0;
+}
+
+.dividend-filter-grid {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(140px, 1fr));
+  gap: 12px;
+  align-items: end;
+}
+
 .user-admin-table-panel {
   margin-top: 16px;
 }
@@ -2295,6 +2318,8 @@ pre.llm-payload-viewer,
   .sync-batch-grid,
   .sync-dataset-note,
   .sync-run-filter-grid,
+  .dividend-health-grid,
+  .dividend-filter-grid,
   .llm-metric-filter-grid,
   .xueqiu-setting-grid,
   .premium-filter-grid {
@@ -2583,6 +2608,8 @@ pre.llm-payload-viewer,
   .sync-run-filter-grid,
   .xueqiu-setting-grid,
   .premium-filter-grid,
+  .dividend-health-grid,
+  .dividend-filter-grid,
   .manual-import-grid,
   .llm-metric-filter-grid,
   .metrics-summary-grid,

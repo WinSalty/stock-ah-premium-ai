@@ -58,15 +58,25 @@ class TushareClient:
         token = self.settings.resolve_tushare_token()
         if not token:
             raise TushareError("Tushare Token 未配置，请设置 TUSHARE_TOKEN 或 TUSHARE_TOKEN_FILE")
-        self._wait_for_rate_limit()
-        try:
-            frame = self._get_pro(token).query(
-                api_name,
-                fields=",".join(fields or []),
-                **(params or {}),
-            )
-        except Exception as exc:
-            raise TushareError(self._format_error(exc)) from exc
+        attempts = max(int(self.settings.tushare_request_max_attempts), 1)
+        frame: pd.DataFrame | None = None
+        for attempt in range(1, attempts + 1):
+            self._wait_for_rate_limit()
+            try:
+                frame = self._get_pro(token).query(
+                    api_name,
+                    fields=",".join(fields or []),
+                    **(params or {}),
+                )
+                break
+            except Exception as exc:
+                message = self._format_error(exc)
+                if attempt >= attempts or not self._is_retryable_error(message):
+                    raise TushareError(message) from exc
+                # 中转服务长时间批量同步时会偶发 SSL EOF、响应未读完或短暂维护；
+                # 这类错误不代表参数或权限错误，重建 SDK 连接并退避后重试，避免整批任务中断。
+                self._pro = None
+                sleep(max(self.settings.tushare_retry_backoff_seconds, 0) * attempt)
         if frame is None:
             return TushareResult(fields=fields or [], rows=[])
         if not isinstance(frame, pd.DataFrame):
@@ -105,3 +115,29 @@ class TushareClient:
         if "超时" in msg or "timeout" in msg.lower():
             return f"Tushare 调用超时，可能触发了中转服务冷却或网络较慢：{msg}"
         return msg
+
+    def _is_retryable_error(self, message: str) -> bool:
+        """判断 Tushare 错误是否适合请求级重试。
+
+        创建日期：2026-05-30
+        author: sunshengxian
+        """
+
+        lowered = message.lower()
+        if "权限" in message or "permission" in lowered or "2002" in message:
+            return False
+        retry_markers = (
+            "ssleoferror",
+            "unexpected_eof",
+            "incompleteread",
+            "connection broken",
+            "max retries exceeded",
+            "remote end closed",
+            "remote disconnected",
+            "系统短暂维护",
+            "稍后重试",
+            "timeout",
+            "timed out",
+            "超时",
+        )
+        return any(marker in lowered or marker in message for marker in retry_markers)

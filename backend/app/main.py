@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes_auth import router as auth_router
 from app.api.routes_chat import router as chat_router
+from app.api.routes_dividend_reinvestment import router as dividend_reinvestment_router
 from app.api.routes_image_generation import router as image_generation_router
 from app.api.routes_limit_up_push import router as limit_up_push_router
 from app.api.routes_llm_metrics import router as llm_metrics_router
@@ -100,6 +101,11 @@ def create_app() -> FastAPI:
     app.include_router(watchlist_router, prefix="/api", tags=["watchlist"])
     app.include_router(notifications_router, prefix="/api", tags=["notifications"])
     app.include_router(query_router, prefix="/api", tags=["query"])
+    app.include_router(
+        dividend_reinvestment_router,
+        prefix="/api",
+        tags=["dividend-reinvestment"],
+    )
     app.include_router(chat_router, prefix="/api", tags=["chat"])
     app.include_router(image_generation_router, prefix="/api", tags=["image-generation"])
     app.include_router(llm_metrics_router, prefix="/api", tags=["llm-metrics"])

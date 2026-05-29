@@ -7,7 +7,7 @@ from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import desc, func, select
+from sqlalchemy import desc, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
@@ -31,6 +31,7 @@ DIVIDEND_REINVESTMENT_DATASET = "dividend_reinvestment_data_landing"
 DEFAULT_BACKTEST_START_DATE = date(2016, 1, 1)
 DEFAULT_INITIAL_AMOUNT = Decimal("100000")
 MAX_REINVEST_PRICE_LOOKAHEAD_DAYS = 10
+RESULT_UPSERT_CHUNK_SIZE = 500
 
 
 @dataclass(frozen=True)
@@ -204,8 +205,14 @@ class DividendReinvestmentDataLandingService:
                 if summary:
                     summary_rows.append(summary)
                     yearly_rows.extend(yearly)
-            self.repository.upsert_many(DividendReinvestmentBacktestSummary, summary_rows)
-            self.repository.upsert_many(DividendReinvestmentBacktestYearly, yearly_rows)
+            self._upsert_many_chunked(
+                DividendReinvestmentBacktestSummary,
+                summary_rows,
+            )
+            self._upsert_many_chunked(
+                DividendReinvestmentBacktestYearly,
+                yearly_rows,
+            )
             run.status = "SUCCESS"
             run.stock_count = len(stocks)
             run.summary_count = len(summary_rows)
@@ -231,11 +238,8 @@ class DividendReinvestmentDataLandingService:
         mode = str(params.get("mode") or "incremental")
         requested_start = self._coerce_date(params.get("start_date"))
         requested_end = self._coerce_date(params.get("end_date")) or date.today()
-        start_date = requested_start or (
-            DEFAULT_BACKTEST_START_DATE
-            if mode == "full"
-            else self._checkpoint_next_date("daily", DEFAULT_BACKTEST_START_DATE)
-        )
+        # 回测起点是计算口径，不等同于各阶段的同步断点；增量任务仍应用固定起点计算完整榜单。
+        start_date = requested_start or DEFAULT_BACKTEST_START_DATE
         initial_amount = to_decimal(params.get("initial_amount")) or DEFAULT_INITIAL_AMOUNT
         cash_div_field = str(params.get("cash_div_field") or "cash_div_tax")
         if cash_div_field not in {"cash_div_tax", "cash_div"}:
@@ -302,7 +306,8 @@ class DividendReinvestmentDataLandingService:
             if params.mode == "full"
             else self._checkpoint_next_date("dividend", params.start_date)
         )
-        for current_date in self._iter_dates(start_date, params.end_date):
+        for current_date in self._open_trade_dates(start_date, params.end_date):
+            # 除权除息日按交易日发生，按开市日请求可跳过周末和节假日，减少无效调用并继续遵守限流。
             result = self.client.query(
                 "dividend",
                 params={"ex_date": format_tushare_date(current_date)},
@@ -782,11 +787,27 @@ class DividendReinvestmentDataLandingService:
 
     def _model_row(self, model: type, row: dict[str, Any]) -> dict[str, Any]:
         columns = set(model.__table__.columns.keys())
-        return {
-            key: value
-            for key, value in row.items()
-            if key in columns and value is not None
-        }
+        # 批量 upsert 要求同一批行的字段集合稳定；这里保留 None 值，让 SQLAlchemy
+        # 显式写入 NULL，避免某些股票缺少地区/行业等可空字段时导致批量插入失败。
+        return {key: value for key, value in row.items() if key in columns}
+
+    def _upsert_many_chunked(
+        self,
+        model: type,
+        rows: list[dict[str, Any]],
+        chunk_size: int = RESULT_UPSERT_CHUNK_SIZE,
+    ) -> int:
+        """分块写入大批量回测结果，避免单条 SQL 过大导致 MySQL 断连。
+
+        创建日期：2026-05-30
+        author: sunshengxian
+        """
+
+        total = 0
+        for start in range(0, len(rows), chunk_size):
+            # 每个分块仍走幂等 upsert；失败时外层事务整体回滚，重跑不会产生重复结果。
+            total += self.repository.upsert_many(model, rows[start : start + chunk_size])
+        return total
 
     def _coerce_date(self, value: date | str | None) -> date | None:
         if value is None or value == "":
@@ -845,4 +866,147 @@ class DividendReinvestmentDataLandingService:
                 "yearly_rows": result.yearly_rows,
             },
             ensure_ascii=False,
+        )
+
+    def latest_success_run(self) -> DividendReinvestmentBacktestRun | None:
+        """读取最近一次成功回测批次。
+
+        创建日期：2026-05-30
+        author: sunshengxian
+        """
+
+        return self.db.scalars(
+            select(DividendReinvestmentBacktestRun)
+            .where(DividendReinvestmentBacktestRun.status == "SUCCESS")
+            .order_by(desc(DividendReinvestmentBacktestRun.id))
+            .limit(1)
+        ).first()
+
+    def list_backtest_runs(self, limit: int = 20) -> list[DividendReinvestmentBacktestRun]:
+        """按时间倒序列出分红再投入回测批次。
+
+        创建日期：2026-05-30
+        author: sunshengxian
+        """
+
+        return list(
+            self.db.scalars(
+                select(DividendReinvestmentBacktestRun)
+                .order_by(desc(DividendReinvestmentBacktestRun.id))
+                .limit(limit)
+            ).all()
+        )
+
+    def query_summaries(
+        self,
+        run_id: int | None,
+        keyword: str | None,
+        industry: str | None,
+        data_quality: str | None,
+        min_annualized_return_pct: Decimal | None,
+        min_dividend_year_count: int | None,
+        min_consecutive_dividend_years: int | None,
+        min_latest_dividend_yield_ttm: Decimal | None,
+        max_latest_pe_ttm: Decimal | None,
+        page: int,
+        page_size: int,
+    ) -> tuple[int | None, int, list[DividendReinvestmentBacktestSummary]]:
+        """查询股票级分红再投入筛选结果。
+
+        创建日期：2026-05-30
+        author: sunshengxian
+        """
+
+        target_run_id = run_id
+        if target_run_id is None:
+            latest_run = self.latest_success_run()
+            target_run_id = latest_run.id if latest_run else None
+        if target_run_id is None:
+            return None, 0, []
+
+        filters = [DividendReinvestmentBacktestSummary.run_id == target_run_id]
+        clean_keyword = (keyword or "").strip()
+        if clean_keyword:
+            pattern = f"%{clean_keyword}%"
+            filters.append(
+                or_(
+                    DividendReinvestmentBacktestSummary.ts_code.like(pattern),
+                    DividendReinvestmentBacktestSummary.symbol.like(pattern),
+                    DividendReinvestmentBacktestSummary.name.like(pattern),
+                    DividendReinvestmentBacktestSummary.industry.like(pattern),
+                )
+            )
+        if industry:
+            filters.append(DividendReinvestmentBacktestSummary.industry == industry)
+        if data_quality:
+            filters.append(DividendReinvestmentBacktestSummary.data_quality == data_quality)
+        if min_annualized_return_pct is not None:
+            filters.append(
+                DividendReinvestmentBacktestSummary.annualized_return_pct
+                >= min_annualized_return_pct
+            )
+        if min_dividend_year_count is not None:
+            filters.append(
+                DividendReinvestmentBacktestSummary.dividend_year_count
+                >= min_dividend_year_count
+            )
+        if min_consecutive_dividend_years is not None:
+            filters.append(
+                DividendReinvestmentBacktestSummary.consecutive_dividend_years
+                >= min_consecutive_dividend_years
+            )
+        if min_latest_dividend_yield_ttm is not None:
+            filters.append(
+                DividendReinvestmentBacktestSummary.latest_dividend_yield_ttm
+                >= min_latest_dividend_yield_ttm
+            )
+        if max_latest_pe_ttm is not None:
+            filters.append(
+                DividendReinvestmentBacktestSummary.latest_pe_ttm <= max_latest_pe_ttm
+            )
+
+        total = self.db.scalar(
+            select(func.count()).select_from(DividendReinvestmentBacktestSummary).where(*filters)
+        ) or 0
+        rows = list(
+            self.db.scalars(
+                select(DividendReinvestmentBacktestSummary)
+                .where(*filters)
+                .order_by(
+                    desc(DividendReinvestmentBacktestSummary.rank_score),
+                    desc(DividendReinvestmentBacktestSummary.annualized_return_pct),
+                    DividendReinvestmentBacktestSummary.ts_code,
+                )
+                .offset((page - 1) * page_size)
+                .limit(page_size)
+            ).all()
+        )
+        return target_run_id, total, rows
+
+    def yearly_rows(
+        self,
+        run_id: int | None,
+        ts_code: str,
+    ) -> list[DividendReinvestmentBacktestYearly]:
+        """读取单股年度分红再投入明细。
+
+        创建日期：2026-05-30
+        author: sunshengxian
+        """
+
+        target_run_id = run_id
+        if target_run_id is None:
+            latest_run = self.latest_success_run()
+            target_run_id = latest_run.id if latest_run else None
+        if target_run_id is None:
+            return []
+        return list(
+            self.db.scalars(
+                select(DividendReinvestmentBacktestYearly)
+                .where(
+                    DividendReinvestmentBacktestYearly.run_id == target_run_id,
+                    DividendReinvestmentBacktestYearly.ts_code == ts_code,
+                )
+                .order_by(DividendReinvestmentBacktestYearly.year)
+            ).all()
         )
