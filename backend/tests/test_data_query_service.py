@@ -62,3 +62,15 @@ def test_data_query_contains_unadjusted_backfill_datasets() -> None:
     assert "tencent_unadjusted_daily_quote" in DATA_QUERY_SPECS
     assert "waterstock_fx_rate_daily" in DATA_QUERY_SPECS
     assert "historical_ah_unadjusted_backfill_run" in DATA_QUERY_SPECS
+
+
+def test_data_query_contains_dividend_reinvestment_datasets() -> None:
+    """确认查询白名单包含分红再投入回测验收所需三张表。
+
+    创建日期：2026-05-29
+    author: sunshengxian
+    """
+
+    assert "dividend_reinvestment_backtest_run" in DATA_QUERY_SPECS
+    assert "dividend_reinvestment_backtest_summary" in DATA_QUERY_SPECS
+    assert "dividend_reinvestment_backtest_yearly" in DATA_QUERY_SPECS

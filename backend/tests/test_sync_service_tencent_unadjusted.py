@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from app.db.base import Base
 from app.db.models.sync import SyncRun
 from app.services import sync_service
+from app.services.dividend_reinvestment_service import DividendReinvestmentSyncResult
 from app.services.sync_service import SyncService
 
 
@@ -56,6 +57,44 @@ class FakeTencentUnadjustedSyncBatchService:
         return FakeTencentUnadjustedResult(inserted_rows=7)
 
 
+class FakeDividendReinvestmentDataLandingService:
+    """用于确认通用同步入口正确转发到分红再投入落地服务。
+
+    创建日期：2026-05-29
+    author: sunshengxian
+    """
+
+    def __init__(self, db: Session) -> None:
+        self.db = db
+
+    def sync(self, params: dict) -> DividendReinvestmentSyncResult:
+        """模拟分红再投入服务返回阶段行数。
+
+        创建日期：2026-05-29
+        author: sunshengxian
+        """
+
+        assert params["mode"] == "full"
+        return DividendReinvestmentSyncResult(
+            stock_rows=1,
+            calendar_rows=2,
+            daily_rows=3,
+            dividend_rows=4,
+            daily_basic_rows=5,
+            summary_rows=6,
+            yearly_rows=7,
+        )
+
+    def sync_result_payload(self, result: DividendReinvestmentSyncResult) -> str:
+        """复用真实结果结构，避免测试依赖外部 Tushare 和 MySQL upsert。
+
+        创建日期：2026-05-29
+        author: sunshengxian
+        """
+
+        return '{"summary_rows": 6, "yearly_rows": 7}'
+
+
 def test_run_sync_supports_tencent_unadjusted_dataset(monkeypatch) -> None:
     """确认通用“执行同步”入口支持腾讯不复权补数数据集。
 
@@ -79,3 +118,29 @@ def test_run_sync_supports_tencent_unadjusted_dataset(monkeypatch) -> None:
     assert run.status == "SUCCESS"
     assert run.row_count == 7
     assert run.dataset == "tencent_unadjusted_backfill"
+
+
+def test_run_sync_supports_dividend_reinvestment_dataset(monkeypatch) -> None:
+    """确认通用“执行同步”入口支持分红再投入数据落地数据集。
+
+    创建日期：2026-05-29
+    author: sunshengxian
+    """
+
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    monkeypatch.setattr(
+        sync_service,
+        "DividendReinvestmentDataLandingService",
+        FakeDividendReinvestmentDataLandingService,
+    )
+    with Session(engine) as db:
+        run = SyncService(db).run_sync(
+            "dividend_reinvestment_data_landing",
+            {"mode": "full", "start_date": date(2026, 1, 1), "end_date": date(2026, 1, 5)},
+        )
+
+    assert run.status == "SUCCESS"
+    assert run.row_count == 28
+    assert run.dataset == "dividend_reinvestment_data_landing"
+    assert '"summary_rows": 6' in (run.params_json or "")

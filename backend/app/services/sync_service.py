@@ -24,6 +24,11 @@ from app.db.models.market import (
 from app.db.models.sync import SyncCheckpoint, SyncRun
 from app.services.date_utils import format_tushare_date, parse_tushare_date
 from app.services.decimal_utils import quantize_decimal, to_decimal
+from app.services.dividend_reinvestment_service import (
+    DEFAULT_BACKTEST_START_DATE,
+    DIVIDEND_REINVESTMENT_DATASET,
+    DividendReinvestmentDataLandingService,
+)
 from app.services.repository import UpsertRepository
 from app.services.stock_selection_factor_service import StockSelectionFactorService
 from app.services.tencent_unadjusted_sync_batch_service import (
@@ -333,6 +338,22 @@ class SyncService:
                 ),
             },
             {
+                "name": DIVIDEND_REINVESTMENT_DATASET,
+                "label": "分红再投入数据落地",
+                "description": (
+                    "同步分红再投入筛选所需 A 股基础、日线、分红和最新估值数据，"
+                    "并生成本地回测结果。"
+                ),
+                "supports_date_range": True,
+                "supports_incremental": True,
+                "supports_full_sync": True,
+                "default_full_start_date": DEFAULT_BACKTEST_START_DATE.isoformat(),
+                "sync_strategy": (
+                    "按基础资料、交易日历、日线、分红、最新 daily_basic、回测计算顺序执行；"
+                    "日线按交易日拆分、分红按除权除息日拆分，适配 15000 积分和 120 次/分钟限制。"
+                ),
+            },
+            {
                 "name": STOCK_SELECTION_FACTOR_DATASET,
                 "label": "A 股选股因子宽表",
                 "description": "联网筛选蓝筹、低估值和红利股候选池，并同步 LLM 选股用核心宽表。",
@@ -356,6 +377,8 @@ class SyncService:
 
         if dataset == TENCENT_UNADJUSTED_BACKFILL_DATASET:
             return self._run_tencent_unadjusted_backfill(params)
+        if dataset == DIVIDEND_REINVESTMENT_DATASET:
+            return self._run_dividend_reinvestment_data_landing(params)
         if dataset not in DATASET_SPECS and dataset != STOCK_SELECTION_FACTOR_DATASET:
             raise ValueError(f"不支持的数据集：{dataset}")
         if dataset in DISABLED_INTERFACE_DATASETS:
@@ -452,6 +475,53 @@ class SyncService:
             self.db.commit()
             self.db.refresh(run)
         return run
+
+    def _run_dividend_reinvestment_data_landing(self, params: dict[str, Any]) -> SyncRun:
+        """把通用同步入口转发到分红再投入数据落地编排服务。
+
+        创建日期：2026-05-29
+        author: sunshengxian
+        """
+
+        normalized_params = self._normalize_params(params)
+        run = SyncRun(
+            dataset=DIVIDEND_REINVESTMENT_DATASET,
+            params_json=json.dumps(normalized_params, ensure_ascii=False, default=str),
+            status="RUNNING",
+            started_at=datetime.now(UTC).replace(tzinfo=None),
+        )
+        self.db.add(run)
+        self.db.commit()
+        self.db.refresh(run)
+        service = DividendReinvestmentDataLandingService(self.db)
+        try:
+            # 分红再投入不是单一 Tushare 接口，而是“多接口落地 + 本地回测”的组合任务；
+            # 这里保留 sync_run 统一状态，阶段明细写回 params_json，便于前端任务表直接核验。
+            result = service.sync(normalized_params)
+            run = self.db.merge(run)
+            run.status = "SUCCESS"
+            run.row_count = result.total_rows
+            run.params_json = json.dumps(
+                {
+                    "request": normalized_params,
+                    "result": json.loads(service.sync_result_payload(result)),
+                },
+                ensure_ascii=False,
+                default=str,
+            )
+            run.finished_at = datetime.now(UTC).replace(tzinfo=None)
+            self.db.commit()
+            self.db.refresh(run)
+            return run
+        except Exception as exc:
+            self.db.rollback()
+            run = self.db.merge(run)
+            run.status = "FAILED"
+            run.error_message = self._format_error_message(exc)
+            run.finished_at = datetime.now(UTC).replace(tzinfo=None)
+            self.db.commit()
+            self.db.refresh(run)
+            return run
 
     def _sync_spec(self, spec: DatasetSpec, params: dict[str, Any]) -> int:
         merged_params = self._build_params(spec, params)

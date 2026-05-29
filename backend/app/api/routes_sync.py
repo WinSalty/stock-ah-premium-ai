@@ -12,6 +12,7 @@ from app.db.models.sync import SyncRun
 from app.db.session import get_db
 from app.schemas.sync import (
     DatasetInfo,
+    DividendReinvestmentSyncBatchCreate,
     SyncBatchCreate,
     SyncRunCreate,
     SyncRunResponse,
@@ -82,6 +83,25 @@ def create_stock_selection_factor_sync_batch(payload: SyncBatchCreate, db: DbSes
     params = payload.model_dump(exclude_none=True)
     try:
         return SyncService(db).run_sync("stock_selection_factors", params)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/sync/batches/dividend-reinvestment-data", response_model=SyncRunResponse)
+def create_dividend_reinvestment_sync_batch(
+    payload: DividendReinvestmentSyncBatchCreate,
+    db: DbSession,
+) -> SyncRun:
+    """同步分红再投入筛选所需数据并生成本地回测结果。
+
+    创建日期：2026-05-29
+    author: sunshengxian
+    """
+
+    params = payload.model_dump(exclude_none=True)
+    params["mode"] = payload.mode.value
+    try:
+        return SyncService(db).run_sync("dividend_reinvestment_data_landing", params)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 

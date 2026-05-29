@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
+from decimal import Decimal
 from enum import StrEnum
 
 from pydantic import BaseModel, Field
@@ -74,6 +75,27 @@ class TencentUnadjustedSyncBatchCreate(BaseModel):
 
     start_date: date | None = None
     end_date: date | None = None
+
+
+class DividendReinvestmentSyncBatchCreate(BaseModel):
+    """分红再投入数据落地一键同步请求。
+
+    创建日期：2026-05-29
+    author: sunshengxian
+    """
+
+    mode: SyncMode = SyncMode.INCREMENTAL
+    start_date: date | None = None
+    end_date: date | None = None
+    initial_amount: Decimal | None = Field(
+        default=None,
+        gt=0,
+        description="每只股票模拟初始投入金额",
+    )
+    cash_div_field: str = Field(
+        default="cash_div_tax",
+        description="现金分红口径，支持 cash_div_tax 或 cash_div",
+    )
 
 
 class TencentUnadjustedSyncBatchResponse(BaseModel):

@@ -1,6 +1,7 @@
 import { requestJson } from './client';
 import type {
   DatasetInfo,
+  DividendReinvestmentSyncBatchCreate,
   SyncBatchCreate,
   SyncRun,
   SyncRunCreate,
@@ -30,6 +31,13 @@ export function createSyncRun(payload: SyncRunCreate) {
 
 export function createAhPremiumSyncBatch(payload: SyncBatchCreate) {
   return requestJson<SyncRun[]>('/api/sync/batches/ah-premium', {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  });
+}
+
+export function createDividendReinvestmentSyncBatch(payload: DividendReinvestmentSyncBatchCreate) {
+  return requestJson<SyncRun>('/api/sync/batches/dividend-reinvestment-data', {
     method: 'POST',
     body: JSON.stringify(payload)
   });

@@ -211,6 +211,11 @@ export interface SyncBatchCreate {
   end_date?: string;
 }
 
+export interface DividendReinvestmentSyncBatchCreate extends SyncBatchCreate {
+  initial_amount?: number;
+  cash_div_field?: 'cash_div_tax' | 'cash_div' | string;
+}
+
 export interface SyncRunFilters {
   dataset?: string;
   status?: string;

@@ -23,11 +23,18 @@ import PageHeader from '../components/PageHeader';
 import OverflowCell from '../components/OverflowCell';
 import {
   createAhPremiumSyncBatch,
+  createDividendReinvestmentSyncBatch,
   createSyncRun,
   fetchDatasets,
   fetchSyncRuns
 } from '../api/sync';
-import type { SyncBatchCreate, SyncRun, SyncRunCreate, SyncRunFilters } from '../types/domain';
+import type {
+  DividendReinvestmentSyncBatchCreate,
+  SyncBatchCreate,
+  SyncRun,
+  SyncRunCreate,
+  SyncRunFilters
+} from '../types/domain';
 import { importCsv, type ImportKind } from '../api/imports';
 
 interface SyncFormValues {
@@ -49,6 +56,11 @@ interface BatchFormValues {
   range?: [dayjs.Dayjs, dayjs.Dayjs];
 }
 
+interface DividendReinvestmentBatchFormValues extends BatchFormValues {
+  initial_amount?: number;
+  cash_div_field?: 'cash_div_tax' | 'cash_div';
+}
+
 interface RunFilterValues {
   dataset?: string;
   status?: string;
@@ -64,6 +76,7 @@ interface RunFilterValues {
 function SyncPage() {
   const [form] = Form.useForm<SyncFormValues>();
   const [batchForm] = Form.useForm<BatchFormValues>();
+  const [dividendForm] = Form.useForm<DividendReinvestmentBatchFormValues>();
   const [filterForm] = Form.useForm<RunFilterValues>();
   const [importForm] = Form.useForm<ImportFormValues>();
   const [detailRun, setDetailRun] = useState<SyncRun | null>(null);
@@ -97,6 +110,14 @@ function SyncPage() {
     },
     onError: (error) => message.error(error instanceof Error ? error.message : '一键同步失败')
   });
+  const dividendMutation = useMutation({
+    mutationFn: createDividendReinvestmentSyncBatch,
+    onSuccess: (run) => {
+      message.success(`分红再投数据落地完成：任务 ${run.id}，${run.status}`);
+      queryClient.invalidateQueries({ queryKey: ['sync-runs'] });
+    },
+    onError: (error) => message.error(error instanceof Error ? error.message : '分红再投同步失败')
+  });
   const importMutation = useMutation({
     mutationFn: (values: ImportFormValues) => importCsv(values.kind, values.content),
     onSuccess: (response) => {
@@ -126,6 +147,17 @@ function SyncPage() {
       end_date: values.range?.[1]?.format('YYYY-MM-DD')
     };
     batchMutation.mutate(payload);
+  };
+
+  const onDividendBatchFinish = (values: DividendReinvestmentBatchFormValues) => {
+    const payload: DividendReinvestmentSyncBatchCreate = {
+      mode: values.mode,
+      start_date: values.range?.[0]?.format('YYYY-MM-DD'),
+      end_date: values.range?.[1]?.format('YYYY-MM-DD'),
+      initial_amount: values.initial_amount,
+      cash_div_field: values.cash_div_field
+    };
+    dividendMutation.mutate(payload);
   };
 
   const onFilterFinish = (values: RunFilterValues) => {
@@ -194,6 +226,55 @@ function SyncPage() {
                             一键同步 AH 所需数据
                           </Button>
                         </Space>
+                      </Form.Item>
+                    </div>
+                  </Form>
+                  <Form
+                    form={dividendForm}
+                    layout="vertical"
+                    onFinish={onDividendBatchFinish}
+                    initialValues={{
+                      mode: 'incremental',
+                      initial_amount: 100000,
+                      cash_div_field: 'cash_div_tax'
+                    }}
+                  >
+                    <div className="sync-batch-grid dividend-reinvestment-sync-grid">
+                      <Form.Item label="再投模式" name="mode" rules={[{ required: true }]}>
+                        <Select
+                          options={[
+                            { value: 'incremental', label: '增量补齐' },
+                            { value: 'full', label: '全量重跑' }
+                          ]}
+                        />
+                      </Form.Item>
+                      <Form.Item label="回测日期范围" name="range">
+                        <DatePicker.RangePicker className="full-width" />
+                      </Form.Item>
+                      <Form.Item
+                        label="初始投入"
+                        name="initial_amount"
+                        rules={[{ required: true, message: '请输入初始投入金额' }]}
+                      >
+                        <InputNumber min={1} precision={2} className="full-width" />
+                      </Form.Item>
+                      <Form.Item label="分红口径" name="cash_div_field" rules={[{ required: true }]}>
+                        <Select
+                          options={[
+                            { value: 'cash_div_tax', label: '税后现金分红' },
+                            { value: 'cash_div', label: '税前现金分红' }
+                          ]}
+                        />
+                      </Form.Item>
+                      <Form.Item label=" ">
+                        <Button
+                          type="primary"
+                          htmlType="submit"
+                          icon={<Play size={16} />}
+                          loading={dividendMutation.isPending}
+                        >
+                          同步分红再投数据
+                        </Button>
                       </Form.Item>
                     </div>
                   </Form>

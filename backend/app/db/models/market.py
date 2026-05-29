@@ -376,6 +376,126 @@ class StockSelectionFactorSnapshot(TimestampMixin, Base):
     source_trade_date: Mapped[date | None] = mapped_column(Date)
 
 
+class DividendReinvestmentBacktestRun(TimestampMixin, Base):
+    """分红再投入回测批次表。
+
+    创建日期：2026-05-29
+    author: sunshengxian
+    """
+
+    __tablename__ = "dividend_reinvestment_backtest_run"
+    __table_args__ = (
+        Index("idx_div_reinvest_run_status_started", "status", "started_at"),
+        Index("idx_div_reinvest_run_key", "run_key"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    run_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    start_date: Mapped[date] = mapped_column(Date, nullable=False)
+    end_date: Mapped[date] = mapped_column(Date, nullable=False)
+    initial_amount: Mapped[Decimal] = mapped_column(DECIMAL(24, 6), nullable=False)
+    cash_div_field: Mapped[str] = mapped_column(String(32), nullable=False, default="cash_div_tax")
+    reinvest_price_policy: Mapped[str] = mapped_column(
+        String(64),
+        nullable=False,
+        default="EX_DATE_OR_NEXT_CLOSE",
+    )
+    share_rounding_policy: Mapped[str] = mapped_column(
+        String(64),
+        nullable=False,
+        default="FRACTIONAL_SHARES",
+    )
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="RUNNING")
+    stock_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    summary_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    error_message: Mapped[str | None] = mapped_column(Text)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime)
+
+
+class DividendReinvestmentBacktestSummary(TimestampMixin, Base):
+    """分红再投入回测摘要表。
+
+    创建日期：2026-05-29
+    author: sunshengxian
+    """
+
+    __tablename__ = "dividend_reinvestment_backtest_summary"
+    __table_args__ = (
+        UniqueConstraint("run_id", "ts_code", name="uk_div_reinvest_summary_run_code"),
+        Index("idx_div_reinvest_summary_return", "run_id", "annualized_return_pct"),
+        Index("idx_div_reinvest_summary_industry", "run_id", "industry"),
+        Index("idx_div_reinvest_summary_quality", "run_id", "data_quality"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    run_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    ts_code: Mapped[str] = mapped_column(String(16), nullable=False)
+    symbol: Mapped[str | None] = mapped_column(String(16))
+    name: Mapped[str] = mapped_column(String(64), nullable=False)
+    industry: Mapped[str | None] = mapped_column(String(128))
+    list_date: Mapped[date | None] = mapped_column(Date)
+    start_trade_date: Mapped[date | None] = mapped_column(Date)
+    end_trade_date: Mapped[date | None] = mapped_column(Date)
+    initial_amount: Mapped[Decimal] = mapped_column(DECIMAL(24, 6), nullable=False)
+    initial_price: Mapped[Decimal | None] = mapped_column(DECIMAL(20, 6))
+    initial_shares: Mapped[Decimal | None] = mapped_column(DECIMAL(24, 8))
+    final_price: Mapped[Decimal | None] = mapped_column(DECIMAL(20, 6))
+    final_shares: Mapped[Decimal | None] = mapped_column(DECIMAL(24, 8))
+    final_market_value: Mapped[Decimal | None] = mapped_column(DECIMAL(24, 6))
+    total_cash_dividend: Mapped[Decimal | None] = mapped_column(DECIMAL(24, 6))
+    total_reinvested_amount: Mapped[Decimal | None] = mapped_column(DECIMAL(24, 6))
+    total_reinvested_shares: Mapped[Decimal | None] = mapped_column(DECIMAL(24, 8))
+    dividend_event_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    dividend_year_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    consecutive_dividend_years: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    total_return_amount: Mapped[Decimal | None] = mapped_column(DECIMAL(24, 6))
+    total_return_pct: Mapped[Decimal | None] = mapped_column(DECIMAL(20, 8))
+    annualized_return_pct: Mapped[Decimal | None] = mapped_column(DECIMAL(20, 8))
+    latest_dividend_yield_ttm: Mapped[Decimal | None] = mapped_column(DECIMAL(20, 8))
+    latest_total_mv: Mapped[Decimal | None] = mapped_column(DECIMAL(24, 6))
+    latest_pe_ttm: Mapped[Decimal | None] = mapped_column(DECIMAL(20, 8))
+    latest_pb: Mapped[Decimal | None] = mapped_column(DECIMAL(20, 8))
+    rank_score: Mapped[Decimal | None] = mapped_column(DECIMAL(20, 8))
+    data_quality: Mapped[str] = mapped_column(String(32), nullable=False, default="UNKNOWN")
+    data_issue: Mapped[str | None] = mapped_column(Text)
+
+
+class DividendReinvestmentBacktestYearly(TimestampMixin, Base):
+    """分红再投入年度明细表。
+
+    创建日期：2026-05-29
+    author: sunshengxian
+    """
+
+    __tablename__ = "dividend_reinvestment_backtest_yearly"
+    __table_args__ = (
+        UniqueConstraint("run_id", "ts_code", "year", name="uk_div_reinvest_yearly"),
+        Index("idx_div_reinvest_yearly_code", "ts_code", "year"),
+        Index("idx_div_reinvest_yearly_run_year", "run_id", "year"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    run_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    ts_code: Mapped[str] = mapped_column(String(16), nullable=False)
+    year: Mapped[int] = mapped_column(Integer, nullable=False)
+    year_end_trade_date: Mapped[date | None] = mapped_column(Date)
+    year_end_price: Mapped[Decimal | None] = mapped_column(DECIMAL(20, 6))
+    cash_div_per_share: Mapped[Decimal | None] = mapped_column(DECIMAL(20, 8))
+    cash_div_amount: Mapped[Decimal | None] = mapped_column(DECIMAL(24, 6))
+    stock_div_per_share: Mapped[Decimal | None] = mapped_column(DECIMAL(20, 8))
+    stock_div_shares: Mapped[Decimal | None] = mapped_column(DECIMAL(24, 8))
+    reinvest_price_avg: Mapped[Decimal | None] = mapped_column(DECIMAL(20, 6))
+    reinvested_shares: Mapped[Decimal | None] = mapped_column(DECIMAL(24, 8))
+    holding_shares: Mapped[Decimal | None] = mapped_column(DECIMAL(24, 8))
+    market_value: Mapped[Decimal | None] = mapped_column(DECIMAL(24, 6))
+    return_amount: Mapped[Decimal | None] = mapped_column(DECIMAL(24, 6))
+    return_pct: Mapped[Decimal | None] = mapped_column(DECIMAL(20, 8))
+    annualized_return_pct: Mapped[Decimal | None] = mapped_column(DECIMAL(20, 8))
+    dividend_event_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    note: Mapped[str | None] = mapped_column(Text)
+
+
 class OfficialAHComparison(TimestampMixin, Base):
     """Tushare 官方 AH 比价快照表。
 
