@@ -114,6 +114,41 @@ function useMobileAppViewport() {
 }
 
 /**
+ * 同步移动端实际可视高度到 CSS 变量，避免浏览器地址栏或 WebView 高度变化时把底部导航挤到页面中部。
+ * 创建日期：2026-05-30
+ * author: sunshengxian
+ */
+function useMobileVisualViewportHeight(enabled: boolean) {
+  useEffect(() => {
+    if (!enabled || typeof window === 'undefined') {
+      return;
+    }
+
+    const root = document.documentElement;
+    const updateViewportHeight = () => {
+      // visualViewport 能反映移动端地址栏收起、横竖屏切换和键盘弹起后的真实可见高度；
+      // 不支持时回退 innerHeight，保证旧版浏览器仍使用稳定的应用壳高度。
+      const viewportHeight = window.visualViewport?.height || window.innerHeight;
+      root.style.setProperty('--mobile-app-height', `${Math.round(viewportHeight)}px`);
+    };
+
+    updateViewportHeight();
+    window.addEventListener('resize', updateViewportHeight);
+    window.addEventListener('orientationchange', updateViewportHeight);
+    window.visualViewport?.addEventListener('resize', updateViewportHeight);
+    window.visualViewport?.addEventListener('scroll', updateViewportHeight);
+
+    return () => {
+      window.removeEventListener('resize', updateViewportHeight);
+      window.removeEventListener('orientationchange', updateViewportHeight);
+      window.visualViewport?.removeEventListener('resize', updateViewportHeight);
+      window.visualViewport?.removeEventListener('scroll', updateViewportHeight);
+      root.style.removeProperty('--mobile-app-height');
+    };
+  }, [enabled]);
+}
+
+/**
  * 应用根布局与导航。
  * 创建日期：2026-05-04
  * author: sunshengxian
@@ -121,6 +156,7 @@ function useMobileAppViewport() {
 function App() {
   const queryClient = useQueryClient();
   const isMobileApp = useMobileAppViewport();
+  useMobileVisualViewportHeight(isMobileApp);
   const hasAppliedMobileDefaultRef = useRef(false);
   const shareToken = window.location.pathname.match(/^\/limit-up-share\/([^/]+)$/)?.[1];
   const [page, setPage] = useState<PageKey>('overview');
