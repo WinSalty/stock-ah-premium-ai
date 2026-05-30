@@ -42,6 +42,9 @@ interface FilterValues {
 
 const DEFAULT_PAGE_SIZE = 30;
 
+// 表头标题和排序图标会共享紧凑空间，收益率类标题禁止换行，避免中文被挤成两行。
+const renderHeaderTitle = (title: string) => <span className="table-header-nowrap">{title}</span>;
+
 /** 分红再投入筛选页面。创建日期：2026-05-30 author: sunshengxian */
 function DividendReinvestmentPage() {
   const [form] = Form.useForm<FilterValues>();
@@ -88,7 +91,7 @@ function DividendReinvestmentPage() {
       { title: '名称', dataIndex: 'name', width: 120 },
       { title: '行业', dataIndex: 'industry', width: 130, render: renderText },
       {
-        title: '年化收益率',
+        title: renderHeaderTitle('年化收益率'),
         dataIndex: 'annualized_return_pct',
         width: 120,
         align: 'right',
@@ -97,9 +100,9 @@ function DividendReinvestmentPage() {
         render: renderPct
       },
       {
-        title: '累计收益率',
+        title: renderHeaderTitle('累计收益率'),
         dataIndex: 'total_return_pct',
-        width: 110,
+        width: 124,
         align: 'right',
         sorter: true,
         sortOrder: sortBy === 'total_return_pct' ? (sortOrder === 'asc' ? 'ascend' : 'descend') : null,
@@ -118,9 +121,9 @@ function DividendReinvestmentPage() {
       { title: '分红年数', dataIndex: 'dividend_year_count', width: 96, align: 'right' },
       { title: '连续分红', dataIndex: 'consecutive_dividend_years', width: 96, align: 'right' },
       {
-        title: '最新股息率',
+        title: renderHeaderTitle('最新股息率'),
         dataIndex: 'latest_dividend_yield_ttm',
-        width: 110,
+        width: 124,
         align: 'right',
         sorter: true,
         sortOrder: sortBy === 'latest_dividend_yield_ttm' ? (sortOrder === 'asc' ? 'ascend' : 'descend') : null,

@@ -1515,6 +1515,12 @@ body {
   color: #2563eb;
 }
 
+.table-header-nowrap {
+  display: inline-flex;
+  align-items: center;
+  white-space: nowrap;
+}
+
 .llm-metric-table .ant-table-thead > tr > th,
 .llm-metric-table .ant-table-tbody > tr > td {
   padding-inline: 10px;
