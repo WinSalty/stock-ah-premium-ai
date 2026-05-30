@@ -41,6 +41,17 @@ interface FilterValues {
 }
 
 const DEFAULT_PAGE_SIZE = 30;
+type DividendSortField =
+  | 'annualized_return_pct'
+  | 'total_return_pct'
+  | 'total_cash_dividend'
+  | 'latest_dividend_yield_ttm';
+const DIVIDEND_SORT_FIELDS: DividendSortField[] = [
+  'annualized_return_pct',
+  'total_return_pct',
+  'total_cash_dividend',
+  'latest_dividend_yield_ttm'
+];
 
 // 表头标题和排序图标会共享紧凑空间，收益率类标题禁止换行，避免中文被挤成两行。
 const renderHeaderTitle = (title: string) => <span className="table-header-nowrap">{title}</span>;
@@ -53,9 +64,7 @@ function DividendReinvestmentPage() {
   const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
   const [detailStock, setDetailStock] = useState<DividendReinvestmentSummaryItem | null>(null);
   const [formulaOpen, setFormulaOpen] = useState(false);
-  const [sortBy, setSortBy] = useState<
-    'annualized_return_pct' | 'total_return_pct' | 'total_cash_dividend' | 'latest_dividend_yield_ttm'
-  >('total_cash_dividend');
+  const [sortBy, setSortBy] = useState<DividendSortField>('total_cash_dividend');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
   const runs = useQuery({
     queryKey: ['dividend-reinvestment-runs'],
@@ -92,6 +101,7 @@ function DividendReinvestmentPage() {
       { title: '行业', dataIndex: 'industry', width: 130, render: renderText },
       {
         title: renderHeaderTitle('年化收益率'),
+        key: 'annualized_return_pct',
         dataIndex: 'annualized_return_pct',
         width: 120,
         align: 'right',
@@ -101,6 +111,7 @@ function DividendReinvestmentPage() {
       },
       {
         title: renderHeaderTitle('累计收益率'),
+        key: 'total_return_pct',
         dataIndex: 'total_return_pct',
         width: 124,
         align: 'right',
@@ -111,6 +122,7 @@ function DividendReinvestmentPage() {
       { title: '期末市值', dataIndex: 'final_market_value', width: 120, align: 'right', render: renderNumber },
       {
         title: '累计分红',
+        key: 'total_cash_dividend',
         dataIndex: 'total_cash_dividend',
         width: 120,
         align: 'right',
@@ -122,6 +134,7 @@ function DividendReinvestmentPage() {
       { title: '连续分红', dataIndex: 'consecutive_dividend_years', width: 96, align: 'right' },
       {
         title: renderHeaderTitle('最新股息率'),
+        key: 'latest_dividend_yield_ttm',
         dataIndex: 'latest_dividend_yield_ttm',
         width: 124,
         align: 'right',
@@ -182,16 +195,13 @@ function DividendReinvestmentPage() {
       return;
     }
     const activeSorter = Array.isArray(sorter) ? sorter[0] : sorter;
-    if (
-      activeSorter?.field === 'total_return_pct' ||
-      activeSorter?.field === 'total_cash_dividend' ||
-      activeSorter?.field === 'latest_dividend_yield_ttm'
-    ) {
-      setSortBy(activeSorter.field);
-      setSortOrder(activeSorter.order === 'ascend' ? 'asc' : 'desc');
-    } else {
+    const nextSortBy = normalizeSortField(activeSorter?.field || activeSorter?.columnKey);
+    if (!activeSorter?.order || !nextSortBy) {
       setSortBy('total_cash_dividend');
-      setSortOrder(activeSorter?.order === 'ascend' ? 'asc' : 'desc');
+      setSortOrder('desc');
+    } else {
+      setSortBy(nextSortBy);
+      setSortOrder(activeSorter.order === 'ascend' ? 'asc' : 'desc');
     }
     setPage(1);
   };
@@ -355,6 +365,12 @@ function normalizeFilterValues(values: FilterValues): FilterValues {
   return Object.fromEntries(
     Object.entries(values).filter(([, value]) => value !== undefined && value !== '')
   );
+}
+
+/** 统一识别 Ant Design Table 的排序字段，避免自定义表头或 columnKey 差异导致切换排序失效。 */
+function normalizeSortField(value: unknown): DividendSortField | null {
+  const field = Array.isArray(value) ? value.join('.') : String(value || '');
+  return DIVIDEND_SORT_FIELDS.includes(field as DividendSortField) ? (field as DividendSortField) : null;
 }
 
 /** 统一处理空文本和长文本，避免股票名称、行业或问题说明撑破表格。 */
