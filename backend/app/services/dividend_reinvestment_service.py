@@ -7,7 +7,7 @@ from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import desc, func, or_, select
+from sqlalchemy import asc, desc, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
@@ -47,6 +47,7 @@ class DividendReinvestmentSyncParams:
     end_date: date
     initial_amount: Decimal
     cash_div_field: str
+    supplement_dividend_by_stock: bool = False
 
 
 @dataclass(frozen=True)
@@ -61,6 +62,7 @@ class DividendReinvestmentSyncResult:
     calendar_rows: int
     daily_rows: int
     dividend_rows: int
+    stock_dividend_rows: int
     daily_basic_rows: int
     summary_rows: int
     yearly_rows: int
@@ -72,6 +74,7 @@ class DividendReinvestmentSyncResult:
             + self.calendar_rows
             + self.daily_rows
             + self.dividend_rows
+            + self.stock_dividend_rows
             + self.daily_basic_rows
             + self.summary_rows
             + self.yearly_rows
@@ -169,6 +172,11 @@ class DividendReinvestmentDataLandingService:
         calendar_rows = self._sync_trade_calendar(normalized.start_date, normalized.end_date)
         daily_rows = self._sync_daily_quotes(normalized)
         dividend_rows = self._sync_dividends(normalized)
+        stock_dividend_rows = (
+            self._sync_candidate_dividends_by_stock(normalized)
+            if normalized.supplement_dividend_by_stock
+            else 0
+        )
         daily_basic_rows = self._sync_latest_daily_basic(normalized.end_date)
         summary_rows, yearly_rows = self.calculate_backtest(normalized)
         return DividendReinvestmentSyncResult(
@@ -176,6 +184,7 @@ class DividendReinvestmentDataLandingService:
             calendar_rows=calendar_rows,
             daily_rows=daily_rows,
             dividend_rows=dividend_rows,
+            stock_dividend_rows=stock_dividend_rows,
             daily_basic_rows=daily_basic_rows,
             summary_rows=summary_rows,
             yearly_rows=yearly_rows,
@@ -242,6 +251,9 @@ class DividendReinvestmentDataLandingService:
         start_date = requested_start or DEFAULT_BACKTEST_START_DATE
         initial_amount = to_decimal(params.get("initial_amount")) or DEFAULT_INITIAL_AMOUNT
         cash_div_field = str(params.get("cash_div_field") or "cash_div_tax")
+        supplement_dividend_by_stock = self._coerce_bool(
+            params.get("supplement_dividend_by_stock")
+        )
         if cash_div_field not in {"cash_div_tax", "cash_div"}:
             raise ValueError("现金分红口径仅支持 cash_div_tax 或 cash_div")
         return DividendReinvestmentSyncParams(
@@ -250,6 +262,7 @@ class DividendReinvestmentDataLandingService:
             end_date=requested_end,
             initial_amount=initial_amount,
             cash_div_field=cash_div_field,
+            supplement_dividend_by_stock=supplement_dividend_by_stock,
         )
 
     def _sync_stock_basic(self) -> int:
@@ -320,6 +333,36 @@ class DividendReinvestmentDataLandingService:
             ]
             row_count += self.repository.upsert_many(ADividend, rows)
             self._update_checkpoint("dividend", "default", current_date)
+            self.db.commit()
+        return row_count
+
+    def _sync_candidate_dividends_by_stock(
+        self,
+        params: DividendReinvestmentSyncParams,
+    ) -> int:
+        """按股票代码补齐候选池历史分红，修复按 ex_date 回补早期历史覆盖不足。
+
+        创建日期：2026-05-30
+        author: sunshengxian
+        """
+
+        row_count = 0
+        for stock in self._candidate_stocks(params):
+            result = self.client.query(
+                "dividend",
+                params={"ts_code": stock.ts_code},
+                fields=self.dividend_fields,
+            )
+            rows = []
+            for row in result.rows:
+                normalized = self._normalize_dividend_row(row)
+                if not normalized:
+                    continue
+                ex_date = normalized["ex_date"]
+                if params.start_date <= ex_date <= params.end_date:
+                    rows.append(normalized)
+            # 股票维度补齐只在显式修复任务中启用；每只股票独立提交，失败后可直接重跑并幂等覆盖。
+            row_count += self.repository.upsert_many(ADividend, rows)
             self.db.commit()
         return row_count
 
@@ -466,10 +509,7 @@ class DividendReinvestmentDataLandingService:
             "total_reinvested_shares": quantize_decimal(total_reinvested_shares),
             "dividend_event_count": event_count,
             "dividend_year_count": len(dividend_years),
-            "consecutive_dividend_years": self._consecutive_dividend_years(
-                dividend_years,
-                final_quote.trade_date.year,
-            ),
+            "consecutive_dividend_years": self._consecutive_dividend_years(dividend_years),
             "total_return_amount": quantize_decimal(total_return_amount, "0.000001"),
             "total_return_pct": quantize_decimal(total_return_pct),
             "annualized_return_pct": annualized,
@@ -663,9 +703,19 @@ class DividendReinvestmentDataLandingService:
         value = (float(market_value / initial_amount) ** (1 / years) - 1) * 100
         return quantize_decimal(Decimal(str(value)))
 
-    def _consecutive_dividend_years(self, dividend_years: set[int], final_year: int) -> int:
+    def _consecutive_dividend_years(self, dividend_years: set[int]) -> int:
+        """按最近一个实际分红年份向前统计连续年数。
+
+        创建日期：2026-05-30
+        author: sunshengxian
+        """
+
+        if not dividend_years:
+            return 0
         count = 0
-        for year in range(final_year, min(dividend_years or {final_year}) - 1, -1):
+        # 当前年度可能还没除权除息，不能因为 2026 这类未完整年度无分红就把连续年数打成 0；
+        # 因此从最近一个实际发生分红的年份开始倒推，遇到第一个缺口即停止。
+        for year in range(max(dividend_years), min(dividend_years) - 1, -1):
             if year not in dividend_years:
                 break
             count += 1
@@ -816,6 +866,19 @@ class DividendReinvestmentDataLandingService:
             return value
         return parse_tushare_date(str(value).replace("-", ""))
 
+    def _coerce_bool(self, value: Any) -> bool:
+        """解析同步参数中的布尔开关，兼容前端表单和脚本传入的字符串值。
+
+        创建日期：2026-05-30
+        author: sunshengxian
+        """
+
+        if isinstance(value, bool):
+            return value
+        if value is None:
+            return False
+        return str(value).strip().lower() in {"1", "true", "yes", "y", "on"}
+
     def _now(self) -> datetime:
         return datetime.now(UTC).replace(tzinfo=None)
 
@@ -861,6 +924,7 @@ class DividendReinvestmentDataLandingService:
                 "calendar_rows": result.calendar_rows,
                 "daily_rows": result.daily_rows,
                 "dividend_rows": result.dividend_rows,
+                "stock_dividend_rows": result.stock_dividend_rows,
                 "daily_basic_rows": result.daily_basic_rows,
                 "summary_rows": result.summary_rows,
                 "yearly_rows": result.yearly_rows,
@@ -883,7 +947,7 @@ class DividendReinvestmentDataLandingService:
         ).first()
 
     def list_backtest_runs(self, limit: int = 20) -> list[DividendReinvestmentBacktestRun]:
-        """按时间倒序列出分红再投入回测批次。
+        """按时间倒序列出成功的分红再投入回测批次。
 
         创建日期：2026-05-30
         author: sunshengxian
@@ -892,6 +956,7 @@ class DividendReinvestmentDataLandingService:
         return list(
             self.db.scalars(
                 select(DividendReinvestmentBacktestRun)
+                .where(DividendReinvestmentBacktestRun.status == "SUCCESS")
                 .order_by(desc(DividendReinvestmentBacktestRun.id))
                 .limit(limit)
             ).all()
@@ -908,6 +973,8 @@ class DividendReinvestmentDataLandingService:
         min_consecutive_dividend_years: int | None,
         min_latest_dividend_yield_ttm: Decimal | None,
         max_latest_pe_ttm: Decimal | None,
+        sort_by: str,
+        sort_order: str,
         page: int,
         page_size: int,
     ) -> tuple[int | None, int, list[DividendReinvestmentBacktestSummary]]:
@@ -964,6 +1031,17 @@ class DividendReinvestmentDataLandingService:
             filters.append(
                 DividendReinvestmentBacktestSummary.latest_pe_ttm <= max_latest_pe_ttm
             )
+        sort_columns = {
+            "annualized_return_pct": DividendReinvestmentBacktestSummary.annualized_return_pct,
+            "total_return_pct": DividendReinvestmentBacktestSummary.total_return_pct,
+            "total_cash_dividend": DividendReinvestmentBacktestSummary.total_cash_dividend,
+            "latest_dividend_yield_ttm": (
+                DividendReinvestmentBacktestSummary.latest_dividend_yield_ttm
+            ),
+        }
+        # 前端默认关注累计分红，非法排序字段兜底回累计分红，避免旧链接或手写参数回到过时口径。
+        sort_column = sort_columns.get(sort_by) or sort_columns["total_cash_dividend"]
+        sort_direction = asc if sort_order == "asc" else desc
 
         total = self.db.scalar(
             select(func.count()).select_from(DividendReinvestmentBacktestSummary).where(*filters)
@@ -973,8 +1051,9 @@ class DividendReinvestmentDataLandingService:
                 select(DividendReinvestmentBacktestSummary)
                 .where(*filters)
                 .order_by(
+                    # 榜单排序只开放收益指标，避免前端传入任意字段造成不可控 SQL 排序。
+                    sort_direction(sort_column),
                     desc(DividendReinvestmentBacktestSummary.rank_score),
-                    desc(DividendReinvestmentBacktestSummary.annualized_return_pct),
                     DividendReinvestmentBacktestSummary.ts_code,
                 )
                 .offset((page - 1) * page_size)

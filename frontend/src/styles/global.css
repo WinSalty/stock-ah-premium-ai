@@ -1023,6 +1023,20 @@ body {
   margin-bottom: 16px;
 }
 
+.dividend-formula-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 16px 0;
+  border-color: #b7d7ff;
+  background: #f4f9ff;
+}
+
+.dividend-formula-banner .panel-title {
+  margin-bottom: 4px;
+}
+
 .dividend-health-card {
   display: grid;
   gap: 4px;
@@ -1037,6 +1051,15 @@ body {
   grid-template-columns: repeat(6, minmax(140px, 1fr));
   gap: 12px;
   align-items: end;
+}
+
+.formula-dialog {
+  display: grid;
+  gap: 8px;
+}
+
+.formula-dialog .ant-typography {
+  margin-bottom: 0;
 }
 
 .user-admin-table-panel {

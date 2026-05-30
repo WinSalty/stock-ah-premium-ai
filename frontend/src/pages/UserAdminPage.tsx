@@ -22,6 +22,7 @@ const menuPermissionOptions = [
   { label: '同步', value: 'sync' },
   { label: '查询', value: 'query' },
   { label: '机会筛选与关注', value: 'premium' },
+  { label: '分红再投筛选', value: 'dividend_reinvestment' },
   { label: '问答', value: 'chat' },
   { label: '图片生成', value: 'image_generation' },
   { label: 'LLM 耗时', value: 'llm_metrics' },

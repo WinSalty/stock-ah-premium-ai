@@ -80,6 +80,7 @@ class FakeDividendReinvestmentDataLandingService:
             calendar_rows=2,
             daily_rows=3,
             dividend_rows=4,
+            stock_dividend_rows=0,
             daily_basic_rows=5,
             summary_rows=6,
             yearly_rows=7,

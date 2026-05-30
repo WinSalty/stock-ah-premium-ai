@@ -366,8 +366,10 @@ def test_query_summaries_uses_latest_success_run_and_filters() -> None:
                     name="平安银行",
                     industry="银行",
                     initial_amount=Decimal("100000"),
+                    total_cash_dividend=Decimal("500"),
                     dividend_year_count=10,
                     consecutive_dividend_years=8,
+                    total_return_pct=Decimal("30"),
                     annualized_return_pct=Decimal("12.5"),
                     latest_dividend_yield_ttm=Decimal("4.2"),
                     latest_pe_ttm=Decimal("8.5"),
@@ -381,8 +383,10 @@ def test_query_summaries_uses_latest_success_run_and_filters() -> None:
                     name="万科A",
                     industry="房地产",
                     initial_amount=Decimal("100000"),
+                    total_cash_dividend=Decimal("200"),
                     dividend_year_count=2,
                     consecutive_dividend_years=0,
+                    total_return_pct=Decimal("3"),
                     annualized_return_pct=Decimal("1.2"),
                     latest_dividend_yield_ttm=Decimal("0.5"),
                     latest_pe_ttm=Decimal("40"),
@@ -403,6 +407,40 @@ def test_query_summaries_uses_latest_success_run_and_filters() -> None:
             min_consecutive_dividend_years=5,
             min_latest_dividend_yield_ttm=Decimal("3"),
             max_latest_pe_ttm=Decimal("12"),
+            sort_by="annualized_return_pct",
+            sort_order="desc",
+            page=1,
+            page_size=10,
+        )
+        _, sorted_total, sorted_rows = DividendReinvestmentDataLandingService(db).query_summaries(
+            run_id=run.id,
+            keyword=None,
+            industry=None,
+            data_quality="COMPLETE",
+            min_annualized_return_pct=None,
+            min_dividend_year_count=None,
+            min_consecutive_dividend_years=None,
+            min_latest_dividend_yield_ttm=None,
+            max_latest_pe_ttm=None,
+            sort_by="total_return_pct",
+            sort_order="asc",
+            page=1,
+            page_size=10,
+        )
+        _, dividend_total, dividend_rows = DividendReinvestmentDataLandingService(
+            db
+        ).query_summaries(
+            run_id=run.id,
+            keyword=None,
+            industry=None,
+            data_quality="COMPLETE",
+            min_annualized_return_pct=None,
+            min_dividend_year_count=None,
+            min_consecutive_dividend_years=None,
+            min_latest_dividend_yield_ttm=None,
+            max_latest_pe_ttm=None,
+            sort_by="total_cash_dividend",
+            sort_order="desc",
             page=1,
             page_size=10,
         )
@@ -410,3 +448,62 @@ def test_query_summaries_uses_latest_success_run_and_filters() -> None:
     assert target_run_id == run.id
     assert total == 1
     assert rows[0].ts_code == "000001.SZ"
+    assert sorted_total == 2
+    assert [row.ts_code for row in sorted_rows] == ["000002.SZ", "000001.SZ"]
+    assert dividend_total == 2
+    assert [row.ts_code for row in dividend_rows] == ["000001.SZ", "000002.SZ"]
+
+
+def test_consecutive_dividend_years_starts_from_latest_dividend_year() -> None:
+    """确认连续分红年数不会被当前未完整年度误清零。
+
+    创建日期：2026-05-30
+    author: sunshengxian
+    """
+
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    with Session(engine) as db:
+        service = DividendReinvestmentDataLandingService(db)
+
+        # 当前年度可能尚未实施分红，连续年数应从最近一个实际分红年份往前数。
+        assert service._consecutive_dividend_years({2020, 2021, 2022, 2023, 2024, 2025}) == 6
+        assert service._consecutive_dividend_years({2023, 2025}) == 1
+        assert service._consecutive_dividend_years(set()) == 0
+
+
+def test_list_backtest_runs_only_returns_success_runs() -> None:
+    """确认页面批次下拉不会暴露失败批次。
+
+    创建日期：2026-05-30
+    author: sunshengxian
+    """
+
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    with Session(engine) as db:
+        db.add_all(
+            [
+                DividendReinvestmentBacktestRun(
+                    run_key="failed-run",
+                    start_date=date(2026, 1, 1),
+                    end_date=date(2026, 1, 2),
+                    initial_amount=Decimal("100000"),
+                    cash_div_field="cash_div_tax",
+                    status="FAILED",
+                ),
+                DividendReinvestmentBacktestRun(
+                    run_key="success-run",
+                    start_date=date(2026, 1, 1),
+                    end_date=date(2026, 1, 2),
+                    initial_amount=Decimal("100000"),
+                    cash_div_field="cash_div_tax",
+                    status="SUCCESS",
+                ),
+            ]
+        )
+        db.commit()
+
+        rows = DividendReinvestmentDataLandingService(db).list_backtest_runs(limit=10)
+
+    assert [row.run_key for row in rows] == ["success-run"]

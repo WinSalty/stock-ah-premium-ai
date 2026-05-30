@@ -57,7 +57,14 @@ DEFAULT_ROLE_PERMISSIONS: dict[str, list[str]] = {
         "chat_xueqiu_publish",
         "profile",
     ],
-    ROLE_USER: ["overview", "premium", "chat", "image_generation", "profile"],
+    ROLE_USER: [
+        "overview",
+        "premium",
+        "dividend_reinvestment",
+        "chat",
+        "image_generation",
+        "profile",
+    ],
 }
 
 DEFAULT_OVERVIEW_CHART_SETTINGS = OverviewChartSettings()

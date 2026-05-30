@@ -214,6 +214,7 @@ export interface SyncBatchCreate {
 export interface DividendReinvestmentSyncBatchCreate extends SyncBatchCreate {
   initial_amount?: number;
   cash_div_field?: 'cash_div_tax' | 'cash_div' | string;
+  supplement_dividend_by_stock?: boolean;
 }
 
 export interface SyncRunFilters {
@@ -296,6 +297,12 @@ export interface DividendReinvestmentSummaryParams {
   min_consecutive_dividend_years?: number;
   min_latest_dividend_yield_ttm?: number;
   max_latest_pe_ttm?: number;
+  sort_by?:
+    | 'annualized_return_pct'
+    | 'total_return_pct'
+    | 'total_cash_dividend'
+    | 'latest_dividend_yield_ttm';
+  sort_order?: 'asc' | 'desc';
   page: number;
   page_size: number;
 }

@@ -57,6 +57,13 @@ def list_dividend_reinvestment_summaries(
     min_consecutive_dividend_years: Annotated[int | None, Query(ge=0)] = None,
     min_latest_dividend_yield_ttm: Annotated[Decimal | None, Query()] = None,
     max_latest_pe_ttm: Annotated[Decimal | None, Query()] = None,
+    sort_by: Annotated[
+        str,
+        Query(
+            pattern="^(annualized_return_pct|total_return_pct|total_cash_dividend|latest_dividend_yield_ttm)$"
+        ),
+    ] = "total_cash_dividend",
+    sort_order: Annotated[str, Query(pattern="^(asc|desc)$")] = "desc",
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=30, ge=1, le=100),
 ) -> dict:
@@ -76,6 +83,8 @@ def list_dividend_reinvestment_summaries(
         min_consecutive_dividend_years=min_consecutive_dividend_years,
         min_latest_dividend_yield_ttm=min_latest_dividend_yield_ttm,
         max_latest_pe_ttm=max_latest_pe_ttm,
+        sort_by=sort_by,
+        sort_order=sort_order,
         page=page,
         page_size=page_size,
     )

@@ -96,6 +96,10 @@ class DividendReinvestmentSyncBatchCreate(BaseModel):
         default="cash_div_tax",
         description="现金分红口径，支持 cash_div_tax 或 cash_div",
     )
+    supplement_dividend_by_stock: bool = Field(
+        default=False,
+        description="是否按候选股票逐只补齐历史分红，适合修复 ex_date 全市场回补缺口",
+    )
 
 
 class TencentUnadjustedSyncBatchResponse(BaseModel):
