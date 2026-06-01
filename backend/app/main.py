@@ -14,6 +14,7 @@ from app.api.routes_image_generation import router as image_generation_router
 from app.api.routes_limit_up_push import router as limit_up_push_router
 from app.api.routes_llm_metrics import router as llm_metrics_router
 from app.api.routes_market import router as market_router
+from app.api.routes_nine_turn_push import router as nine_turn_push_router
 from app.api.routes_notifications import router as notifications_router
 from app.api.routes_query import router as query_router
 from app.api.routes_settings import router as settings_router
@@ -25,6 +26,7 @@ from app.core.logging import configure_logging
 from app.db.session import SessionLocal
 from app.jobs.alert_jobs import register_alert_jobs
 from app.jobs.limit_up_push_jobs import register_limit_up_push_jobs
+from app.jobs.nine_turn_push_jobs import register_nine_turn_push_jobs
 from app.jobs.scheduler import create_scheduler
 from app.jobs.sync_jobs import register_incremental_sync_jobs
 from app.jobs.xueqiu_publish_jobs import register_xueqiu_publish_jobs
@@ -49,6 +51,7 @@ def build_lifespan(settings: Settings):
             settings.sync_scheduler_enabled
             or settings.alert_scheduler_enabled
             or settings.limit_up_push_scheduler_enabled
+            or settings.nine_turn_push_scheduler_enabled
             or settings.xueqiu_publish_scheduler_enabled
         ):
             scheduler = create_scheduler(settings.sync_scheduler_timezone)
@@ -58,6 +61,8 @@ def build_lifespan(settings: Settings):
                 register_alert_jobs(scheduler, settings)
             if settings.limit_up_push_scheduler_enabled:
                 register_limit_up_push_jobs(scheduler, settings)
+            if settings.nine_turn_push_scheduler_enabled:
+                register_nine_turn_push_jobs(scheduler, settings)
             if settings.xueqiu_publish_scheduler_enabled:
                 register_xueqiu_publish_jobs(scheduler, settings)
             scheduler.start()
@@ -110,6 +115,7 @@ def create_app() -> FastAPI:
     app.include_router(image_generation_router, prefix="/api", tags=["image-generation"])
     app.include_router(llm_metrics_router, prefix="/api", tags=["llm-metrics"])
     app.include_router(limit_up_push_router, prefix="/api", tags=["limit-up-push"])
+    app.include_router(nine_turn_push_router, prefix="/api", tags=["nine-turn-push"])
     app.include_router(xueqiu_publish_router, prefix="/api", tags=["xueqiu-publish"])
     return app
 

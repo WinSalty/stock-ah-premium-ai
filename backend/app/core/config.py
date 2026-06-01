@@ -122,6 +122,26 @@ class Settings(BaseSettings):
         default=LIMIT_UP_PUSH_DEFAULT_INDICATOR_STOCK_LIMIT,
         alias="LIMIT_UP_PUSH_INDICATOR_STOCK_LIMIT",
     )
+    nine_turn_push_scheduler_enabled: bool = Field(
+        default=True,
+        alias="NINE_TURN_PUSH_SCHEDULER_ENABLED",
+    )
+    nine_turn_push_poll_minutes: str = Field(
+        default="10,20,30,40,50",
+        alias="NINE_TURN_PUSH_POLL_MINUTES",
+    )
+    nine_turn_push_poll_hours: str = Field(default="21-22", alias="NINE_TURN_PUSH_POLL_HOURS")
+    nine_turn_push_model: str = Field(default="deepseek-v4-pro", alias="NINE_TURN_PUSH_MODEL")
+    nine_turn_push_reasoning_effort: str = Field(
+        default="max",
+        alias="NINE_TURN_PUSH_REASONING_EFFORT",
+    )
+    nine_turn_push_prompt_version: str = Field(
+        default="nine-turn-v1",
+        alias="NINE_TURN_PUSH_PROMPT_VERSION",
+    )
+    nine_turn_context_signal_limit: int = Field(default=240, alias="NINE_TURN_CONTEXT_SIGNAL_LIMIT")
+    nine_turn_context_watch_limit: int = Field(default=360, alias="NINE_TURN_CONTEXT_WATCH_LIMIT")
     xueqiu_publish_scheduler_enabled: bool = Field(
         default=True,
         alias="XUEQIU_PUBLISH_SCHEDULER_ENABLED",

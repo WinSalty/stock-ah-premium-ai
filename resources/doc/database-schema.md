@@ -1,6 +1,6 @@
 # 数据库表结构说明
 
-更新日期：2026-05-19
+更新日期：2026-06-01
 
 ## 维护口径
 
@@ -89,9 +89,11 @@ LLM 按需个股研究数据：
 - `limit_up_push_recipient`：打板报告接收人配置表，保存系统用户是否启用接收，以及是否接收周六、周日晚间缓存报告复推；PushPlus 好友令牌仍只保存在绑定表。
 - `limit_up_push_delivery`：打板报告业务推送计划与结果表，按报告、计划类型、计划时间和接收用户做幂等，实际 PushPlus 请求流水关联到 `pushplus_message_log`。
 - `limit_up_report_share`：打板报告分享链接表，保存随机 token、过期时间、撤销时间和公开访问次数；`expires_at` 为空表示永久有效，公开查看只读取已生成报告，不授予后台权限。
+- `nine_turn_analysis_cache`：神奇九转 LLM 报告缓存表，按交易日、频率、模型、提示词版本和数据快照哈希去重，保存 Tushare `stk_nineturn` 九转成形、下跌九转和 7/8 计数观察池上下文、HTML 报告、质量记录和生成状态。
+- `nine_turn_push_delivery`：神奇九转报告业务推送计划与结果表，接收人名单复用打板报告接收人配置，按九转报告、计划类型、计划时间和接收用户做幂等，实际 PushPlus 请求流水关联到 `pushplus_message_log`。
 - `xueqiu_publish_credential`：雪球发布登录态配置表，保存管理员提供的创作者后台 Cookie、User-Agent、Referer、过期时间和最近验证结果；接口只返回掩码摘要，不返回完整 Cookie。
 - `xueqiu_publish_setting`：雪球发布定时配置表，保存页面配置的工作日定时开关、草稿/正式发布模式、东八区小时/分钟 cron 字段和默认封面图；进程级调度注册仍由环境变量控制，任务执行时实时读取本表决定是否真正发起保存或发布。
-- `xueqiu_publish_record`：雪球长文草稿与发布流水表，记录每次草稿或发布尝试的草稿 ID、正式发布 ID、文章 URL、请求摘要、响应 JSON、失败原因和发布时间；默认操作复用同一报告同一模式的最近流水，管理员强制新建/重试时会新增流水以保留历史审计。
+- `xueqiu_publish_record`：雪球长文草稿与发布流水表，按 `source_type` 区分打板报告、问答回答和神奇九转报告；打板报告使用 `analysis_id`，神奇九转报告使用 `nine_turn_analysis_id`，九转文章不提交封面图。记录每次草稿或发布尝试的草稿 ID、正式发布 ID、文章 URL、请求摘要、响应 JSON、失败原因和发布时间；默认操作复用同一来源同一模式的最近流水，管理员强制新建/重试时会新增流水以保留历史审计。
 - `llm_chat_session`：LLM 问答会话，用于保存投资问答主题和更新时间，按 `user_id` 隔离，`deleted_at` 非空表示会话已逻辑删除。
 - `llm_chat_message`：LLM 问答消息，用于保存用户问题、助手回答、内部查询口径和结果预览，支持后续会话上下文记忆。
 - `llm_call_metric`：LLM 调用耗时指标，按每轮问答唯一 `question_id` 串联路由、SQL、回答和流式首包等阶段；新增 `conversation_title` 和 `user_name` 保存对话标题与用户展示名称；`phase_label`、`phase_description` 解释阶段中文含义，`request_payload_json` 使用 `LONGTEXT` 记录实际发送给 LLM 的请求 JSON 和上下文 messages，不保存鉴权头和 API Key；`response_content` 使用 `LONGTEXT` 记录大模型返回的原始响应内容，流式回答保存拼接后的完整内容。

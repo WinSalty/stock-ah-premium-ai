@@ -528,6 +528,29 @@ CREATE TABLE IF NOT EXISTS `limit_up_analysis_cache` (
   KEY `idx_limit_up_analysis_generated` (`generated_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='打板 LLM 分析报告缓存表';
 
+CREATE TABLE IF NOT EXISTS `nine_turn_analysis_cache` (
+  `id` INT NOT NULL AUTO_INCREMENT COMMENT '自增主键',
+  `trade_date` DATE NOT NULL COMMENT '神奇九转报告对应 A 股交易日',
+  `freq` VARCHAR(16) NOT NULL DEFAULT 'daily' COMMENT '九转频率，首版固定 daily',
+  `model` VARCHAR(64) NOT NULL COMMENT '生成报告使用的 LLM 模型',
+  `prompt_version` VARCHAR(64) NOT NULL COMMENT '提示词版本，用于区分九转报告生成口径',
+  `data_snapshot_hash` VARCHAR(64) NOT NULL COMMENT 'stk_nineturn 结构化上下文快照哈希，用于重跑幂等',
+  `status` VARCHAR(16) NOT NULL DEFAULT 'PENDING' COMMENT '报告状态，PENDING、GENERATING、READY、FAILED',
+  `title` VARCHAR(160) NOT NULL COMMENT '报告标题',
+  `content_html` LONGTEXT DEFAULT NULL COMMENT '适合 PushPlus 和雪球长文展示的完整 HTML 报告',
+  `content_markdown` LONGTEXT DEFAULT NULL COMMENT 'LLM 原始或规范化 Markdown 内容',
+  `context_json` LONGTEXT DEFAULT NULL COMMENT '送入模型的神奇九转信号、观察池和质量上下文 JSON',
+  `data_quality_json` LONGTEXT DEFAULT NULL COMMENT 'Tushare 行数、九转信号数、观察池截断和缺失情况 JSON',
+  `error_message` TEXT DEFAULT NULL COMMENT '报告生成失败摘要',
+  `generated_at` DATETIME DEFAULT NULL COMMENT '报告生成完成时间',
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '记录创建时间',
+  `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '记录更新时间',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_nine_turn_analysis_snapshot` (`trade_date`, `freq`, `model`, `prompt_version`, `data_snapshot_hash`),
+  KEY `idx_nine_turn_analysis_trade_status` (`trade_date`, `status`),
+  KEY `idx_nine_turn_analysis_generated` (`generated_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='神奇九转 LLM 分析报告缓存表';
+
 CREATE TABLE IF NOT EXISTS `limit_up_push_recipient` (
   `id` INT NOT NULL AUTO_INCREMENT COMMENT '自增主键',
   `user_id` INT NOT NULL COMMENT '接收报告的系统用户 ID',
@@ -571,6 +594,30 @@ CREATE TABLE IF NOT EXISTS `limit_up_push_delivery` (
   CONSTRAINT `fk_limit_up_push_delivery_log`
     FOREIGN KEY (`pushplus_message_log_id`) REFERENCES `pushplus_message_log` (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='打板报告业务推送计划与结果表';
+
+CREATE TABLE IF NOT EXISTS `nine_turn_push_delivery` (
+  `id` INT NOT NULL AUTO_INCREMENT COMMENT '自增主键',
+  `analysis_id` INT NOT NULL COMMENT '神奇九转报告缓存 ID',
+  `user_id` INT NOT NULL COMMENT '接收系统用户 ID，名单复用打板报告接收人配置',
+  `scheduled_kind` VARCHAR(32) NOT NULL COMMENT '计划类型，DATA_READY 或 MANUAL',
+  `scheduled_at` DATETIME NOT NULL COMMENT '业务计划时间，用于定时任务重跑幂等',
+  `status` VARCHAR(16) NOT NULL DEFAULT 'PENDING' COMMENT '推送状态，PENDING、SENT、FAILED、SKIPPED',
+  `pushplus_message_log_id` INT DEFAULT NULL COMMENT '对应 PushPlus 消息流水 ID',
+  `error_message` TEXT DEFAULT NULL COMMENT '失败或跳过原因',
+  `sent_at` DATETIME DEFAULT NULL COMMENT '发送成功时间',
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '记录创建时间',
+  `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '记录更新时间',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_nine_turn_push_delivery_once` (`analysis_id`, `scheduled_kind`, `scheduled_at`, `user_id`),
+  KEY `idx_nine_turn_push_delivery_status` (`status`, `scheduled_at`),
+  KEY `idx_nine_turn_push_delivery_user` (`user_id`, `scheduled_at`),
+  CONSTRAINT `fk_nine_turn_push_delivery_analysis`
+    FOREIGN KEY (`analysis_id`) REFERENCES `nine_turn_analysis_cache` (`id`),
+  CONSTRAINT `fk_nine_turn_push_delivery_user`
+    FOREIGN KEY (`user_id`) REFERENCES `app_user` (`id`),
+  CONSTRAINT `fk_nine_turn_push_delivery_log`
+    FOREIGN KEY (`pushplus_message_log_id`) REFERENCES `pushplus_message_log` (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='神奇九转报告业务推送计划与结果表';
 
 CREATE TABLE IF NOT EXISTS `limit_up_report_share` (
   `id` INT NOT NULL AUTO_INCREMENT COMMENT '自增主键',
@@ -629,12 +676,14 @@ CREATE TABLE IF NOT EXISTS `xueqiu_publish_setting` (
 
 CREATE TABLE IF NOT EXISTS `xueqiu_publish_record` (
   `id` INT NOT NULL AUTO_INCREMENT COMMENT '自增主键',
-  `analysis_id` INT NOT NULL COMMENT '关联的打板报告缓存 ID',
+  `analysis_id` INT DEFAULT NULL COMMENT '关联的打板报告缓存 ID，非打板来源为空',
+  `nine_turn_analysis_id` INT DEFAULT NULL COMMENT '关联的神奇九转报告缓存 ID，非九转来源为空',
+  `source_type` VARCHAR(32) NOT NULL DEFAULT 'LIMIT_UP_REPORT' COMMENT '发布来源，LIMIT_UP_REPORT、CHAT_ANSWER、NINE_TURN_REPORT',
   `publish_mode` VARCHAR(16) NOT NULL COMMENT '发布模式，DRAFT 草稿或 PUBLISH 正式发布',
   `status` VARCHAR(16) NOT NULL DEFAULT 'PENDING' COMMENT '状态：PENDING、DRAFTED、PUBLISHED、FAILED',
   `title` VARCHAR(180) NOT NULL COMMENT '发布到雪球的长文标题',
-  `content_html` LONGTEXT NOT NULL COMMENT '发布到雪球的长文 HTML 正文',
-  `cover_pic` VARCHAR(512) DEFAULT NULL COMMENT '雪球封面图 URL，可为空',
+  `content_html` LONGTEXT NOT NULL COMMENT '发布到雪球的长文 HTML 正文，神奇九转来源不包含图片',
+  `cover_pic` VARCHAR(512) DEFAULT NULL COMMENT '雪球封面图 URL，神奇九转报告固定为空',
   `draft_id` VARCHAR(128) DEFAULT NULL COMMENT '雪球草稿 ID',
   `status_id` VARCHAR(128) DEFAULT NULL COMMENT '雪球正式发布后的状态或文章 ID',
   `article_url` VARCHAR(512) DEFAULT NULL COMMENT '雪球文章公开 URL',
@@ -647,10 +696,13 @@ CREATE TABLE IF NOT EXISTS `xueqiu_publish_record` (
   `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '记录更新时间',
   PRIMARY KEY (`id`),
   KEY `idx_xueqiu_publish_record_mode_latest` (`analysis_id`, `publish_mode`, `created_at`),
+  KEY `idx_xueqiu_publish_record_nine_turn` (`nine_turn_analysis_id`, `publish_mode`, `created_at`),
   KEY `idx_xueqiu_publish_record_status` (`status`, `created_at`),
   KEY `idx_xueqiu_publish_record_analysis` (`analysis_id`),
   CONSTRAINT `fk_xueqiu_publish_record_analysis`
     FOREIGN KEY (`analysis_id`) REFERENCES `limit_up_analysis_cache` (`id`),
+  CONSTRAINT `fk_xueqiu_publish_record_nine_turn_analysis`
+    FOREIGN KEY (`nine_turn_analysis_id`) REFERENCES `nine_turn_analysis_cache` (`id`),
   CONSTRAINT `fk_xueqiu_publish_record_created_by`
     FOREIGN KEY (`created_by_user_id`) REFERENCES `app_user` (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='雪球长文草稿与发布流水表';

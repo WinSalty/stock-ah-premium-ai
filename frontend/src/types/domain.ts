@@ -841,6 +841,53 @@ export interface LimitUpActionResponse {
   delivery_count: number;
 }
 
+export interface NineTurnReportListItem {
+  id: number;
+  trade_date: string;
+  freq: string;
+  title: string;
+  status: string;
+  model: string;
+  prompt_version: string;
+  data_snapshot_hash: string;
+  generated_at: string | null;
+  created_at: string;
+  updated_at: string;
+  error_message: string | null;
+}
+
+export interface NineTurnReportDetail extends NineTurnReportListItem {
+  content_html: string | null;
+  content_markdown: string | null;
+  context: Record<string, unknown> | null;
+  data_quality: Array<Record<string, unknown>>;
+}
+
+export interface NineTurnDeliveryItem {
+  id: number;
+  analysis_id: number;
+  trade_date: string | null;
+  user_id: number;
+  username: string | null;
+  display_name: string | null;
+  scheduled_kind: string;
+  scheduled_at: string;
+  status: string;
+  pushplus_message_log_id: number | null;
+  error_message: string | null;
+  sent_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface NineTurnActionResponse {
+  ok: boolean;
+  message: string;
+  report_id: number | null;
+  delivery_count: number;
+  xueqiu_record_id: number | null;
+}
+
 export interface XueqiuCredentialRequest {
   enabled: boolean;
   cookie_text: string;
@@ -912,6 +959,7 @@ export interface XueqiuActionResponse {
 export interface XueqiuPublishRecordItem {
   id: number;
   analysis_id: number | null;
+  nine_turn_analysis_id: number | null;
   chat_message_id: number | null;
   source_type: string;
   trade_date: string | null;

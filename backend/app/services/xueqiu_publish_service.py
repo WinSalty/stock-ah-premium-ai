@@ -18,6 +18,7 @@ from app.db.models.auth import AppUser
 from app.db.models.chat import LlmChatMessage, LlmChatSession
 from app.db.models.notification import (
     LimitUpAnalysisCache,
+    NineTurnAnalysisCache,
     XueqiuPublishCredential,
     XueqiuPublishRecord,
     XueqiuPublishSetting,
@@ -41,6 +42,7 @@ logger = logging.getLogger(__name__)
 XUEQIU_MODE_DRAFT = "DRAFT"
 XUEQIU_MODE_PUBLISH = "PUBLISH"
 XUEQIU_SOURCE_LIMIT_UP_REPORT = "LIMIT_UP_REPORT"
+XUEQIU_SOURCE_NINE_TURN_REPORT = "NINE_TURN_REPORT"
 XUEQIU_SOURCE_CHAT_ANSWER = "CHAT_ANSWER"
 XUEQIU_STATUS_PENDING = "PENDING"
 XUEQIU_STATUS_DRAFTED = "DRAFTED"
@@ -398,6 +400,89 @@ class XueqiuPublishService:
             cover_pic=setting.default_cover_pic or DEFAULT_XUEQIU_COVER_PIC,
         )
 
+    def save_or_publish_nine_turn_report_by_scheduler(
+        self, analysis_id: int
+    ) -> XueqiuPublishRecord | None:
+        """按雪球发布配置保存或发布神奇九转报告，九转文章不使用封面图。
+
+        创建日期：2026-06-01
+        author: sunshengxian
+        """
+
+        setting = self._setting_or_create()
+        if not setting.scheduler_enabled:
+            return None
+        return self.save_or_publish_nine_turn_report(
+            analysis_id,
+            publish=setting.auto_publish,
+            force=False,
+            user=None,
+        )
+
+    def save_or_publish_nine_turn_report(
+        self,
+        analysis_id: int,
+        publish: bool,
+        force: bool,
+        user: AppUser | None = None,
+    ) -> XueqiuPublishRecord:
+        """将神奇九转报告保存为雪球草稿或正式发布。
+
+        创建日期：2026-06-01
+        author: sunshengxian
+        """
+
+        credential = self._enabled_credential()
+        analysis = self._resolve_nine_turn_analysis(analysis_id)
+        mode = XUEQIU_MODE_PUBLISH if publish else XUEQIU_MODE_DRAFT
+        record = self._get_or_create_nine_turn_record(analysis, mode, user, force=force)
+        if record.status in {XUEQIU_STATUS_DRAFTED, XUEQIU_STATUS_PUBLISHED} and not force:
+            return record
+        title, content_html = self._build_nine_turn_article(analysis)
+        record.title = title
+        record.content_html = content_html
+        record.cover_pic = None
+        record.status = XUEQIU_STATUS_PENDING
+        record.error_message = None
+        self.db.flush()
+        try:
+            draft_response = self._save_draft(credential, record)
+            draft_id = str(draft_response.get("id") or draft_response.get("draft_id") or "")
+            if not draft_id:
+                raise XueqiuPublishError("雪球草稿接口未返回 draft id")
+            record.draft_id = draft_id
+            record.response_json = self._json_dumps({"draft": draft_response})
+            if not publish:
+                record.status = XUEQIU_STATUS_DRAFTED
+                self.db.commit()
+                self.db.refresh(record)
+                return record
+            session_token = self._fetch_session_token(credential, draft_id)
+            publish_response = self._publish_status(credential, record, session_token)
+            status_id = self._extract_status_id(publish_response)
+            record.status = XUEQIU_STATUS_PUBLISHED
+            record.status_id = status_id
+            record.article_url = self._build_article_url(publish_response, status_id)
+            record.response_json = self._json_dumps(
+                {"draft": draft_response, "publish": publish_response}
+            )
+            record.published_at = self._now_naive()
+        except Exception as exc:
+            record.status = XUEQIU_STATUS_FAILED
+            record.error_message = str(exc)
+            self.db.commit()
+            self._send_admin_failure_alert(record, analysis, mode, exc)
+            logger.error(
+                "神奇九转报告发布雪球失败 analysis_id=%s mode=%s",
+                analysis.id,
+                mode,
+                exc_info=True,
+            )
+            raise XueqiuPublishError(str(exc)) from exc
+        self.db.commit()
+        self.db.refresh(record)
+        return record
+
     def list_records(
         self,
         limit: int = 100,
@@ -410,10 +495,18 @@ class XueqiuPublishService:
         """
 
         statement = (
-            select(XueqiuPublishRecord, LimitUpAnalysisCache.trade_date)
+            select(
+                XueqiuPublishRecord,
+                LimitUpAnalysisCache.trade_date,
+                NineTurnAnalysisCache.trade_date,
+            )
             .outerjoin(
                 LimitUpAnalysisCache,
                 LimitUpAnalysisCache.id == XueqiuPublishRecord.analysis_id,
+            )
+            .outerjoin(
+                NineTurnAnalysisCache,
+                NineTurnAnalysisCache.id == XueqiuPublishRecord.nine_turn_analysis_id,
             )
             .order_by(desc(XueqiuPublishRecord.id))
             .limit(limit)
@@ -421,8 +514,8 @@ class XueqiuPublishService:
         if status:
             statement = statement.where(XueqiuPublishRecord.status == status.strip().upper())
         return [
-            self._record_item(record, trade_date)
-            for record, trade_date in self.db.execute(statement).all()
+            self._record_item(record, trade_date or nine_turn_trade_date)
+            for record, trade_date, nine_turn_trade_date in self.db.execute(statement).all()
         ]
 
     def get_record(self, record_id: int) -> XueqiuPublishRecordDetail:
@@ -433,17 +526,25 @@ class XueqiuPublishService:
         """
 
         row = self.db.execute(
-            select(XueqiuPublishRecord, LimitUpAnalysisCache.trade_date)
+            select(
+                XueqiuPublishRecord,
+                LimitUpAnalysisCache.trade_date,
+                NineTurnAnalysisCache.trade_date,
+            )
             .outerjoin(
                 LimitUpAnalysisCache,
                 LimitUpAnalysisCache.id == XueqiuPublishRecord.analysis_id,
+            )
+            .outerjoin(
+                NineTurnAnalysisCache,
+                NineTurnAnalysisCache.id == XueqiuPublishRecord.nine_turn_analysis_id,
             )
             .where(XueqiuPublishRecord.id == record_id)
         ).one_or_none()
         if row is None:
             raise XueqiuPublishError("发布记录不存在")
-        record, trade_date = row
-        item = self._record_item(record, trade_date)
+        record, trade_date, nine_turn_trade_date = row
+        item = self._record_item(record, trade_date or nine_turn_trade_date)
         return XueqiuPublishRecordDetail(
             **item.model_dump(),
             content_html=record.content_html,
@@ -630,6 +731,22 @@ class XueqiuPublishService:
             raise XueqiuPublishError("未找到可发布的 READY 打板报告")
         return analysis
 
+    def _resolve_nine_turn_analysis(self, analysis_id: int) -> NineTurnAnalysisCache:
+        """读取可发布的 READY 神奇九转报告。
+
+        创建日期：2026-06-01
+        author: sunshengxian
+        """
+
+        analysis = self.db.get(NineTurnAnalysisCache, analysis_id)
+        if (
+            analysis is None
+            or analysis.status != ANALYSIS_STATUS_READY
+            or not analysis.content_html
+        ):
+            raise XueqiuPublishError("未找到可发布的 READY 神奇九转报告")
+        return analysis
+
     def _get_or_create_record(
         self,
         analysis: LimitUpAnalysisCache,
@@ -651,6 +768,39 @@ class XueqiuPublishService:
             title=title,
             content_html=content_html,
             cover_pic=self._normalize_cover_pic(cover_pic),
+            created_by_user_id=user.id if user else None,
+        )
+        self.db.add(record)
+        self.db.flush()
+        return record
+
+    def _get_or_create_nine_turn_record(
+        self,
+        analysis: NineTurnAnalysisCache,
+        mode: str,
+        user: AppUser | None,
+        force: bool = False,
+    ) -> XueqiuPublishRecord:
+        """读取或创建神奇九转报告的雪球发布流水。
+
+        创建日期：2026-06-01
+        author: sunshengxian
+        """
+
+        if not force:
+            existing = self._latest_nine_turn_record_for_mode(analysis.id, mode)
+            if existing is not None:
+                return existing
+        title, content_html = self._build_nine_turn_article(analysis)
+        record = XueqiuPublishRecord(
+            analysis_id=None,
+            nine_turn_analysis_id=analysis.id,
+            source_type=XUEQIU_SOURCE_NINE_TURN_REPORT,
+            publish_mode=mode,
+            status=XUEQIU_STATUS_PENDING,
+            title=title,
+            content_html=content_html,
+            cover_pic=None,
             created_by_user_id=user.id if user else None,
         )
         self.db.add(record)
@@ -737,12 +887,50 @@ class XueqiuPublishService:
             .limit(1)
         )
 
+    def _latest_nine_turn_record_for_mode(
+        self,
+        analysis_id: int,
+        mode: str,
+    ) -> XueqiuPublishRecord | None:
+        """读取同一九转报告和发布模式下最近一条流水。
+
+        创建日期：2026-06-01
+        author: sunshengxian
+        """
+
+        # 九转定时任务跟 PushPlus 推送在同一链路中触发，必须复用最近流水；
+        # 否则 21 点轮询期间会反复保存相同草稿或重复正式发文。
+        return self.db.scalar(
+            select(XueqiuPublishRecord)
+            .where(
+                XueqiuPublishRecord.nine_turn_analysis_id == analysis_id,
+                XueqiuPublishRecord.publish_mode == mode,
+            )
+            .order_by(desc(XueqiuPublishRecord.created_at), desc(XueqiuPublishRecord.id))
+            .limit(1)
+        )
+
     def _build_article(self, analysis: LimitUpAnalysisCache) -> tuple[str, str]:
         title = f"{analysis.trade_date:%Y-%m-%d} 打板复盘：涨停生态、题材强度与次日观察"
         body = self._unwrap_report_body(analysis.content_html or "")
         disclaimer = (
             "<p><strong>风险提示：</strong>本文为基于公开数据和模型整理的市场复盘，"
             "不构成任何投资建议。短线打板波动剧烈，请结合自身风险承受能力独立判断。</p>"
+        )
+        return title, f"{body}{disclaimer}"
+
+    def _build_nine_turn_article(self, analysis: NineTurnAnalysisCache) -> tuple[str, str]:
+        """构造神奇九转报告的雪球标题和正文，按用户要求不带封面图。
+
+        创建日期：2026-06-01
+        author: sunshengxian
+        """
+
+        title = f"{analysis.trade_date:%Y-%m-%d} 神奇九转复盘：趋势衰竭与反转观察"
+        body = self._unwrap_report_body(analysis.content_html or "")
+        disclaimer = (
+            "<p><strong>风险提示：</strong>九转指标属于技术信号，需结合成交量、趋势结构和市场环境复核，"
+            "不宜单独作为买卖依据。</p>"
         )
         return title, f"{body}{disclaimer}"
 
@@ -987,7 +1175,7 @@ class XueqiuPublishService:
     def _send_admin_failure_alert(
         self,
         record: XueqiuPublishRecord,
-        analysis: LimitUpAnalysisCache | None,
+        analysis: LimitUpAnalysisCache | NineTurnAnalysisCache | None,
         mode: str,
         exc: Exception,
     ) -> None:
@@ -1020,7 +1208,7 @@ class XueqiuPublishService:
     def _build_failure_alert_content(
         self,
         record: XueqiuPublishRecord,
-        analysis: LimitUpAnalysisCache | None,
+        analysis: LimitUpAnalysisCache | NineTurnAnalysisCache | None,
         mode: str,
         exc: Exception,
     ) -> str:
@@ -1033,9 +1221,9 @@ class XueqiuPublishService:
         mode_label = "正式发布" if mode == XUEQIU_MODE_PUBLISH else "保存草稿"
         return (
             "<div style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"
-            "line-height:1.7;color:#182230;\">"
-            "<h3 style=\"margin:0 0 12px;\">雪球长文发布失败</h3>"
-            "<table style=\"width:100%;border-collapse:collapse;font-size:14px;\">"
+            'line-height:1.7;color:#182230;">'
+            '<h3 style="margin:0 0 12px;">雪球长文发布失败</h3>'
+            '<table style="width:100%;border-collapse:collapse;font-size:14px;">'
             f"{self._failure_alert_row('流水 ID', str(record.id))}"
             f"{self._failure_alert_row('来源', self._record_source_label(record))}"
             f"{self._failure_alert_row('报告 ID', str(analysis.id) if analysis else '-')}"
@@ -1045,7 +1233,7 @@ class XueqiuPublishService:
             f"{self._failure_alert_row('标题', record.title)}"
             f"{self._failure_alert_row('失败原因', str(exc))}"
             "</table>"
-            "<p style=\"margin:12px 0 0;color:#667085;\">请到后台“雪球发布”菜单查看流水详情，"
+            '<p style="margin:12px 0 0;color:#667085;">请到后台“雪球发布”菜单查看流水详情，'
             "重新保存 Cookie 或手动强制新建草稿后再试。</p>"
             "</div>"
         )
@@ -1057,7 +1245,11 @@ class XueqiuPublishService:
         author: sunshengxian
         """
 
-        return "问答回答" if record.source_type == XUEQIU_SOURCE_CHAT_ANSWER else "打板报告"
+        if record.source_type == XUEQIU_SOURCE_CHAT_ANSWER:
+            return "问答回答"
+        if record.source_type == XUEQIU_SOURCE_NINE_TURN_REPORT:
+            return "神奇九转报告"
+        return "打板报告"
 
     def _failure_alert_row(self, label: str, value: str) -> str:
         """生成失败提醒表格行并转义用户可变内容。
@@ -1068,10 +1260,10 @@ class XueqiuPublishService:
 
         return (
             "<tr>"
-            "<td style=\"width:28%;padding:8px;border-top:1px solid #eaecf0;"
-            "background:#f8fafc;color:#667085;\">"
+            '<td style="width:28%;padding:8px;border-top:1px solid #eaecf0;'
+            'background:#f8fafc;color:#667085;">'
             f"{html.escape(label)}</td>"
-            "<td style=\"padding:8px;border-top:1px solid #eaecf0;color:#182230;\">"
+            '<td style="padding:8px;border-top:1px solid #eaecf0;color:#182230;">'
             f"{html.escape(value[:500])}</td>"
             "</tr>"
         )
@@ -1213,6 +1405,7 @@ class XueqiuPublishService:
         return XueqiuPublishRecordItem(
             id=record.id,
             analysis_id=record.analysis_id,
+            nine_turn_analysis_id=record.nine_turn_analysis_id,
             chat_message_id=record.chat_message_id,
             source_type=record.source_type,
             trade_date=trade_date,
@@ -1254,8 +1447,7 @@ class XueqiuPublishService:
 
     def _safe_payload(self, payload: dict[str, str]) -> dict[str, str]:
         return {
-            key: ("<hidden>" if key == "session_token" else value)
-            for key, value in payload.items()
+            key: ("<hidden>" if key == "session_token" else value) for key, value in payload.items()
         }
 
     def _normalize_cookie(self, cookie: str) -> str:

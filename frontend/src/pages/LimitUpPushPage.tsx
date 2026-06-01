@@ -11,8 +11,14 @@ import {
   fetchLimitUpRecipients,
   fetchLimitUpReports,
   fetchLimitUpReportShares,
+  fetchNineTurnDeliveries,
+  fetchNineTurnReport,
+  fetchNineTurnReports,
   generateLatestLimitUpReport,
+  generateLatestNineTurnReport,
+  publishNineTurnReportToXueqiu,
   pushLimitUpReport,
+  pushNineTurnReport,
   revokeLimitUpReportShare,
   updateLimitUpRecipients,
   type LimitUpDeliveryFilters,
@@ -24,6 +30,8 @@ import type {
   LimitUpRecipientItem,
   LimitUpReportListItem,
   LimitUpShareItem,
+  NineTurnDeliveryItem,
+  NineTurnReportListItem,
   UserInfo
 } from '../types/domain';
 import { formatEast8DateTime } from '../utils/datetime';
@@ -546,6 +554,16 @@ function LimitUpPushPage({ currentUser }: LimitUpPushPageProps) {
                 </>
               )
             },
+            {
+              key: 'nine-turn',
+              label: '神奇九转',
+              children: (
+                <NineTurnPushPanel
+                  isAdmin={isAdmin}
+                  pushableRecipients={pushableRecipients}
+                />
+              )
+            },
             ...(isAdmin ? [{
               key: 'recipients',
               label: '接收人',
@@ -691,6 +709,374 @@ function LimitUpPushPage({ currentUser }: LimitUpPushPageProps) {
         />
       </section>
     </main>
+  );
+}
+
+interface NineTurnPushPanelProps {
+  isAdmin: boolean;
+  pushableRecipients: LimitUpRecipientItem[];
+}
+
+/**
+ * 神奇九转报告管理面板，挂在打板推送菜单下并复用同一批推送接收人。
+ * 创建日期：2026-06-01
+ * author: sunshengxian
+ */
+function NineTurnPushPanel({ isAdmin, pushableRecipients }: NineTurnPushPanelProps) {
+  const queryClient = useQueryClient();
+  const [reportForm] = Form.useForm<LimitUpReportSearchForm>();
+  const [deliveryForm] = Form.useForm<LimitUpDeliveryFilters>();
+  const [pushForm] = Form.useForm<LimitUpPushRequest>();
+  const [reportFilters, setReportFilters] = useState<LimitUpReportFilters>({ limit: 50 });
+  const [deliveryFilters, setDeliveryFilters] = useState<LimitUpDeliveryFilters>({ limit: 150 });
+  const [selectedReportId, setSelectedReportId] = useState<number | null>(null);
+  const [isReportModalOpen, setIsReportModalOpen] = useState(false);
+  const [reportViewMode, setReportViewMode] = useState('preview');
+  const [pushTargetReportId, setPushTargetReportId] = useState<number | null>(null);
+  const reports = useQuery({ queryKey: ['nine-turn-reports', reportFilters], queryFn: () => fetchNineTurnReports(reportFilters) });
+  const deliveries = useQuery({
+    queryKey: ['nine-turn-deliveries', deliveryFilters],
+    queryFn: () => fetchNineTurnDeliveries(deliveryFilters)
+  });
+  const selectedReport = useQuery({
+    queryKey: ['nine-turn-report-detail', selectedReportId],
+    queryFn: () => fetchNineTurnReport(selectedReportId as number),
+    enabled: Boolean(selectedReportId)
+  });
+  const generateMutation = useMutation({
+    mutationFn: generateLatestNineTurnReport,
+    onSuccess: (result) => {
+      message.success(result.message);
+      queryClient.invalidateQueries({ queryKey: ['nine-turn-reports'] });
+      if (result.report_id) {
+        setSelectedReportId(result.report_id);
+      }
+    },
+    onError: (error) => message.error(error instanceof Error ? error.message : '生成失败')
+  });
+  const pushMutation = useMutation({
+    mutationFn: ({ reportId, payload }: { reportId: number; payload: LimitUpPushRequest }) => pushNineTurnReport(reportId, payload),
+    onSuccess: (result) => {
+      message.success(`${result.message}，成功 ${result.delivery_count} 个接收人`);
+      setPushTargetReportId(null);
+      queryClient.invalidateQueries({ queryKey: ['nine-turn-deliveries'] });
+    },
+    onError: (error) => message.error(error instanceof Error ? error.message : '推送失败')
+  });
+  const xueqiuMutation = useMutation({
+    mutationFn: publishNineTurnReportToXueqiu,
+    onSuccess: (result) => {
+      if (result.ok) {
+        message.success(result.message);
+      } else {
+        message.warning(result.message);
+      }
+    },
+    onError: (error) => message.error(error instanceof Error ? error.message : '提交雪球失败')
+  });
+
+  const submitReportSearch = (values: LimitUpReportSearchForm) => {
+    // 九转报告搜索沿用打板报告的日期和状态筛选口径，避免同一菜单内出现两套交互规则。
+    setReportFilters({
+      keyword: values.keyword?.trim() || undefined,
+      status: values.status || undefined,
+      trade_date: values.trade_date?.format('YYYY-MM-DD'),
+      limit: values.limit || 50
+    });
+  };
+
+  const submitDeliverySearch = (values: LimitUpDeliveryFilters) => {
+    setDeliveryFilters({
+      keyword: values.keyword?.trim() || undefined,
+      status: values.status || undefined,
+      user_id: values.user_id,
+      limit: values.limit || 150
+    });
+  };
+
+  const openReportModal = (reportId: number) => {
+    // 九转 LLM 输出既用于 PushPlus，也会原样进入雪球草稿；保留源码视图便于核对 HTML 结构。
+    setSelectedReportId(reportId);
+    setReportViewMode('preview');
+    setIsReportModalOpen(true);
+  };
+
+  const openPushModal = (reportId: number) => {
+    // 神奇九转手动推送只允许选择打板推送已启用且可推送的接收人，确保权限和名单一致。
+    setSelectedReportId(reportId);
+    setPushTargetReportId(reportId);
+    pushForm.setFieldsValue({ send_all: true, user_ids: pushableRecipients.map((item) => item.user_id) });
+  };
+
+  const submitPush = (values: LimitUpPushRequest) => {
+    if (!pushTargetReportId) {
+      return;
+    }
+    const payload = {
+      send_all: values.send_all,
+      user_ids: values.send_all ? [] : values.user_ids || []
+    };
+    if (!payload.send_all && !payload.user_ids.length) {
+      message.warning('请选择至少一个接收人');
+      return;
+    }
+    pushMutation.mutate({ reportId: pushTargetReportId, payload });
+  };
+
+  return (
+    <Space direction="vertical" size={16} className="limit-up-share-modal-body">
+      <div className="query-result-head">
+        <div>
+          <div className="panel-title">神奇九转报告</div>
+          <Typography.Text type="secondary">
+            每晚轮询 Tushare stk_nineturn，生成反转信号报告后推送打板接收人，并用同一雪球账号无封面发文。
+          </Typography.Text>
+        </div>
+        {isAdmin ? (
+          <Button
+            type="primary"
+            icon={<Sparkles size={16} />}
+            loading={generateMutation.isPending}
+            onClick={() => generateMutation.mutate()}
+          >
+            生成最新九转报告
+          </Button>
+        ) : null}
+      </div>
+      <Form className="limit-up-search-form" form={reportForm} layout="inline" onFinish={submitReportSearch}>
+        <Form.Item name="keyword">
+          <Input allowClear prefix={<Search size={16} />} placeholder="搜索标题、正文、质量" />
+        </Form.Item>
+        <Form.Item name="status">
+          <Select
+            allowClear
+            className="pushplus-search-select"
+            placeholder="状态"
+            options={[
+              { label: '已生成', value: 'READY' },
+              { label: '生成中', value: 'GENERATING' },
+              { label: '失败', value: 'FAILED' }
+            ]}
+          />
+        </Form.Item>
+        <Form.Item name="trade_date">
+          <DatePicker placeholder="交易日" />
+        </Form.Item>
+        <Form.Item name="limit" initialValue={50}>
+          <Select
+            className="pushplus-limit-select"
+            options={[
+              { label: '最近 30 条', value: 30 },
+              { label: '最近 50 条', value: 50 },
+              { label: '最近 100 条', value: 100 }
+            ]}
+          />
+        </Form.Item>
+        <Space>
+          <Button type="primary" htmlType="submit" icon={<Search size={16} />}>
+            搜索
+          </Button>
+          <Button
+            icon={<RotateCcw size={16} />}
+            onClick={() => {
+              reportForm.resetFields();
+              setReportFilters({ limit: 50 });
+            }}
+          >
+            重置
+          </Button>
+        </Space>
+      </Form>
+      <Table<NineTurnReportListItem>
+        rowKey="id"
+        size="small"
+        loading={reports.isLoading}
+        dataSource={reports.data || []}
+        scroll={{ x: 1120 }}
+        pagination={{ pageSize: 10 }}
+        rowClassName={(record) => (record.id === selectedReportId ? 'selected-row' : '')}
+        onRow={(record) => ({ onClick: () => setSelectedReportId(record.id) })}
+        columns={[
+          { title: '交易日', dataIndex: 'trade_date', width: 118, fixed: 'left' },
+          { title: '频率', dataIndex: 'freq', width: 92 },
+          { title: '报告标题', dataIndex: 'title', minWidth: 220, ellipsis: true },
+          {
+            title: '状态',
+            dataIndex: 'status',
+            width: 104,
+            render: (value) => <Tag color={value === 'READY' ? 'green' : value === 'FAILED' ? 'red' : 'blue'}>{value}</Tag>
+          },
+          { title: '模型', dataIndex: 'model', width: 160 },
+          { title: '提示词版本', dataIndex: 'prompt_version', width: 130 },
+          { title: '生成时间', dataIndex: 'generated_at', width: 178, render: (value) => formatEast8DateTime(value) },
+          {
+            title: '操作',
+            width: isAdmin ? 234 : 78,
+            fixed: 'right',
+            render: (_, record) => (
+              <Space size={4} className="limit-up-report-row-actions" onClick={(event) => event.stopPropagation()}>
+                <Button size="small" icon={<Eye size={14} />} onClick={() => openReportModal(record.id)}>
+                  查看
+                </Button>
+                {isAdmin ? (
+                  <>
+                    <Button size="small" icon={<Send size={14} />} onClick={() => openPushModal(record.id)}>
+                      推送
+                    </Button>
+                    <Button size="small" icon={<Share2 size={14} />} loading={xueqiuMutation.isPending} onClick={() => xueqiuMutation.mutate(record.id)}>
+                      雪球
+                    </Button>
+                  </>
+                ) : null}
+              </Space>
+            )
+          }
+        ]}
+      />
+      <div className="panel-title">神奇九转推送流水</div>
+      <Form className="limit-up-search-form" form={deliveryForm} layout="inline" onFinish={submitDeliverySearch}>
+        <Form.Item name="keyword">
+          <Input allowClear prefix={<Search size={16} />} placeholder="搜索标题、用户、错误" />
+        </Form.Item>
+        <Form.Item name="status">
+          <Select
+            allowClear
+            className="pushplus-search-select"
+            placeholder="推送状态"
+            options={[
+              { label: '已发送', value: 'SENT' },
+              { label: '失败', value: 'FAILED' },
+              { label: '跳过', value: 'SKIPPED' },
+              { label: '待发送', value: 'PENDING' }
+            ]}
+          />
+        </Form.Item>
+        <Form.Item name="limit" initialValue={150}>
+          <Select
+            className="pushplus-limit-select"
+            options={[
+              { label: '最近 100 条', value: 100 },
+              { label: '最近 150 条', value: 150 },
+              { label: '最近 300 条', value: 300 }
+            ]}
+          />
+        </Form.Item>
+        <Space>
+          <Button type="primary" htmlType="submit" icon={<Search size={16} />}>
+            搜索
+          </Button>
+          <Button
+            icon={<RotateCcw size={16} />}
+            onClick={() => {
+              deliveryForm.resetFields();
+              setDeliveryFilters({ limit: 150 });
+            }}
+          >
+            重置
+          </Button>
+        </Space>
+      </Form>
+      <Table<NineTurnDeliveryItem>
+        rowKey="id"
+        size="small"
+        loading={deliveries.isLoading}
+        dataSource={deliveries.data || []}
+        scroll={{ x: 980 }}
+        pagination={{ pageSize: 10 }}
+        columns={[
+          { title: '交易日', dataIndex: 'trade_date', width: 120 },
+          { title: '接收用户', render: (_, record) => record.display_name || record.username || record.user_id, width: 160 },
+          { title: '类型', dataIndex: 'scheduled_kind', width: 150 },
+          {
+            title: '状态',
+            dataIndex: 'status',
+            width: 100,
+            render: (value) => <Tag color={value === 'SENT' ? 'green' : value === 'FAILED' ? 'red' : 'default'}>{value}</Tag>
+          },
+          { title: '计划时间', dataIndex: 'scheduled_at', width: 180, render: (value) => formatEast8DateTime(value) },
+          { title: '发送时间', dataIndex: 'sent_at', width: 180, render: (value) => formatEast8DateTime(value) },
+          { title: '错误', dataIndex: 'error_message', ellipsis: true }
+        ]}
+      />
+      <Modal
+        open={isReportModalOpen}
+        title={selectedReport.data?.title || '神奇九转报告'}
+        width={1040}
+        footer={null}
+        destroyOnClose
+        onCancel={() => setIsReportModalOpen(false)}
+      >
+        {selectedReport.isFetching ? (
+          <div className="limit-up-report-modal-body">
+            <Typography.Text type="secondary">报告加载中...</Typography.Text>
+          </div>
+        ) : selectedReport.data?.content_html ? (
+          <Tabs
+            activeKey={reportViewMode}
+            onChange={setReportViewMode}
+            items={[
+              {
+                key: 'preview',
+                label: '预览',
+                children: (
+                  <div className="limit-up-report-modal-body">
+                    <div dangerouslySetInnerHTML={{ __html: selectedReport.data.content_html }} />
+                  </div>
+                )
+              },
+              {
+                key: 'source',
+                label: '源码',
+                children: (
+                  <pre className="limit-up-report-code-block">
+                    <code>{selectedReport.data.content_html}</code>
+                  </pre>
+                )
+              }
+            ]}
+          />
+        ) : (
+          <div className="limit-up-report-modal-body">
+            <Typography.Text type="secondary">暂无报告内容</Typography.Text>
+          </div>
+        )}
+      </Modal>
+      {isAdmin ? (
+        <Modal
+          open={Boolean(pushTargetReportId)}
+          title="选择神奇九转推送接收人"
+          onCancel={() => setPushTargetReportId(null)}
+          onOk={() => pushForm.submit()}
+          confirmLoading={pushMutation.isPending}
+          destroyOnClose
+        >
+          <Form form={pushForm} layout="vertical" initialValues={{ send_all: true, user_ids: [] }} onFinish={submitPush}>
+            <Form.Item name="send_all" valuePropName="checked">
+              <Checkbox>一键推送给所有打板推送已配置且可推送的接收人</Checkbox>
+            </Form.Item>
+            <Form.Item shouldUpdate noStyle>
+              {({ getFieldValue }) =>
+                getFieldValue('send_all') ? (
+                  <Typography.Text type="secondary">当前可推送接收人 {pushableRecipients.length} 个。</Typography.Text>
+                ) : (
+                  <Form.Item label="单独选择接收人" name="user_ids" rules={[{ required: true, message: '请选择接收人' }]}>
+                    <Select
+                      mode="multiple"
+                      placeholder="只允许选择打板推送已配置且可推送的接收人"
+                      options={pushableRecipients.map((item) => ({
+                        value: item.user_id,
+                        label: item.display_name ? `${item.display_name}（${item.username}）` : item.username
+                      }))}
+                      optionFilterProp="label"
+                    />
+                  </Form.Item>
+                )
+              }
+            </Form.Item>
+          </Form>
+        </Modal>
+      ) : null}
+    </Space>
   );
 }
 

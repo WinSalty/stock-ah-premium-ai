@@ -10,7 +10,11 @@ import type {
   LimitUpReportListItem,
   LimitUpShareCreateRequest,
   LimitUpShareItem,
-  LimitUpShareResponse
+  LimitUpShareResponse,
+  NineTurnActionResponse,
+  NineTurnDeliveryItem,
+  NineTurnReportDetail,
+  NineTurnReportListItem
 } from '../types/domain';
 
 export interface LimitUpReportFilters {
@@ -109,4 +113,57 @@ export function fetchLimitUpDeliveries(filters: LimitUpDeliveryFilters = {}) {
     params.set('user_id', String(filters.user_id));
   }
   return requestJson<LimitUpDeliveryItem[]>(`/api/limit-up-push/deliveries?${params.toString()}`);
+}
+
+export function fetchNineTurnReports(filters: LimitUpReportFilters = {}) {
+  const params = new URLSearchParams();
+  params.set('limit', String(filters.limit || 30));
+  if (filters.keyword) {
+    params.set('keyword', filters.keyword);
+  }
+  if (filters.status) {
+    params.set('status', filters.status);
+  }
+  if (filters.trade_date) {
+    params.set('trade_date', filters.trade_date);
+  }
+  return requestJson<NineTurnReportListItem[]>(`/api/nine-turn-push/reports?${params.toString()}`);
+}
+
+export function fetchNineTurnReport(reportId: number) {
+  return requestJson<NineTurnReportDetail>(`/api/nine-turn-push/reports/${reportId}`);
+}
+
+export function generateLatestNineTurnReport() {
+  return requestJson<NineTurnActionResponse>('/api/nine-turn-push/reports/generate-latest', {
+    method: 'POST'
+  });
+}
+
+export function pushNineTurnReport(reportId: number, payload: LimitUpPushRequest = { send_all: true, user_ids: [] }) {
+  return requestJson<NineTurnActionResponse>(`/api/nine-turn-push/reports/${reportId}/push`, {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  });
+}
+
+export function publishNineTurnReportToXueqiu(reportId: number) {
+  return requestJson<NineTurnActionResponse>(`/api/nine-turn-push/reports/${reportId}/publish-xueqiu`, {
+    method: 'POST'
+  });
+}
+
+export function fetchNineTurnDeliveries(filters: LimitUpDeliveryFilters = {}) {
+  const params = new URLSearchParams();
+  params.set('limit', String(filters.limit || 100));
+  if (filters.keyword) {
+    params.set('keyword', filters.keyword);
+  }
+  if (filters.status) {
+    params.set('status', filters.status);
+  }
+  if (filters.user_id) {
+    params.set('user_id', String(filters.user_id));
+  }
+  return requestJson<NineTurnDeliveryItem[]>(`/api/nine-turn-push/deliveries?${params.toString()}`);
 }

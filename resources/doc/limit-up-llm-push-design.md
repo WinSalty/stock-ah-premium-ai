@@ -28,6 +28,7 @@
 | `limit_cpt_list` | 涨停最强板块统计 | 题材强度、板块持续性和板块内梯队 |
 | `top_list` | 龙虎榜每日明细 | 补充资金接力、榜单原因和成交占比 |
 | `daily`、`daily_basic` | 日线和估值换手字段 | 本地计算 MA、量能、换手、位置和短期涨幅 |
+| `stk_nineturn` | 神奇九转指标，含上涨九转、下跌九转和当前计数 | 独立生成神奇九转报告；按最新 A 股交易日和 `daily` 频率拉取，九转成形与 7/8 计数观察池进入 LLM 上下文 |
 
 接口调用原则：
 
@@ -38,6 +39,7 @@
 - 技术指标只对涨停池、二连三连和重点候选股拉取短窗口，控制调用量。
 - 技术指标优先读取本地 `a_daily_quote` 批量行情；本地缺口股票才调用 Tushare `daily` 兜底。
 - `daily_basic` 优先读取本地最新交易日记录，本地不完整时按交易日批量调用一次 Tushare，再筛选关注股票，避免逐股请求拖慢推送。
+- 神奇九转报告只使用 `stk_nineturn` 当日快照和本地 A 股基础信息补充名称，若接口当日无行则跳过本轮；同一快照命中缓存时不重复调用 LLM。
 
 ## 3. 交易日与调度
 
@@ -64,6 +66,7 @@
 - 定时任务可重跑，已发送记录不重复发送；失败记录可由管理员手动重试。
 - 早盘轮询虽然会多次触发，但 `DATA_READY` 业务计划时间固定为交易日次日 08:30（东八区），命中缓存后不会重复推送。
 - 周六、周日复推计划时间固定为当日配置小时（默认 22:00 东八区），同一天补跑不会重复推送。
+- 神奇九转报告缓存唯一键为 `trade_date + freq + model + prompt_version + data_snapshot_hash`，推送计划唯一键沿用“报告 + 计划类型 + 计划时间 + 接收用户”口径；定时任务在 Tushare 日频数据晚间更新后检查最新 A 股交易日，已推送或已发布的同源同模式流水不会重复提交。
 
 ## 4. 数据模型
 
@@ -125,6 +128,31 @@
 - `revoked_at`：撤销时间，预留给后续主动失效能力。
 - `last_viewed_at`、`view_count`：公开查看统计。
 
+### 4.5 `nine_turn_analysis_cache`
+
+保存一次交易日神奇九转报告和上下文快照。
+
+关键字段：
+
+- `trade_date`：A 股交易日。
+- `freq`：九转频率，首版固定 `daily`。
+- `model`、`prompt_version`、`data_snapshot_hash`：用于 LLM 生成和重跑幂等。
+- `status`、`title`、`content_html`、`content_markdown`：报告状态和展示内容。
+- `context_json`：送入模型的九转成形、下跌九转和 7/8 计数观察池上下文。
+- `data_quality_json`：Tushare 行数、观察池数量、样本截断和缺失情况。
+
+### 4.6 `nine_turn_push_delivery`
+
+记录神奇九转报告的业务推送计划和状态。接收人名单复用打板接收人配置，实际 PushPlus 请求仍复用 `pushplus_message_log`。
+
+关键字段：
+
+- `analysis_id`：神奇九转报告缓存 ID。
+- `user_id`：接收用户。
+- `scheduled_kind`：`DATA_READY`、`MANUAL`。
+- `scheduled_at`：计划推送时间，用于定时任务重跑幂等。
+- `status`、`pushplus_message_log_id`、`error_message`、`sent_at`。
+
 ## 5. 后端服务设计
 
 ### 5.1 `LimitUpTushareFetcher`
@@ -182,11 +210,30 @@
 - `manual_regenerate()`：管理员手动重生成。
 - `manual_push()`：管理员手动推送指定报告。
 
+### 5.5 `NineTurnPushService`
+
+职责：按 Tushare `stk_nineturn` 同步神奇九转数据，生成 LLM 报告，复用打板接收人和雪球发布登录态完成推送与发文。
+
+核心方法：
+
+- `ensure_latest_analysis_push_and_publish()`：找到最新 A 股交易日，生成或命中神奇九转报告后推送，并按雪球定时设置保存草稿或正式发布。
+- `ensure_analysis_for_trade_date()`：拉取 `daily` 频率九转快照，构建上下文 hash，命中缓存时不重复调用 LLM。
+- `push_report()`：复用 `limit_up_push_recipient` 中启用的系统用户，写入九转推送流水并提交 PushPlus。
+- `publish_report_to_xueqiu_by_scheduler()`：复用雪球 Cookie、发布模式和失败提醒；九转文章 `cover_pic` 固定为空，不上传图片。
+
+提示词策略：
+
+- 要求模型以 A 股技术节奏和趋势衰竭/反转角度解读九转信号。
+- 上涨九转、下跌九转和 7/8 计数观察池都必须覆盖，避免只写成形信号。
+- 输出适合 PushPlus 和雪球长文展示的 HTML，不输出脚本、图片和虚构数据。
+
 ## 6. API 与前端
 
 新增菜单权限：`limit_up_push`，默认只给管理员。
 
 新增后端路由：`/api/limit-up-push/...`
+
+神奇九转新增后端路由：`/api/nine-turn-push/...`，权限同样使用 `limit_up_push`，管理员动作仍要求管理员角色。
 
 接口：
 
@@ -203,6 +250,14 @@
 - `GET /deliveries`：查询推送计划与结果。
 - `GET /reports` 支持按关键词、状态、交易日筛选；`GET /deliveries` 支持按关键词、状态、接收用户筛选。
 
+神奇九转接口：
+
+- `GET /reports`、`GET /reports/{id}`：查询九转报告列表和完整报告。
+- `POST /reports/generate-latest`：管理员手动生成最新九转报告。
+- `POST /reports/{id}/push`：管理员手动推送九转报告。
+- `POST /reports/{id}/publish-xueqiu`：管理员手动保存或发布九转雪球长文。
+- `GET /deliveries`：查询九转推送流水。
+
 前端页面：`LimitUpPushPage`。
 
 页面模块：
@@ -212,6 +267,7 @@
 - 历史报告：按交易日、状态搜索。
 - 推送记录：展示业务推送状态和 PushPlus 流水状态。
 - 操作按钮：生成最新报告、逐条查看报告、逐条推送报告、创建临时分享、查看已有分享链接、手动失效分享链接、刷新。
+- 神奇九转标签页：放在同一个打板推送菜单下，复用 `limit_up_push` 权限和打板接收人名单，支持报告列表、完整报告预览/源码、手动生成、手动推送、手动提交雪球和九转推送流水查询。
 
 ## 7. 测试与验收
 
@@ -223,11 +279,13 @@
 - 周末复推：周六/周日使用周五报告，并按接收人的周末晚间开关过滤。
 - 接收人：只向启用且可推送用户发送。
 - 报告分享：只允许 READY 报告创建分享，支持有限期和永久链接；有限期 token 过期后无法读取，管理员手动失效后也不可继续读取，公开查看会记录访问次数。
+- 神奇九转：模拟 `stk_nineturn` 空数据、缓存命中、打板接收人复用和雪球无封面图发布记录。
 
 前端验证：
 
 - 管理员能看到菜单，普通用户不显示。
 - 接收人配置、报告列表、完整报告预览/源码查看、推送记录搜索可用。
+- 神奇九转标签页在打板推送页面内展示，权限、手动推送对象和雪球发布入口与打板推送保持一致。
 - 管理员可为已生成报告创建临时或永久分享，重复打开分享弹窗时能看到已生成链接并复制或失效；外部查看人无需登录即可打开分享页，有限期链接过期或手动失效后显示不可用。
 - 长 HTML 报告在后台预览中不破坏布局。
 

@@ -135,6 +135,7 @@ class XueqiuPublishRecordItem(BaseModel):
 
     id: int
     analysis_id: int | None = None
+    nine_turn_analysis_id: int | None = None
     chat_message_id: int | None = None
     source_type: str = "LIMIT_UP_REPORT"
     trade_date: date | None = None

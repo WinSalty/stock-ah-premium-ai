@@ -229,6 +229,79 @@ class LimitUpReportShare(TimestampMixin, Base):
     view_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
 
+class NineTurnAnalysisCache(TimestampMixin, Base):
+    """神奇九转 LLM 分析报告缓存表。
+
+    创建日期：2026-06-01
+    author: sunshengxian
+    """
+
+    __tablename__ = "nine_turn_analysis_cache"
+    __table_args__ = (
+        UniqueConstraint(
+            "trade_date",
+            "freq",
+            "model",
+            "prompt_version",
+            "data_snapshot_hash",
+            name="uk_nine_turn_analysis_snapshot",
+        ),
+        Index("idx_nine_turn_analysis_trade_status", "trade_date", "status"),
+        Index("idx_nine_turn_analysis_generated", "generated_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    trade_date: Mapped[date] = mapped_column(Date, nullable=False)
+    freq: Mapped[str] = mapped_column(String(16), nullable=False, default="daily")
+    model: Mapped[str] = mapped_column(String(64), nullable=False)
+    prompt_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    data_snapshot_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="PENDING")
+    title: Mapped[str] = mapped_column(String(160), nullable=False)
+    content_html: Mapped[str | None] = mapped_column(Text().with_variant(LONGTEXT, "mysql"))
+    content_markdown: Mapped[str | None] = mapped_column(Text().with_variant(LONGTEXT, "mysql"))
+    context_json: Mapped[str | None] = mapped_column(Text().with_variant(LONGTEXT, "mysql"))
+    data_quality_json: Mapped[str | None] = mapped_column(Text().with_variant(LONGTEXT, "mysql"))
+    error_message: Mapped[str | None] = mapped_column(Text)
+    generated_at: Mapped[datetime | None] = mapped_column(DateTime)
+
+
+class NineTurnPushDelivery(TimestampMixin, Base):
+    """神奇九转报告业务推送计划与结果表。
+
+    创建日期：2026-06-01
+    author: sunshengxian
+    """
+
+    __tablename__ = "nine_turn_push_delivery"
+    __table_args__ = (
+        UniqueConstraint(
+            "analysis_id",
+            "scheduled_kind",
+            "scheduled_at",
+            "user_id",
+            name="uk_nine_turn_push_delivery_once",
+        ),
+        Index("idx_nine_turn_push_delivery_status", "status", "scheduled_at"),
+        Index("idx_nine_turn_push_delivery_user", "user_id", "scheduled_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    analysis_id: Mapped[int] = mapped_column(
+        ForeignKey("nine_turn_analysis_cache.id"),
+        nullable=False,
+    )
+    user_id: Mapped[int] = mapped_column(ForeignKey("app_user.id"), nullable=False)
+    scheduled_kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    scheduled_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="PENDING")
+    pushplus_message_log_id: Mapped[int | None] = mapped_column(
+        ForeignKey("pushplus_message_log.id")
+    )
+    error_message: Mapped[str | None] = mapped_column(Text)
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime)
+
+
 class XueqiuPublishCredential(TimestampMixin, Base):
     """雪球创作者平台登录态配置。
 
@@ -243,8 +316,12 @@ class XueqiuPublishCredential(TimestampMixin, Base):
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     cookie_text: Mapped[str] = mapped_column(Text().with_variant(LONGTEXT, "mysql"), nullable=False)
     user_agent: Mapped[str] = mapped_column(String(512), nullable=False)
-    mp_base_url: Mapped[str] = mapped_column(String(128), nullable=False, default="https://mp.xueqiu.com")
-    referer_url: Mapped[str] = mapped_column(String(255), nullable=False, default="https://mp.xueqiu.com/write/")
+    mp_base_url: Mapped[str] = mapped_column(
+        String(128), nullable=False, default="https://mp.xueqiu.com"
+    )
+    referer_url: Mapped[str] = mapped_column(
+        String(255), nullable=False, default="https://mp.xueqiu.com/write/"
+    )
     expires_at: Mapped[datetime | None] = mapped_column(DateTime)
     last_verified_at: Mapped[datetime | None] = mapped_column(DateTime)
     last_error: Mapped[str | None] = mapped_column(Text)
@@ -292,6 +369,9 @@ class XueqiuPublishRecord(TimestampMixin, Base):
     analysis_id: Mapped[int] = mapped_column(
         ForeignKey("limit_up_analysis_cache.id"),
         nullable=True,
+    )
+    nine_turn_analysis_id: Mapped[int | None] = mapped_column(
+        ForeignKey("nine_turn_analysis_cache.id")
     )
     chat_message_id: Mapped[int | None] = mapped_column(ForeignKey("llm_chat_message.id"))
     source_type: Mapped[str] = mapped_column(String(32), nullable=False, default="LIMIT_UP_REPORT")
