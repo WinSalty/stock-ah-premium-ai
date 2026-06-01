@@ -173,7 +173,12 @@ def test_limit_up_report_cache_reuses_same_snapshot(monkeypatch) -> None:
     )
     service = LimitUpPushService(
         db,
-        settings=Settings(llm_api_key="key", llm_api_key_file=None, tushare_token="token", tushare_token_file=None),
+        settings=Settings(
+            llm_api_key="key",
+            llm_api_key_file=None,
+            tushare_token="token",
+            tushare_token_file=None,
+        ),
         tushare_client=fake_client,
         notification_service=FakeNotificationService(),
     )
@@ -193,6 +198,85 @@ def test_limit_up_report_cache_reuses_same_snapshot(monkeypatch) -> None:
     assert first.id == second.id
     assert len(calls) == 1
     assert first.status == "READY"
+
+
+def test_limit_up_context_filters_st_stocks(monkeypatch) -> None:
+    """确认打板报告上下文过滤 ST 风险警示股票。
+
+    创建日期：2026-06-01
+    author: sunshengxian
+    """
+
+    db = make_db()
+    service = LimitUpPushService(
+        db,
+        settings=Settings(llm_api_key="key", llm_api_key_file=None, tushare_token="token", tushare_token_file=None),
+        tushare_client=FakeTushareClient(
+            {
+                "kpl_list": [
+                    {
+                        "ts_code": "000001.SZ",
+                        "name": "测试股份",
+                        "trade_date": "20260508",
+                        "status": "2连板",
+                        "theme": "人工智能",
+                        "lu_desc": "AI 应用催化",
+                    },
+                    {
+                        "ts_code": "000002.SZ",
+                        "name": "*ST测试",
+                        "trade_date": "20260508",
+                        "status": "首板",
+                        "theme": "摘帽预期",
+                        "lu_desc": "风险警示股异动",
+                    },
+                ],
+                "limit_step": [
+                    {
+                        "ts_code": "000002.SZ",
+                        "name": "*ST测试",
+                        "trade_date": "20260508",
+                        "nums": "1连",
+                    },
+                    {
+                        "ts_code": "000001.SZ",
+                        "name": "测试股份",
+                        "trade_date": "20260508",
+                        "nums": "2连",
+                    },
+                ],
+                "top_list": [
+                    {
+                        "ts_code": "000002.SZ",
+                        "name": "*ST测试",
+                        "trade_date": "20260508",
+                        "net_amount": 1000,
+                    }
+                ],
+            }
+        ),
+        notification_service=FakeNotificationService(),
+    )
+    captured: list[dict[str, object]] = []
+
+    def fake_generate(context: dict[str, object]) -> tuple[str, str]:
+        captured.append(context)
+        return "<h2>报告</h2>", "报告"
+
+    monkeypatch.setattr(service, "_generate_llm_report", fake_generate)
+
+    analysis = service.ensure_analysis_for_trade_date(date(2026, 5, 8))
+
+    assert analysis is not None
+    assert captured
+    context = captured[0]
+    assert [row["name"] for row in context["limit_up_stocks"]] == ["测试股份"]
+    assert [row["name"] for row in context["raw_supplement"]["limit_step"]] == ["测试股份"]
+    assert context["raw_supplement"]["top_list"] == []
+    assert any(
+        item["api_name"] == "kpl_list" and item["message"] == "raw_rows=2; st_filtered=1"
+        for item in context["data_quality"]
+    )
 
 
 def test_limit_up_push_uses_enabled_system_users(monkeypatch) -> None:

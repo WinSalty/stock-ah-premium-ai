@@ -65,6 +65,15 @@ DELIVERY_KIND_MANUAL = "MANUAL"
 LIMIT_UP_LLM_PHASE = "limit_up_analysis"
 LIMIT_UP_LLM_TITLE = "打板数据推送"
 KPL_REQUIRED_API = "kpl_list"
+# LLM 上下文条数上限统一集中管理；这些上限控制报告可读性和 token 体积，后续调大/调小时避免漏改。
+LIMIT_UP_CONTEXT_STOCK_LIMIT = 360
+LIMIT_UP_CONTEXT_RAW_LIMIT_STEP_LIMIT = 160
+LIMIT_UP_CONTEXT_RAW_TOP_LIST_LIMIT = 240
+LIMIT_UP_CONTEXT_RAW_CPT_LIST_LIMIT = 160
+LIMIT_UP_CONTEXT_FOCUS_STOCK_LIMIT = 160
+LIMIT_UP_CONTEXT_THEME_LIMIT = 80
+LIMIT_UP_CONTEXT_CAPITAL_SIGNAL_LIMIT = 160
+LIMIT_UP_CONTEXT_BOARD_STATUS_LIMIT = 40
 OPTIONAL_APIS: tuple[tuple[str, dict[str, Any], tuple[str, ...]], ...] = (
     (
         "limit_list_ths",
@@ -706,8 +715,20 @@ class LimitUpPushService:
                 logger.info("必需打板接口暂不可用 api=%s params=%s", api_name, params)
             return []
         rows = [self._normalize_api_row(row) for row in result.rows]
-        quality.append(DataQualityItem(api_name, "OK" if rows else "EMPTY", len(rows)).to_dict())
-        return rows
+        filtered_rows = [row for row in rows if not self._is_st_stock_row(row)]
+        st_filtered_count = len(rows) - len(filtered_rows)
+        quality_message = (
+            f"raw_rows={len(rows)}; st_filtered={st_filtered_count}" if st_filtered_count else None
+        )
+        quality.append(
+            DataQualityItem(
+                api_name,
+                "OK" if filtered_rows else "EMPTY",
+                len(filtered_rows),
+                quality_message,
+            ).to_dict()
+        )
+        return filtered_rows
 
     def _technical_indicators(
         self,
@@ -902,6 +923,13 @@ class LimitUpPushService:
         market_emotion = self._market_emotion(kpl_rows, optional_payload)
         capital_signals = self._capital_signals(kpl_rows, optional_payload.get("top_list", []))
         board_status = self._board_status_summary(kpl_rows)
+        raw_limit_step = optional_payload.get("limit_step", [])[
+            :LIMIT_UP_CONTEXT_RAW_LIMIT_STEP_LIMIT
+        ]
+        raw_top_list = optional_payload.get("top_list", [])[:LIMIT_UP_CONTEXT_RAW_TOP_LIST_LIMIT]
+        raw_cpt_list = optional_payload.get("limit_cpt_list", [])[
+            :LIMIT_UP_CONTEXT_RAW_CPT_LIST_LIMIT
+        ]
         return {
             "trade_date": trade_date.isoformat(),
             "data_sources": [item["api_name"] for item in quality if item.get("status") == "OK"],
@@ -910,11 +938,14 @@ class LimitUpPushService:
             "focus_stocks": focus,
             "board_status": board_status,
             "capital_signals": capital_signals,
-            "limit_up_stocks": [self._compact_stock_row(row, technical.get(str(row.get("ts_code") or ""))) for row in kpl_rows[:180]],
+            "limit_up_stocks": [
+                self._compact_stock_row(row, technical.get(str(row.get("ts_code") or "")))
+                for row in kpl_rows[:LIMIT_UP_CONTEXT_STOCK_LIMIT]
+            ],
             "raw_supplement": {
-                "limit_step": optional_payload.get("limit_step", [])[:80],
-                "top_list": optional_payload.get("top_list", [])[:120],
-                "limit_cpt_list": optional_payload.get("limit_cpt_list", [])[:80],
+                "limit_step": raw_limit_step,
+                "top_list": raw_top_list,
+                "limit_cpt_list": raw_cpt_list,
             },
             "data_quality": quality,
             "analysis_instructions": {
@@ -948,7 +979,10 @@ class LimitUpPushService:
     ) -> list[dict[str, Any]]:
         focus_codes = set(self._focus_ts_codes(kpl_rows, optional_payload))
         rows = [row for row in kpl_rows if str(row.get("ts_code") or "") in focus_codes]
-        return [self._compact_stock_row(row, technical.get(str(row.get("ts_code") or ""))) for row in rows[:80]]
+        return [
+            self._compact_stock_row(row, technical.get(str(row.get("ts_code") or "")))
+            for row in rows[:LIMIT_UP_CONTEXT_FOCUS_STOCK_LIMIT]
+        ]
 
     def _compact_stock_row(self, row: dict[str, Any], indicator: dict[str, Any] | None) -> dict[str, Any]:
         return {
@@ -992,7 +1026,7 @@ class LimitUpPushService:
         themes = sorted(counter.values(), key=lambda item: item["stock_count"], reverse=True)
         for item in themes:
             item["board_stats"] = cpt_by_name.get(item["theme"], {})
-        return themes[:40]
+        return themes[:LIMIT_UP_CONTEXT_THEME_LIMIT]
 
     def _capital_signals(self, kpl_rows: list[dict[str, Any]], top_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         top_by_code = {str(row.get("ts_code") or ""): row for row in top_rows}
@@ -1015,14 +1049,21 @@ class LimitUpPushService:
                 }
             )
         # 龙虎榜信号按净买额排序，让模型优先看到资金接力最显著的涨停股。
-        return sorted(signals, key=lambda item: float(item.get("net_amount") or 0), reverse=True)[:80]
+        return sorted(signals, key=lambda item: float(item.get("net_amount") or 0), reverse=True)[
+            :LIMIT_UP_CONTEXT_CAPITAL_SIGNAL_LIMIT
+        ]
 
     def _board_status_summary(self, kpl_rows: list[dict[str, Any]]) -> dict[str, Any]:
         summary: dict[str, int] = {}
         for row in kpl_rows:
             key = str(row.get("status") or row.get("tag") or "未标注")
             summary[key] = summary.get(key, 0) + 1
-        return {"counts": summary, "top_status": sorted(summary.items(), key=lambda item: item[1], reverse=True)[:20]}
+        return {
+            "counts": summary,
+            "top_status": sorted(summary.items(), key=lambda item: item[1], reverse=True)[
+                :LIMIT_UP_CONTEXT_BOARD_STATUS_LIMIT
+            ],
+        }
 
     def _market_emotion(self, kpl_rows: list[dict[str, Any]], optional_payload: dict[str, list[dict[str, Any]]]) -> dict[str, Any]:
         status_values = [str(row.get("status") or "") for row in kpl_rows]
@@ -1117,18 +1158,37 @@ class LimitUpPushService:
         self.db.commit()
 
     def _limit_up_system_prompt(self) -> str:
+        """生成打板报告系统提示词。
+
+        创建日期：2026-05-08
+        author: sunshengxian
+        """
+
         return """
-你是专注 A 股打板、连板生态和短线题材周期的复盘分析师。你会阅读系统提供的结构化数据，输出适合 PushPlus 长 HTML 展示的完整中文报告。
+你是专注 A 股打板、连板生态和短线题材周期的复盘分析师。
+你会阅读系统提供的结构化数据，输出适合 PushPlus 长 HTML 展示的完整中文报告。
 
 要求：
 1. 重点分析涨停质量、题材强度、市场情绪周期、个股地位、二连三连晋级可能性、资金接力和失败信号。
-2. 可以自由组织报告结构，不需要机械打分；但必须给出清晰的后续观察条件、反证条件和风险点。
-3. 不编造材料中没有的精确数值；数据缺失时说明不确定性，不要假装已经看到。
-4. 输出纯 HTML 片段，不要 Markdown 代码块，不要包裹 html/body 标签。
-5. HTML 需要适合微信阅读：使用 h2/h3、p、ul、ol、table、strong，避免脚本和外链样式。
+2. 必须分别列出“两连板”“三连板”表格，
+   表格至少包含股票、题材/原因、封板或连板状态、强弱观察字段；
+   若某类数据为空，也要保留小节并说明缺失原因或不确定性。
+3. 两连板、三连板都必须在表格后做重点分析：
+   两连板关注晋级三板条件，三连板关注空间板地位、分歧承接和断板风险。
+   首板可根据题材发酵价值简述，不强制输出表格。
+4. 可以自由组织报告结构，不需要机械打分；但必须给出清晰的后续观察条件、反证条件和风险点。
+5. 不编造材料中没有的精确数值；数据缺失时说明不确定性，不要假装已经看到。
+6. 输出纯 HTML 片段，不要 Markdown 代码块，不要包裹 html/body 标签。
+7. HTML 需要适合微信阅读：使用 h2/h3、p、ul、ol、table、strong，避免脚本和外链样式。
 """.strip()
 
     def _limit_up_user_prompt(self, context: dict[str, Any]) -> str:
+        """生成包含交易日结构化上下文的用户提示词。
+
+        创建日期：2026-05-08
+        author: sunshengxian
+        """
+
         return (
             "请基于以下打板数据生成完整复盘报告。你可以自由判断哪些线索最重要，但请特别关注二连、三连、空间板、题材前排和次日接力条件。\n\n"
             f"结构化数据：\n{self._json_dumps(context)}"
@@ -1383,6 +1443,18 @@ class LimitUpPushService:
             parsed = parse_tushare_date(normalized.get("trade_date"))
             normalized["trade_date"] = parsed.isoformat() if parsed else normalized.get("trade_date")
         return normalized
+
+    def _is_st_stock_row(self, row: dict[str, Any]) -> bool:
+        """判断 Tushare 行是否为 ST 股票。
+
+        创建日期：2026-06-01
+        author: sunshengxian
+        """
+
+        name = str(row.get("name") or "").strip().upper().replace(" ", "")
+        # 打板推送不纳入 ST、*ST、S*ST 等风险警示股票；无名称的行情指标行不在这里误删，
+        # 因为这些行只会跟随已经过滤后的关注股票代码池参与技术指标补充。
+        return "ST" in name
 
     def _snapshot_hash(self, context: dict[str, Any]) -> str:
         return hashlib.sha256(self._json_dumps(context).encode("utf-8")).hexdigest()

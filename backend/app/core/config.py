@@ -6,6 +6,9 @@ from pathlib import Path
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+# 打板报告技术指标股票池默认上限翻倍到 240，只影响关注股票短窗口指标计算，不扩大到全市场扫描。
+LIMIT_UP_PUSH_DEFAULT_INDICATOR_STOCK_LIMIT = 240
+
 
 class Settings(BaseSettings):
     """应用配置。
@@ -116,7 +119,7 @@ class Settings(BaseSettings):
     )
     limit_up_push_indicator_days: int = Field(default=40, alias="LIMIT_UP_PUSH_INDICATOR_DAYS")
     limit_up_push_indicator_stock_limit: int = Field(
-        default=120,
+        default=LIMIT_UP_PUSH_DEFAULT_INDICATOR_STOCK_LIMIT,
         alias="LIMIT_UP_PUSH_INDICATOR_STOCK_LIMIT",
     )
     xueqiu_publish_scheduler_enabled: bool = Field(
