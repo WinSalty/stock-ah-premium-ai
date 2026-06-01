@@ -23,6 +23,7 @@ from app.services.nine_turn_push_service import (
 
 router = APIRouter()
 NineTurnPushUser = Annotated[AppUser, Depends(require_permission("limit_up_push"))]
+NINE_TURN_DISABLED_DETAIL = "神奇九转接口权限尚未开通，相关同步、推送和雪球发布入口已暂时注释"
 
 
 def require_nine_turn_admin(user: AppUser) -> None:
@@ -89,6 +90,9 @@ def generate_latest_nine_turn_report(
     """
 
     require_nine_turn_admin(current_user)
+    # 当前账号暂未开通 Tushare stk_nineturn 权限，手动同步会稳定返回权限不足；
+    # 因此先在 API 入口阻断真实拉数和 LLM 调用，保留原实现代码便于权限恢复后重新启用。
+    raise HTTPException(status_code=400, detail=NINE_TURN_DISABLED_DETAIL)
     try:
         service = NineTurnPushService(db)
         analysis = service.ensure_analysis_for_trade_date(service.latest_a_trade_date())
@@ -115,6 +119,9 @@ def push_nine_turn_report(
     """
 
     require_nine_turn_admin(current_user)
+    # 神奇九转报告来源已暂停生成，手动推送入口同步关闭；
+    # 已生成的历史报告仍可查看，待接口权限开通后移除此处阻断即可恢复推送。
+    raise HTTPException(status_code=400, detail=NINE_TURN_DISABLED_DETAIL)
     try:
         service = NineTurnPushService(db)
         pushed = service.push_report(
@@ -145,6 +152,8 @@ def publish_nine_turn_report_to_xueqiu(
     """
 
     require_nine_turn_admin(current_user)
+    # 雪球发布依赖九转报告生成结果；当前接口权限未开时不应误触发草稿或正式发布。
+    raise HTTPException(status_code=400, detail=NINE_TURN_DISABLED_DETAIL)
     record_id = NineTurnPushService(db).publish_report_to_xueqiu_by_scheduler(report_id)
     if record_id is None:
         return NineTurnActionResponse(ok=False, message="雪球未配置或发布失败", report_id=report_id)

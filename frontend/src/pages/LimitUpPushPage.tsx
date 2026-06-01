@@ -36,6 +36,9 @@ import type {
 } from '../types/domain';
 import { formatEast8DateTime } from '../utils/datetime';
 
+const NINE_TURN_FEATURE_DISABLED = true;
+const NINE_TURN_DISABLED_TEXT = 'Tushare stk_nineturn 权限尚未开通，神奇九转同步和推送入口暂时关闭';
+
 interface LimitUpReportSearchForm {
   keyword?: string;
   status?: string;
@@ -802,6 +805,10 @@ function NineTurnPushPanel({ isAdmin, pushableRecipients }: NineTurnPushPanelPro
   };
 
   const openPushModal = (reportId: number) => {
+    if (NINE_TURN_FEATURE_DISABLED) {
+      message.warning(NINE_TURN_DISABLED_TEXT);
+      return;
+    }
     // 神奇九转手动推送只允许选择打板推送已启用且可推送的接收人，确保权限和名单一致。
     setSelectedReportId(reportId);
     setPushTargetReportId(reportId);
@@ -829,7 +836,7 @@ function NineTurnPushPanel({ isAdmin, pushableRecipients }: NineTurnPushPanelPro
         <div>
           <div className="panel-title">神奇九转报告</div>
           <Typography.Text type="secondary">
-            每晚轮询 Tushare stk_nineturn，生成反转信号报告后推送打板接收人，并用同一雪球账号无封面发文。
+            当前因 Tushare stk_nineturn 权限尚未开通，已暂停九转同步、推送和雪球发文入口；历史报告仍可查询。
           </Typography.Text>
         </div>
         {isAdmin ? (
@@ -837,6 +844,8 @@ function NineTurnPushPanel({ isAdmin, pushableRecipients }: NineTurnPushPanelPro
             type="primary"
             icon={<Sparkles size={16} />}
             loading={generateMutation.isPending}
+            disabled={NINE_TURN_FEATURE_DISABLED}
+            title={NINE_TURN_DISABLED_TEXT}
             onClick={() => generateMutation.mutate()}
           >
             生成最新九转报告
@@ -920,10 +929,23 @@ function NineTurnPushPanel({ isAdmin, pushableRecipients }: NineTurnPushPanelPro
                 </Button>
                 {isAdmin ? (
                   <>
-                    <Button size="small" icon={<Send size={14} />} onClick={() => openPushModal(record.id)}>
+                    <Button
+                      size="small"
+                      icon={<Send size={14} />}
+                      disabled={NINE_TURN_FEATURE_DISABLED}
+                      title={NINE_TURN_DISABLED_TEXT}
+                      onClick={() => openPushModal(record.id)}
+                    >
                       推送
                     </Button>
-                    <Button size="small" icon={<Share2 size={14} />} loading={xueqiuMutation.isPending} onClick={() => xueqiuMutation.mutate(record.id)}>
+                    <Button
+                      size="small"
+                      icon={<Share2 size={14} />}
+                      loading={xueqiuMutation.isPending}
+                      disabled={NINE_TURN_FEATURE_DISABLED}
+                      title={NINE_TURN_DISABLED_TEXT}
+                      onClick={() => xueqiuMutation.mutate(record.id)}
+                    >
                       雪球
                     </Button>
                   </>

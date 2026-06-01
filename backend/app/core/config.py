@@ -123,7 +123,7 @@ class Settings(BaseSettings):
         alias="LIMIT_UP_PUSH_INDICATOR_STOCK_LIMIT",
     )
     nine_turn_push_scheduler_enabled: bool = Field(
-        default=True,
+        default=False,
         alias="NINE_TURN_PUSH_SCHEDULER_ENABLED",
     )
     nine_turn_push_poll_minutes: str = Field(

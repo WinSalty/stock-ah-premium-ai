@@ -18,6 +18,11 @@ def register_nine_turn_push_jobs(scheduler: BackgroundScheduler, settings: Setti
     author: sunshengxian
     """
 
+    # 当前 Tushare `stk_nineturn` 接口权限尚未开通，先注释自动同步、推送和雪球发布入口；
+    # 底层服务和原调度代码继续保留，待权限开通后删除本段 return 即可恢复晚间轮询。
+    logger.info("神奇九转定时同步暂未启用：stk_nineturn 接口权限尚未开通")
+    return
+
     # Tushare 文档说明 stk_nineturn 涉及分钟数据、每日 21 点更新；这里在 21-22 点轮询，
     # 并依靠报告快照、推送流水和雪球流水幂等，避免接口延迟恢复后重复调用 LLM 或重复发文。
     scheduler.add_job(
