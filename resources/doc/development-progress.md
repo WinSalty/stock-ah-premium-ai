@@ -125,6 +125,7 @@
   - LLM 耗时指标新增 `conversation_title` 和 `user_name` 字段；对话标题由用户提问清洗截取生成，页面列顺序调整为“时间、对话标题、追踪 ID…响应、用户名称…”，便于管理员按问题主题和用户排查。
   - LLM 耗时页面查询按钮已增加显式提交版本号，点击“查询”即使筛选条件和当前页未变化也会重新拉取最新指标，便于按追踪 ID 连续排查。
   - LLM 耗时页面顶部统计已拆为独立懒加载接口 `/api/llm-metrics/summary`，列表请求使用 `include_summary=false&include_total=false` 跳过聚合统计和精确总数 count，先按 `pageSize + 1` 取明细判断是否有下一页，避免摘要 SQL 变慢时阻塞表格首屏；同时为 `llm_call_metric` 增加日期、来源、阶段和模型维度查询索引。
+  - LLM 耗时列表首屏已进一步轻量化：前端追加 `include_content=false`，列表只返回请求参数和响应内容的长度，不再携带 `request_payload_json` 与 `response_content` 全文；点击“查看”时通过 `/api/llm-metrics/{metric_id}` 单条懒加载完整 LONGTEXT，避免最近 30 条大上下文把首屏响应放大到数 MB。
   - 关注/自选股的 H/A 折价、H/A 溢价问题已按对应方向排序，避免把 H 股折价和 H 股溢价混用。
   - AH 溢价、折价和套利类问题会追加候选池、市场分布和自选机会等结构化上下文，不再注入额外静态投研片段。
   - LLM 个股补数上下文的财务报表、财务指标、主营业务、审计、快报、预告和分红数据统一保留最近 24 期，并同步纳入个股资金流向 `moneyflow` 作为短期交易行为参考。

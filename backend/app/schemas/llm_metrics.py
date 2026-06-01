@@ -29,6 +29,8 @@ class LlmCallMetricItem(BaseModel):
     output_chars: int
     chunk_count: int
     row_count: int
+    request_payload_size: int = 0
+    response_content_size: int = 0
     request_payload_json: str | None = None
     response_content: str | None = None
     error_message: str | None = None

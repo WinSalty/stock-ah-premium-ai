@@ -156,6 +156,8 @@ export interface LlmMetricItem {
   output_chars: number;
   chunk_count: number;
   row_count: number;
+  request_payload_size: number;
+  response_content_size: number;
   request_payload_json: string | null;
   response_content: string | null;
   error_message: string | null;
@@ -186,9 +188,13 @@ export interface LlmMetricParams {
   end_date?: string;
   include_summary?: boolean;
   include_total?: boolean;
+  include_content?: boolean;
 }
 
-export type LlmMetricSummaryParams = Omit<LlmMetricParams, 'page' | 'page_size' | 'include_summary'>;
+export type LlmMetricSummaryParams = Omit<
+  LlmMetricParams,
+  'page' | 'page_size' | 'include_summary' | 'include_total' | 'include_content'
+>;
 
 export interface SyncRun {
   id: number;

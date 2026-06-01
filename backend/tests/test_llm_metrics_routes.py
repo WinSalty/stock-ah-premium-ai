@@ -5,7 +5,11 @@ from datetime import date, datetime
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
-from app.api.routes_llm_metrics import get_llm_metrics_summary, list_llm_metrics
+from app.api.routes_llm_metrics import (
+    get_llm_metric_detail,
+    get_llm_metrics_summary,
+    list_llm_metrics,
+)
 from app.db.base import Base
 from app.db.models.auth import AppUser
 from app.db.models.chat import LlmCallMetric
@@ -123,20 +127,36 @@ def test_list_llm_metrics_can_skip_summary_for_fast_page_load() -> None:
                 model="deepseek-v4-flash",
                 success=1,
                 elapsed_ms=600.0,
+                request_payload_json='{"messages":["用于验证列表不直接返回大字段"]}',
+                response_content="详情接口再返回完整响应",
                 created_at=metric_time,
                 updated_at=metric_time,
             )
         )
         db.commit()
 
-        result = list_llm_metrics(db, user, include_summary=False, include_total=False)
+        result = list_llm_metrics(
+            db,
+            user,
+            include_summary=False,
+            include_total=False,
+            include_content=False,
+        )
         summary = get_llm_metrics_summary(db, user, provider="DeepSeek")
+        detail = get_llm_metric_detail(db, user, result.rows[0].id)
 
     assert result.total == 1
     assert result.total_exact is False
     assert result.has_more is False
     assert result.summary is None
     assert result.rows[0].question_id == "trace-fast"
+    assert result.rows[0].request_payload_size > 0
+    assert result.rows[0].response_content_size > 0
+    assert result.rows[0].request_payload_json is None
+    assert result.rows[0].response_content is None
     assert summary.total == 1
     assert summary.success_count == 1
     assert summary.avg_elapsed_ms == 600.0
+    assert detail.question_id == "trace-fast"
+    assert detail.request_payload_json == '{"messages":["用于验证列表不直接返回大字段"]}'
+    assert detail.response_content == "详情接口再返回完整响应"

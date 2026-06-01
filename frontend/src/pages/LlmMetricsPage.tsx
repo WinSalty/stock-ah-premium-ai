@@ -5,7 +5,7 @@ import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import dayjs from 'dayjs';
 import PageHeader from '../components/PageHeader';
-import { fetchLlmMetricSummary, fetchLlmMetrics } from '../api/llmMetrics';
+import { fetchLlmMetricDetail, fetchLlmMetricSummary, fetchLlmMetrics } from '../api/llmMetrics';
 import type { LlmMetricItem } from '../types/domain';
 import { formatEast8DateTime } from '../utils/datetime';
 
@@ -13,7 +13,7 @@ type DateRange = [dayjs.Dayjs, dayjs.Dayjs] | null;
 type MetricViewerState = {
   title: string;
   type: 'payload' | 'response';
-  value?: string | null;
+  metricId: number;
 } | null;
 
 interface LlmPayloadMessage {
@@ -149,12 +149,18 @@ function LlmMetricsPage() {
         page,
         page_size: pageSize,
         include_summary: false,
-        include_total: false
+        include_total: false,
+        include_content: false
       })
   });
   const metricSummary = useQuery({
     queryKey: ['llm-metrics-summary', metricParams, queryVersion],
     queryFn: () => fetchLlmMetricSummary(metricParams)
+  });
+  const metricDetail = useQuery({
+    queryKey: ['llm-metric-detail', viewer?.metricId],
+    queryFn: () => fetchLlmMetricDetail(viewer?.metricId || 0),
+    enabled: Boolean(viewer?.metricId)
   });
 
   const columns = useMemo<TableColumnsType<LlmMetricItem>>(
@@ -203,14 +209,14 @@ function LlmMetricsPage() {
         dataIndex: 'request_payload_json',
         width: 92,
         render: (_value: string | null, record) =>
-          record.request_payload_json ? (
+          record.request_payload_size > 0 ? (
             <Button
               size="small"
               onClick={() =>
                 setViewer({
                   title: `${record.phase_label || record.phase} 请求参数`,
                   type: 'payload',
-                  value: record.request_payload_json
+                  metricId: record.id
                 })
               }
             >
@@ -225,14 +231,14 @@ function LlmMetricsPage() {
         dataIndex: 'response_content',
         width: 92,
         render: (_value: string | null, record) =>
-          record.response_content ? (
+          record.response_content_size > 0 ? (
             <Button
               size="small"
               onClick={() =>
                 setViewer({
                   title: `${record.phase_label || record.phase} 响应内容`,
                   type: 'response',
-                  value: record.response_content
+                  metricId: record.id
                 })
               }
             >
@@ -461,10 +467,39 @@ function LlmMetricsPage() {
         width={920}
         onCancel={() => setViewer(null)}
       >
-        {viewer?.type === 'payload' ? <PayloadViewer value={viewer.value} /> : <ResponseViewer value={viewer?.value} />}
+        <MetricDetailViewer
+          loading={metricDetail.isLoading}
+          error={metricDetail.error}
+          type={viewer?.type}
+          value={
+            viewer?.type === 'payload'
+              ? metricDetail.data?.request_payload_json
+              : metricDetail.data?.response_content
+          }
+        />
       </Modal>
     </main>
   );
+}
+
+function MetricDetailViewer({
+  loading,
+  error,
+  type,
+  value
+}: {
+  loading: boolean;
+  error: unknown;
+  type?: 'payload' | 'response';
+  value?: string | null;
+}) {
+  if (loading) {
+    return <Skeleton active paragraph={{ rows: 8 }} />;
+  }
+  if (error) {
+    return <Typography.Text type="danger">内容加载失败，请稍后重试。</Typography.Text>;
+  }
+  return type === 'payload' ? <PayloadViewer value={value} /> : <ResponseViewer value={value} />;
 }
 
 function HelpTitle({ label, help }: { label: string; help: string }) {

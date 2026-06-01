@@ -3,8 +3,9 @@ from __future__ import annotations
 from datetime import date, datetime, time
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Path, Query
 from sqlalchemy import desc, func, select
+from sqlalchemy.orm import load_only
 
 from app.api.deps_auth import DbSession, require_permission
 from app.db.models.auth import AppUser
@@ -35,6 +36,7 @@ def list_llm_metrics(
     end_date: date | None = None,
     include_summary: bool = True,
     include_total: bool = True,
+    include_content: bool = True,
 ) -> LlmCallMetricResponse:
     """查询 LLM 调用耗时指标。
 
@@ -60,8 +62,41 @@ def list_llm_metrics(
     )
     summary = _summary(db, filters) if include_summary else None
     limit_size = page_size if include_total else page_size + 1
+    # 列表默认兼容旧接口可返回完整内容；前端首屏传 include_content=false 时，
+    # 用 deferred LONGTEXT + 长度派生列保留“可查看”状态，避免一次拉取大上下文。
+    metric_columns = [
+        LlmCallMetric.id,
+        LlmCallMetric.question_id,
+        LlmCallMetric.conversation_title,
+        LlmCallMetric.user_id,
+        LlmCallMetric.user_name,
+        LlmCallMetric.session_id,
+        LlmCallMetric.phase,
+        LlmCallMetric.phase_label,
+        LlmCallMetric.phase_description,
+        LlmCallMetric.provider,
+        LlmCallMetric.model,
+        LlmCallMetric.success,
+        LlmCallMetric.elapsed_ms,
+        LlmCallMetric.first_chunk_ms,
+        LlmCallMetric.output_chars,
+        LlmCallMetric.chunk_count,
+        LlmCallMetric.row_count,
+        LlmCallMetric.error_message,
+        LlmCallMetric.created_at,
+        LlmCallMetric.updated_at,
+    ]
+    if include_content:
+        metric_columns.extend([LlmCallMetric.request_payload_json, LlmCallMetric.response_content])
     statement = (
-        select(LlmCallMetric, AppUser.display_name, AppUser.username)
+        select(
+            LlmCallMetric,
+            AppUser.display_name,
+            AppUser.username,
+            func.char_length(LlmCallMetric.request_payload_json),
+            func.char_length(LlmCallMetric.response_content),
+        )
+        .options(load_only(*metric_columns))
         .outerjoin(AppUser, AppUser.id == LlmCallMetric.user_id)
         .where(*filters)
         .order_by(desc(LlmCallMetric.id))
@@ -80,8 +115,14 @@ def list_llm_metrics(
         has_more=has_more,
         summary=summary,
         rows=[
-            _metric_item(metric, _fallback_user_name(display_name, username))
-            for metric, display_name, username in page_rows
+            _metric_item(
+                metric,
+                _fallback_user_name(display_name, username),
+                request_payload_size=payload_size,
+                response_content_size=response_size,
+                include_content=include_content,
+            )
+            for metric, display_name, username, payload_size, response_size in page_rows
         ],
     )
 
@@ -116,6 +157,35 @@ def get_llm_metrics_summary(
         end_date=end_date,
     )
     return _summary(db, filters)
+
+
+@router.get("/llm-metrics/{metric_id}", response_model=LlmCallMetricItem)
+def get_llm_metric_detail(
+    db: DbSession,
+    metrics_user: MetricsUser,
+    metric_id: Annotated[int, Path(ge=1)],
+) -> LlmCallMetricItem:
+    """按指标 ID 懒加载请求参数和模型响应全文。
+
+    创建日期：2026-06-02
+    author: sunshengxian
+    """
+
+    # 详情接口只在管理员点击“查看”时读取 LONGTEXT，避免列表首屏携带大 payload。
+    statement = (
+        select(LlmCallMetric, AppUser.display_name, AppUser.username)
+        .outerjoin(AppUser, AppUser.id == LlmCallMetric.user_id)
+        .where(LlmCallMetric.id == metric_id)
+    )
+    row = db.execute(statement).one_or_none()
+    if not row:
+        raise HTTPException(status_code=404, detail="指标记录不存在")
+    metric, display_name, username = row
+    return _metric_item(
+        metric,
+        _fallback_user_name(display_name, username),
+        include_content=True,
+    )
 
 
 def _metric_filters(
@@ -190,7 +260,22 @@ def _minimum_visible_total(page: int, page_size: int, row_count: int, has_more: 
     return current_page_end + (1 if has_more else 0)
 
 
-def _metric_item(metric: LlmCallMetric, fallback_user_name: str | None = None) -> LlmCallMetricItem:
+def _metric_item(
+    metric: LlmCallMetric,
+    fallback_user_name: str | None = None,
+    *,
+    request_payload_size: int | None = None,
+    response_content_size: int | None = None,
+    include_content: bool = True,
+) -> LlmCallMetricItem:
+    request_payload_json = metric.request_payload_json if include_content else None
+    response_content = metric.response_content if include_content else None
+    payload_size = request_payload_size
+    if payload_size is None and request_payload_json:
+        payload_size = len(request_payload_json)
+    response_size = response_content_size
+    if response_size is None and response_content:
+        response_size = len(response_content)
     return LlmCallMetricItem(
         id=metric.id,
         question_id=metric.question_id,
@@ -209,8 +294,10 @@ def _metric_item(metric: LlmCallMetric, fallback_user_name: str | None = None) -
         output_chars=metric.output_chars,
         chunk_count=metric.chunk_count,
         row_count=metric.row_count,
-        request_payload_json=metric.request_payload_json,
-        response_content=metric.response_content,
+        request_payload_size=int(payload_size or 0),
+        response_content_size=int(response_size or 0),
+        request_payload_json=request_payload_json,
+        response_content=response_content,
         error_message=metric.error_message,
         created_at=metric.created_at,
         updated_at=metric.updated_at,

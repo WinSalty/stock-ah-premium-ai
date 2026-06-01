@@ -30,3 +30,12 @@ export function fetchLlmMetricSummary(params: LlmMetricSummaryParams) {
   });
   return requestJson<LlmMetricSummary>(`/api/llm-metrics/summary?${search.toString()}`);
 }
+
+/**
+ * 懒加载单条 LLM 调用耗时指标详情。
+ * 创建日期：2026-06-02
+ * author: sunshengxian
+ */
+export function fetchLlmMetricDetail(metricId: number) {
+  return requestJson<LlmMetricResponse['rows'][number]>(`/api/llm-metrics/${metricId}`);
+}
