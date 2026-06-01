@@ -167,7 +167,9 @@ export interface LlmMetricResponse {
   total: number;
   page: number;
   page_size: number;
-  summary: LlmMetricSummary;
+  total_exact: boolean;
+  has_more: boolean;
+  summary: LlmMetricSummary | null;
   rows: LlmMetricItem[];
 }
 
@@ -182,7 +184,11 @@ export interface LlmMetricParams {
   user_id?: number;
   start_date?: string;
   end_date?: string;
+  include_summary?: boolean;
+  include_total?: boolean;
 }
+
+export type LlmMetricSummaryParams = Omit<LlmMetricParams, 'page' | 'page_size' | 'include_summary'>;
 
 export interface SyncRun {
   id: number;

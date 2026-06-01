@@ -33,6 +33,8 @@ def list_llm_metrics(
     user_id: Annotated[int | None, Query(ge=1)] = None,
     start_date: date | None = None,
     end_date: date | None = None,
+    include_summary: bool = True,
+    include_total: bool = True,
 ) -> LlmCallMetricResponse:
     """查询 LLM 调用耗时指标。
 
@@ -50,27 +52,70 @@ def list_llm_metrics(
         start_date=start_date,
         end_date=end_date,
     )
-    total = db.scalar(select(func.count()).select_from(LlmCallMetric).where(*filters)) or 0
-    summary = _summary(db, filters)
+    # 列表首屏只需要分页数据时允许跳过精确 count 和聚合统计，避免慢统计拖住明细呈现。
+    total = (
+        db.scalar(select(func.count()).select_from(LlmCallMetric).where(*filters))
+        if include_total
+        else None
+    )
+    summary = _summary(db, filters) if include_summary else None
+    limit_size = page_size if include_total else page_size + 1
     statement = (
         select(LlmCallMetric, AppUser.display_name, AppUser.username)
         .outerjoin(AppUser, AppUser.id == LlmCallMetric.user_id)
         .where(*filters)
         .order_by(desc(LlmCallMetric.id))
         .offset((page - 1) * page_size)
-        .limit(page_size)
+        .limit(limit_size)
     )
     rows = list(db.execute(statement).all())
+    has_more = not include_total and len(rows) > page_size
+    page_rows = rows[:page_size]
+    display_total = int(total or _minimum_visible_total(page, page_size, len(page_rows), has_more))
     return LlmCallMetricResponse(
-        total=total,
+        total=display_total,
         page=page,
         page_size=page_size,
+        total_exact=include_total,
+        has_more=has_more,
         summary=summary,
         rows=[
             _metric_item(metric, _fallback_user_name(display_name, username))
-            for metric, display_name, username in rows
+            for metric, display_name, username in page_rows
         ],
     )
+
+
+@router.get("/llm-metrics/summary", response_model=LlmCallMetricSummary)
+def get_llm_metrics_summary(
+    db: DbSession,
+    metrics_user: MetricsUser,
+    question_id: Annotated[str | None, Query(max_length=32)] = None,
+    provider: Annotated[str | None, Query(max_length=32)] = None,
+    model: Annotated[str | None, Query(max_length=64)] = None,
+    phase: Annotated[str | None, Query(max_length=64)] = None,
+    session_id: Annotated[int | None, Query(ge=1)] = None,
+    user_id: Annotated[int | None, Query(ge=1)] = None,
+    start_date: date | None = None,
+    end_date: date | None = None,
+) -> LlmCallMetricSummary:
+    """懒加载 LLM 调用耗时统计摘要。
+
+    创建日期：2026-06-01
+    author: sunshengxian
+    """
+
+    filters = _metric_filters(
+        question_id=question_id,
+        provider=provider,
+        model=model,
+        phase=phase,
+        session_id=session_id,
+        user_id=user_id,
+        start_date=start_date,
+        end_date=end_date,
+    )
+    return _summary(db, filters)
 
 
 def _metric_filters(
@@ -86,8 +131,10 @@ def _metric_filters(
 ) -> list[object]:
     filters: list[object] = []
     if question_id:
+        # 追踪 ID 精确匹配单轮问答，避免模糊查询误把重复问题或相邻会话混入排查范围。
         filters.append(LlmCallMetric.question_id == question_id.strip())
     if provider:
+        # 来源、模型、阶段均按落库枚举精确过滤，保证统计口径和表格明细口径一致。
         filters.append(LlmCallMetric.provider == provider.strip())
     if model:
         filters.append(LlmCallMetric.model == model.strip())
@@ -98,6 +145,7 @@ def _metric_filters(
     if user_id:
         filters.append(LlmCallMetric.user_id == user_id)
     if start_date:
+        # 日期筛选按页面选择的自然日闭区间展开，重跑统计时不遗漏当天最后一条指标。
         filters.append(LlmCallMetric.created_at >= datetime.combine(start_date, time.min))
     if end_date:
         filters.append(LlmCallMetric.created_at <= datetime.combine(end_date, time.max))
@@ -105,6 +153,13 @@ def _metric_filters(
 
 
 def _summary(db: DbSession, filters: list[object]) -> LlmCallMetricSummary:
+    """按当前筛选条件聚合顶部统计卡片。
+
+    创建日期：2026-05-05
+    author: sunshengxian
+    """
+
+    # 摘要统计仍保持数据库单次聚合，前端已拆成懒加载接口；慢统计不会再阻塞列表首屏。
     statement = select(
         func.count(LlmCallMetric.id),
         func.coalesce(func.sum(LlmCallMetric.success), 0),
@@ -120,6 +175,19 @@ def _summary(db: DbSession, filters: list[object]) -> LlmCallMetricSummary:
         max_elapsed_ms=_round_metric(max_elapsed),
         avg_first_chunk_ms=_round_metric(avg_first_chunk),
     )
+
+
+def _minimum_visible_total(page: int, page_size: int, row_count: int, has_more: bool) -> int:
+    """计算跳过精确 count 时分页可用的最小总数。
+
+    创建日期：2026-06-01
+    author: sunshengxian
+    """
+
+    # 前端首屏只需要知道当前页行数以及是否存在下一页；若多取一行发现还有数据，
+    # 总数先给到“下一页至少存在”的下界，待摘要懒加载完成后再替换成精确统计。
+    current_page_end = (page - 1) * page_size + row_count
+    return current_page_end + (1 if has_more else 0)
 
 
 def _metric_item(metric: LlmCallMetric, fallback_user_name: str | None = None) -> LlmCallMetricItem:

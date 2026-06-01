@@ -1,11 +1,11 @@
-import { Button, DatePicker, Empty, Input, Modal, Select, Space, Table, Tag, Tooltip, Typography } from 'antd';
+import { Button, DatePicker, Empty, Input, Modal, Select, Skeleton, Space, Table, Tag, Tooltip, Typography } from 'antd';
 import type { TableColumnsType } from 'antd';
 import { CircleHelp, RotateCw, Search, X } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import dayjs from 'dayjs';
 import PageHeader from '../components/PageHeader';
-import { fetchLlmMetrics } from '../api/llmMetrics';
+import { fetchLlmMetricSummary, fetchLlmMetrics } from '../api/llmMetrics';
 import type { LlmMetricItem } from '../types/domain';
 import { formatEast8DateTime } from '../utils/datetime';
 
@@ -128,21 +128,33 @@ function LlmMetricsPage() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(30);
   const [viewer, setViewer] = useState<MetricViewerState>(null);
-  const metrics = useQuery({
-    queryKey: ['llm-metrics', filters, page, pageSize, queryVersion],
+  const metricParams = useMemo(
+    () => ({
+      question_id: filters.question_id?.trim() || undefined,
+      provider: filters.provider,
+      model: filters.model,
+      phase: filters.phase,
+      session_id: toNumber(filters.session_id),
+      user_id: toNumber(filters.user_id),
+      start_date: filters.date_range?.[0]?.format('YYYY-MM-DD'),
+      end_date: filters.date_range?.[1]?.format('YYYY-MM-DD')
+    }),
+    [filters]
+  );
+  const metricList = useQuery({
+    queryKey: ['llm-metrics', metricParams, page, pageSize, queryVersion],
     queryFn: () =>
       fetchLlmMetrics({
+        ...metricParams,
         page,
         page_size: pageSize,
-        question_id: filters.question_id?.trim() || undefined,
-        provider: filters.provider,
-        model: filters.model,
-        phase: filters.phase,
-        session_id: toNumber(filters.session_id),
-        user_id: toNumber(filters.user_id),
-        start_date: filters.date_range?.[0]?.format('YYYY-MM-DD'),
-        end_date: filters.date_range?.[1]?.format('YYYY-MM-DD')
+        include_summary: false,
+        include_total: false
       })
+  });
+  const metricSummary = useQuery({
+    queryKey: ['llm-metrics-summary', metricParams, queryVersion],
+    queryFn: () => fetchLlmMetricSummary(metricParams)
   });
 
   const columns = useMemo<TableColumnsType<LlmMetricItem>>(
@@ -293,33 +305,46 @@ function LlmMetricsPage() {
           <Button
             title="刷新"
             icon={<RotateCw size={16} />}
-            onClick={() => metrics.refetch()}
-            loading={metrics.isFetching}
+            onClick={() => {
+              // 列表和摘要拆成两个请求：刷新时同时触发，但摘要慢也不阻塞表格首屏。
+              metricList.refetch();
+              metricSummary.refetch();
+            }}
+            loading={metricList.isFetching || metricSummary.isFetching}
           />
         }
       />
 
       <section className="metrics-summary-grid">
-        <MetricCard label="调用阶段" value={metrics.data?.summary.total ?? 0} help={summaryDescriptions.total} />
+        <MetricCard
+          label="调用阶段"
+          value={metricSummary.data?.total ?? 0}
+          help={summaryDescriptions.total}
+          loading={metricSummary.isLoading}
+        />
         <MetricCard
           label="成功阶段"
-          value={metrics.data?.summary.success_count ?? 0}
+          value={metricSummary.data?.success_count ?? 0}
           help={summaryDescriptions.success_count}
+          loading={metricSummary.isLoading}
         />
         <MetricCard
           label="平均耗时"
-          value={formatMs(metrics.data?.summary.avg_elapsed_ms)}
+          value={formatMs(metricSummary.data?.avg_elapsed_ms)}
           help={summaryDescriptions.avg_elapsed_ms}
+          loading={metricSummary.isLoading}
         />
         <MetricCard
           label="最大耗时"
-          value={formatMs(metrics.data?.summary.max_elapsed_ms)}
+          value={formatMs(metricSummary.data?.max_elapsed_ms)}
           help={summaryDescriptions.max_elapsed_ms}
+          loading={metricSummary.isLoading}
         />
         <MetricCard
           label="平均首包"
-          value={formatMs(metrics.data?.summary.avg_first_chunk_ms)}
+          value={formatMs(metricSummary.data?.avg_first_chunk_ms)}
           help={summaryDescriptions.avg_first_chunk_ms}
+          loading={metricSummary.isLoading}
         />
       </section>
 
@@ -406,20 +431,20 @@ function LlmMetricsPage() {
               按阶段记录路由、SQL、回答、流式首包和整轮耗时；计数字段只在对应阶段有意义。
             </Typography.Text>
           </div>
-          <Tag color="blue">{metrics.data?.total ?? 0} 条</Tag>
+          <Tag color="blue">{formatTotalTag(metricSummary.data?.total, metricList.data?.total_exact, metricList.data?.total)}</Tag>
         </div>
         <Table<LlmMetricItem>
           className="llm-metric-table"
           rowKey="id"
-          loading={metrics.isLoading || metrics.isFetching}
-          dataSource={metrics.data?.rows || []}
+          loading={metricList.isLoading || metricList.isFetching}
+          dataSource={metricList.data?.rows || []}
           columns={columns}
           locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} /> }}
           scroll={{ x: 2210 }}
           pagination={{
             current: page,
             pageSize,
-            total: metrics.data?.total || 0,
+            total: metricSummary.data?.total ?? metricList.data?.total ?? 0,
             showSizeChanger: true,
             pageSizeOptions: [20, 30, 50, 100],
             onChange: (nextPage, nextPageSize) => {
@@ -453,13 +478,23 @@ function HelpTitle({ label, help }: { label: string; help: string }) {
   );
 }
 
-function MetricCard({ label, value, help }: { label: string; value: string | number; help: string }) {
+function MetricCard({
+  label,
+  value,
+  help,
+  loading
+}: {
+  label: string;
+  value: string | number;
+  help: string;
+  loading?: boolean;
+}) {
   return (
     <div className="metric-card">
       <Typography.Text type="secondary">
         <HelpTitle label={label} help={help} />
       </Typography.Text>
-      <strong>{value}</strong>
+      {loading ? <Skeleton.Input active size="small" className="metric-card-skeleton" /> : <strong>{value}</strong>}
     </div>
   );
 }
@@ -654,6 +689,16 @@ function formatMs(value?: number | null) {
     return `${(value / 1000).toFixed(2)}s`;
   }
   return `${value.toFixed(1)}ms`;
+}
+
+function formatTotalTag(exactTotal?: number, listTotalExact?: boolean, listTotal?: number) {
+  if (exactTotal !== undefined) {
+    return `${exactTotal} 条`;
+  }
+  if (listTotalExact === false && listTotal !== undefined) {
+    return `${listTotal}+ 条`;
+  }
+  return `${listTotal ?? 0} 条`;
 }
 
 function parsePayload(value?: string | null): LlmRequestPayload | null {

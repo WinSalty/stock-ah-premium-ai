@@ -1504,6 +1504,10 @@ body {
   white-space: nowrap;
 }
 
+.metric-card-skeleton {
+  width: 86px !important;
+}
+
 .help-title {
   display: inline-flex;
   align-items: center;

@@ -60,5 +60,7 @@ class LlmCallMetricResponse(BaseModel):
     total: int
     page: int
     page_size: int
-    summary: LlmCallMetricSummary
+    total_exact: bool = True
+    has_more: bool = False
+    summary: LlmCallMetricSummary | None = None
     rows: list[LlmCallMetricItem] = Field(default_factory=list)

@@ -5,7 +5,7 @@ from datetime import date, datetime
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
-from app.api.routes_llm_metrics import list_llm_metrics
+from app.api.routes_llm_metrics import get_llm_metrics_summary, list_llm_metrics
 from app.db.base import Base
 from app.db.models.auth import AppUser
 from app.db.models.chat import LlmCallMetric
@@ -99,3 +99,44 @@ def test_list_llm_metrics_filters_and_summarizes_rows() -> None:
     assert result.rows[0].phase_label == "流式回答"
     assert result.rows[0].request_payload_json == '{"model":"deepseek-v4-flash"}'
     assert result.rows[0].response_content == "阶段回答内容"
+
+
+def test_list_llm_metrics_can_skip_summary_for_fast_page_load() -> None:
+    """确认列表接口可跳过慢统计，便于前端先展示明细。
+
+    创建日期：2026-06-01
+    author: sunshengxian
+    """
+
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    with Session(engine) as db:
+        user = add_user(db)
+        metric_time = datetime.combine(date.today(), datetime.min.time())
+        db.add(
+            LlmCallMetric(
+                question_id="trace-fast",
+                user_id=user.id,
+                session_id=9,
+                phase="answer",
+                provider="DeepSeek",
+                model="deepseek-v4-flash",
+                success=1,
+                elapsed_ms=600.0,
+                created_at=metric_time,
+                updated_at=metric_time,
+            )
+        )
+        db.commit()
+
+        result = list_llm_metrics(db, user, include_summary=False, include_total=False)
+        summary = get_llm_metrics_summary(db, user, provider="DeepSeek")
+
+    assert result.total == 1
+    assert result.total_exact is False
+    assert result.has_more is False
+    assert result.summary is None
+    assert result.rows[0].question_id == "trace-fast"
+    assert summary.total == 1
+    assert summary.success_count == 1
+    assert summary.avg_elapsed_ms == 600.0

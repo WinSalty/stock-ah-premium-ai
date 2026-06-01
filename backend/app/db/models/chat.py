@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import DateTime, Float, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.dialects.mysql import LONGTEXT
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -55,6 +55,14 @@ class LlmCallMetric(TimestampMixin, Base):
     """
 
     __tablename__ = "llm_call_metric"
+    __table_args__ = (
+        # LLM 耗时页面以时间范围、来源、阶段、用户和会话为主要排查入口；
+        # 这些组合索引服务分页、计数和懒加载摘要，降低大表上全量扫描概率。
+        Index("idx_llm_metric_created_id", "created_at", "id"),
+        Index("idx_llm_metric_provider_created", "provider", "created_at", "id"),
+        Index("idx_llm_metric_phase_created", "phase", "created_at", "id"),
+        Index("idx_llm_metric_model_created", "model", "created_at", "id"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     question_id: Mapped[str] = mapped_column(String(32), nullable=False)

@@ -1331,5 +1331,9 @@ CREATE TABLE IF NOT EXISTS `llm_call_metric` (
   KEY `idx_llm_call_metric_question` (`question_id`),
   KEY `idx_llm_call_metric_user_created` (`user_id`, `created_at`),
   KEY `idx_llm_call_metric_session_created` (`session_id`, `created_at`),
-  KEY `idx_llm_call_metric_phase_model` (`phase`, `model`)
+  KEY `idx_llm_call_metric_phase_model` (`phase`, `model`),
+  KEY `idx_llm_metric_created_id` (`created_at`, `id`),
+  KEY `idx_llm_metric_provider_created` (`provider`, `created_at`, `id`),
+  KEY `idx_llm_metric_phase_created` (`phase`, `created_at`, `id`),
+  KEY `idx_llm_metric_model_created` (`model`, `created_at`, `id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='LLM 调用耗时指标表';
