@@ -60,6 +60,7 @@ type AppMenuItem = {
 
 const MOBILE_APP_MEDIA_QUERY = '(max-width: 720px)';
 const MOBILE_PRIMARY_PAGE_KEYS: PageKey[] = ['chat', 'image_generation', 'premium', 'overview', 'profile'];
+const PAGE_QUERY_KEY = 'page';
 
 const allMenuItems: AppMenuItem[] = [
   { key: 'overview', icon: <LayoutDashboard size={18} />, label: '总览' },
@@ -86,10 +87,40 @@ function getPermittedPageKeys(permissions: string[]) {
  * 创建日期：2026-05-18
  * author: sunshengxian
  */
-function chooseInitialPage(user: UserInfo, isMobileApp: boolean): PageKey {
+function chooseInitialPage(user: UserInfo, isMobileApp: boolean, requestedPage?: PageKey | null): PageKey {
   const permittedKeys = getPermittedPageKeys(user.permissions);
+  if (requestedPage && permittedKeys.includes(requestedPage)) {
+    return requestedPage;
+  }
   const preferredKeys: PageKey[] = isMobileApp ? MOBILE_PRIMARY_PAGE_KEYS : ['overview', 'chat'];
   return preferredKeys.find((key) => permittedKeys.includes(key)) || permittedKeys[0] || 'overview';
+}
+
+/** 从地址栏恢复当前菜单页，刷新浏览器后仍停留在用户最后查看的功能页。创建日期：2026-06-02 author: sunshengxian */
+function getPageFromLocation(): PageKey | null {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+  const rawPage = new URLSearchParams(window.location.search).get(PAGE_QUERY_KEY);
+  return allMenuItems.some((item) => item.key === rawPage) ? (rawPage as PageKey) : null;
+}
+
+/** 把当前菜单写入地址栏但不堆叠历史记录，避免刷新丢页面同时不打乱浏览器返回行为。创建日期：2026-06-02 author: sunshengxian */
+function replacePageInUrl(page: PageKey | null) {
+  if (typeof window === 'undefined') {
+    return;
+  }
+  const nextUrl = new URL(window.location.href);
+  if (page) {
+    nextUrl.searchParams.set(PAGE_QUERY_KEY, page);
+  } else {
+    nextUrl.searchParams.delete(PAGE_QUERY_KEY);
+  }
+  const nextPath = `${nextUrl.pathname}${nextUrl.search}${nextUrl.hash}`;
+  const currentPath = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+  if (nextPath !== currentPath) {
+    window.history.replaceState(window.history.state, '', nextPath);
+  }
 }
 
 /**
@@ -158,8 +189,9 @@ function App() {
   const isMobileApp = useMobileAppViewport();
   useMobileVisualViewportHeight(isMobileApp);
   const hasAppliedMobileDefaultRef = useRef(false);
+  const initialPageFromUrlRef = useRef<PageKey | null>(getPageFromLocation());
   const shareToken = window.location.pathname.match(/^\/limit-up-share\/([^/]+)$/)?.[1];
-  const [page, setPage] = useState<PageKey>('overview');
+  const [page, setPage] = useState<PageKey>(() => initialPageFromUrlRef.current || 'overview');
   const [user, setUser] = useState<UserInfo | null>(null);
   const [isCheckingAuth, setIsCheckingAuth] = useState(Boolean(getAuthToken()));
   const pages: Partial<Record<PageKey, ReactNode>> = {
@@ -204,11 +236,27 @@ function App() {
   }, [menuItems, permittedPage]);
 
   useEffect(() => {
+    const handlePopState = () => {
+      // 用户使用浏览器前进/后退时重新读取菜单参数，权限不匹配时交给 permittedPage 兜底逻辑修正。
+      setPage(getPageFromLocation() || 'overview');
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
+
+  useEffect(() => {
+    if (!user || !permittedPage || shareToken) {
+      return;
+    }
+    replacePageInUrl(page);
+  }, [page, permittedPage, shareToken, user]);
+
+  useEffect(() => {
     hasAppliedMobileDefaultRef.current = false;
   }, [user?.id]);
 
   useEffect(() => {
-    if (!user || !isMobileApp || hasAppliedMobileDefaultRef.current) {
+    if (!user || !isMobileApp || hasAppliedMobileDefaultRef.current || initialPageFromUrlRef.current) {
       return;
     }
     hasAppliedMobileDefaultRef.current = true;
@@ -218,7 +266,7 @@ function App() {
   const onAuthenticated = (result: AuthTokenResponse) => {
     queryClient.clear();
     setUser(result.user);
-    setPage(chooseInitialPage(result.user, isMobileApp));
+    setPage(chooseInitialPage(result.user, isMobileApp, initialPageFromUrlRef.current));
   };
 
   const onLogout = () => {
@@ -226,6 +274,7 @@ function App() {
     queryClient.clear();
     setUser(null);
     setPage('overview');
+    replacePageInUrl(null);
     message.success('已退出登录');
   };
 
