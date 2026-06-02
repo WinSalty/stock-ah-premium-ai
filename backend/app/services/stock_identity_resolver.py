@@ -45,6 +45,19 @@ GENERIC_NAME_FRAGMENTS = frozenset(
         "科技",
     }
 )
+MULTI_STOCK_QUESTION_KEYWORDS = frozenset(
+    {
+        "对比",
+        "比较",
+        "和",
+        "与",
+        "以及",
+        "哪个",
+        "谁更",
+        "两只",
+        "多只",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -270,6 +283,20 @@ class StockIdentityResolver:
     def _resolve_name(self, question: str) -> StockResolveResult:
         # 先做股票简称的包含匹配，只有唯一命中才触发补数；“平安”“银行”等模糊词会进入歧义分支。
         matched = self._name_matched_stocks(question)
+        exact_matched = [
+            stock
+            for stock in matched
+            if stock.name and self._is_exact_name_mention(stock.name, question)
+        ]
+        if exact_matched and not self._looks_like_multi_stock_question(question):
+            # 单股问法里完整出现股票简称时，优先按精确简称解析；否则“昊华能源”会被
+            # “能源”片段召回的几十只同后缀股票淹没，导致本可补取的数据被误判为歧义。
+            result = self._result_from_stocks(
+                exact_matched,
+                "精确名称匹配到多只股票，已停止自动补数",
+            )
+            if result.resolved or result.ambiguous_candidates:
+                return result
         if not matched:
             matched, _hk_matched = self._resolve_ah_pair_name(question)
         result = self._result_from_stocks(matched, "名称匹配到多只股票，已停止自动补数")
@@ -296,23 +323,49 @@ class StockIdentityResolver:
                 .limit(5000)
             ).all()
         )
-        return [
+        matched = [
             stock
             for stock in stocks
             if stock.name and self._name_matches(stock.name, question)
         ]
+        return sorted(
+            matched,
+            key=lambda stock: self._name_match_rank(stock.name or "", question),
+        )
+
+    def _is_exact_name_mention(self, stock_name: str, question: str) -> bool:
+        # 完整简称出现在原文中，才视为精确命中；不把“能源”等片段误升格为单股解析依据。
+        return stock_name in question
+
+    def _name_match_rank(self, stock_name: str, question: str) -> int:
+        # 候选列表会被截断给路由/消歧模型，精确简称必须排在片段召回前面，
+        # 这样同后缀股票很多时仍能把用户真正点名的股票交给模型选择。
+        if self._is_exact_name_mention(stock_name, question):
+            return 0
+        cleaned = self._clean_question_for_name_match(question)
+        if len(cleaned) >= 2 and cleaned in stock_name:
+            return 1
+        return 2
+
+    def _clean_question_for_name_match(self, question: str) -> str:
+        # 清理常见问法尾词，保留用户可能输入的股票简称主体，供简称片段匹配复用。
+        cleaned = question
+        for suffix in ("怎么看", "投资报告", "分析报告", "深度报告", "估值", "财报", "分红"):
+            cleaned = cleaned.replace(suffix, "")
+        return cleaned.strip()
 
     def _name_matches(self, stock_name: str, question: str) -> bool:
         # 中文简称经常和“怎么看/投资报告”等问法混在一起；先剥离问法词再做片段匹配。
         if stock_name in question:
             return True
-        cleaned = question
-        for suffix in ("怎么看", "投资报告", "分析报告", "深度报告", "估值", "财报", "分红"):
-            cleaned = cleaned.replace(suffix, "")
-        cleaned = cleaned.strip()
+        cleaned = self._clean_question_for_name_match(question)
         if len(cleaned) >= 2 and cleaned in stock_name:
             return True
         return self._meaningful_name_fragment_matches(stock_name, question)
+
+    def _looks_like_multi_stock_question(self, question: str) -> bool:
+        # 多股比较题需要保留候选歧义交给语义消歧，不能因为其中一只股票完整出现就提前收敛。
+        return any(keyword in question for keyword in MULTI_STOCK_QUESTION_KEYWORDS)
 
     def _meaningful_name_fragment_matches(self, stock_name: str, question: str) -> bool:
         # 对比问题常把股票名简称化为“平安、招商、宁德”等片段；过滤行业泛词后再召回候选。

@@ -35,6 +35,9 @@ from app.services.tushare_stock_research_fetcher import (
 )
 
 REPORT_KEYWORDS = (
+    # 这些词代表用户需要个股研究证据链；“分析一下”是实际问答里的高频口语，
+    # 必须进入兜底补数判断，避免路由/消歧未产出 data_demands 时直接跳过 Tushare。
+    "分析一下",
     "分析报告",
     "投资报告",
     "深度报告",

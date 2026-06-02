@@ -47,7 +47,7 @@ def test_orchestrator_uses_cache_for_recent_quote_package(monkeypatch) -> None:
 
     db = _session()
     db.add(AStockBasic(ts_code="600036.SH", symbol="600036", name="招商银行", list_status="L"))
-    db.add(ADailyBasic(ts_code="600036.SH", trade_date=date(2026, 5, 6), close=1))
+    db.add(ADailyBasic(ts_code="600036.SH", trade_date=date(2026, 6, 1), close=1))
     db.commit()
     fetcher = RecordingFetcher()
     service = MarketDataOrchestrator(db, fetcher=fetcher)  # type: ignore[arg-type]
@@ -175,6 +175,37 @@ def test_orchestrator_corrects_wrong_routed_code_by_local_name(monkeypatch) -> N
         ("601225.SH", "quote_valuation"),
         ("601225.SH", "financial_statement"),
     ]
+
+
+def test_orchestrator_fallback_fetches_exact_name_hidden_by_suffix(monkeypatch) -> None:
+    """确认无路由需求时，完整简称仍可兜底触发个股补数。
+
+    创建日期：2026-06-02
+    author: codex
+    """
+
+    db = _session()
+    db.add_all(
+        [
+            AStockBasic(ts_code="000027.SZ", symbol="000027", name="深圳能源", list_status="L"),
+            AStockBasic(ts_code="000096.SZ", symbol="000096", name="广聚能源", list_status="L"),
+            AStockBasic(ts_code="000600.SZ", symbol="000600", name="建投能源", list_status="L"),
+            AStockBasic(ts_code="601101.SH", symbol="601101", name="昊华能源", list_status="L"),
+        ]
+    )
+    db.commit()
+    fetcher = RecordingFetcher()
+    service = MarketDataOrchestrator(db, fetcher=fetcher)  # type: ignore[arg-type]
+    monkeypatch.setattr(service, "_build_context", lambda ts_code, packages: {"ts_code": ts_code})
+
+    result = service.ensure_for_question("帮我分析一下昊华能源", {}, ())
+
+    # 这类口语化单股分析没有显式代码，也可能没有路由 data_demands；
+    # 兜底解析必须把完整简称优先于“能源”泛后缀候选，否则不会产生任何 Tushare 补数流水。
+    assert result.status == "COMPLETED"
+    assert result.stock is not None
+    assert result.stock.ts_code == "601101.SH"
+    assert [call[0] for call in fetcher.calls] == ["601101.SH"] * 5
 
 
 def test_orchestrator_report_question_requests_enhanced_research_packages() -> None:

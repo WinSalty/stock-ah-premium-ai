@@ -74,6 +74,9 @@ LIMIT_UP_CONTEXT_FOCUS_STOCK_LIMIT = 160
 LIMIT_UP_CONTEXT_THEME_LIMIT = 80
 LIMIT_UP_CONTEXT_CAPITAL_SIGNAL_LIMIT = 160
 LIMIT_UP_CONTEXT_BOARD_STATUS_LIMIT = 40
+# LLM 失败响应会写入指标表辅助排查；
+# 截断上限只限制错误诊断文本，不影响正常报告正文入库。
+LLM_ERROR_RESPONSE_LOG_LIMIT = 4000
 OPTIONAL_APIS: tuple[tuple[str, dict[str, Any], tuple[str, ...]], ...] = (
     (
         "limit_list_ths",
@@ -274,22 +277,35 @@ class LimitUpPushService:
         context = snapshot["context"]
         data_quality = snapshot["data_quality"]
         snapshot_hash = self._snapshot_hash(context)
-        existing = self._ready_or_generating_analysis(trade_date, snapshot_hash)
+        existing = self._analysis_for_snapshot(trade_date, snapshot_hash)
         if existing is not None:
-            return existing
-        analysis = LimitUpAnalysisCache(
-            trade_date=trade_date,
-            model=self.settings.limit_up_push_model,
-            prompt_version=self.settings.limit_up_push_prompt_version,
-            data_snapshot_hash=snapshot_hash,
-            status=ANALYSIS_STATUS_GENERATING,
-            title=f"{trade_date:%Y-%m-%d} A股涨停打板复盘",
-            context_json=self._json_dumps(context),
-            data_quality_json=self._json_dumps(data_quality),
-        )
-        self.db.add(analysis)
-        self.db.commit()
-        self.db.refresh(analysis)
+            if existing.status in {ANALYSIS_STATUS_READY, ANALYSIS_STATUS_GENERATING}:
+                return existing
+            analysis = existing
+            self._reset_analysis_for_retry(analysis, trade_date, context, data_quality)
+        else:
+            analysis = LimitUpAnalysisCache(
+                trade_date=trade_date,
+                model=self.settings.limit_up_push_model,
+                prompt_version=self.settings.limit_up_push_prompt_version,
+                data_snapshot_hash=snapshot_hash,
+                status=ANALYSIS_STATUS_GENERATING,
+                title=f"{trade_date:%Y-%m-%d} A股涨停打板复盘",
+                context_json=self._json_dumps(context),
+                data_quality_json=self._json_dumps(data_quality),
+            )
+            self.db.add(analysis)
+            try:
+                self.db.commit()
+                self.db.refresh(analysis)
+            except IntegrityError:
+                self.db.rollback()
+                analysis = self._analysis_for_snapshot(trade_date, snapshot_hash)
+                if analysis is None:
+                    raise
+                if analysis.status in {ANALYSIS_STATUS_READY, ANALYSIS_STATUS_GENERATING}:
+                    return analysis
+                self._reset_analysis_for_retry(analysis, trade_date, context, data_quality)
         try:
             content_html, content_markdown = self._generate_llm_report(context)
         except Exception as exc:
@@ -1118,14 +1134,37 @@ class LimitUpPushService:
         request_payload_json = self._json_dumps(payload)
         question_id = uuid4().hex
         started_at = perf_counter()
+        response_body_text: str | None = None
         try:
             with httpx.Client(timeout=LLM_CHAT_TIMEOUT_SECONDS * 2) as client:
-                response = client.post(url, headers={"Authorization": f"Bearer {api_key}"}, json=payload)
-            response.raise_for_status()
-            body = response.json()
-            content = body["choices"][0]["message"]["content"]
+                response = client.post(
+                    url,
+                    headers={"Authorization": f"Bearer {api_key}"},
+                    json=payload,
+            )
+            response_body_text = response.text
+            try:
+                body = response.json()
+            except json.JSONDecodeError as exc:
+                raise LimitUpPushError(
+                    self._llm_response_error_message(response, response_body_text, None)
+                ) from exc
+            try:
+                response.raise_for_status()
+            except httpx.HTTPStatusError as exc:
+                raise LimitUpPushError(
+                    self._llm_response_error_message(response, response_body_text, body)
+                ) from exc
+            content = self._chat_completion_content(response, response_body_text, body)
         except Exception as exc:
-            self._record_llm_metric(question_id, False, started_at, request_payload_json, None, str(exc)[:500])
+            self._record_llm_metric(
+                question_id,
+                False,
+                started_at,
+                request_payload_json,
+                self._truncate_llm_response(response_body_text),
+                str(exc)[:500],
+            )
             raise
         self._record_llm_metric(question_id, True, started_at, request_payload_json, content, None)
         return str(content or "")
@@ -1212,7 +1251,11 @@ class LimitUpPushService:
             "</div></div>"
         )
 
-    def _ready_or_generating_analysis(self, trade_date: date, snapshot_hash: str) -> LimitUpAnalysisCache | None:
+    def _analysis_for_snapshot(
+        self,
+        trade_date: date,
+        snapshot_hash: str,
+    ) -> LimitUpAnalysisCache | None:
         return self.db.scalar(
             select(LimitUpAnalysisCache)
             .where(
@@ -1220,11 +1263,90 @@ class LimitUpPushService:
                 LimitUpAnalysisCache.model == self.settings.limit_up_push_model,
                 LimitUpAnalysisCache.prompt_version == self.settings.limit_up_push_prompt_version,
                 LimitUpAnalysisCache.data_snapshot_hash == snapshot_hash,
-                LimitUpAnalysisCache.status.in_([ANALYSIS_STATUS_READY, ANALYSIS_STATUS_GENERATING]),
             )
             .order_by(desc(LimitUpAnalysisCache.id))
             .limit(1)
         )
+
+    def _reset_analysis_for_retry(
+        self,
+        analysis: LimitUpAnalysisCache,
+        trade_date: date,
+        context: dict[str, Any],
+        data_quality: list[dict[str, Any]],
+    ) -> None:
+        # 同一数据快照的 FAILED/PENDING 记录复用原主键重跑，避免唯一键挡住后续轮询；
+        # 重置正文和错误字段后先提交 GENERATING，使并发请求能读到“正在生成”并退出。
+        analysis.status = ANALYSIS_STATUS_GENERATING
+        analysis.title = f"{trade_date:%Y-%m-%d} A股涨停打板复盘"
+        analysis.context_json = self._json_dumps(context)
+        analysis.data_quality_json = self._json_dumps(data_quality)
+        analysis.content_html = None
+        analysis.content_markdown = None
+        analysis.generated_at = None
+        analysis.error_message = None
+        self.db.commit()
+        self.db.refresh(analysis)
+
+    def _chat_completion_content(
+        self,
+        response: httpx.Response,
+        response_text: str | None,
+        body: Any,
+    ) -> str:
+        if not isinstance(body, dict):
+            raise LimitUpPushError(
+                self._llm_response_error_message(response, response_text, body)
+            )
+        choices = body.get("choices")
+        if not isinstance(choices, list) or not choices:
+            raise LimitUpPushError(
+                self._llm_response_error_message(response, response_text, body)
+            )
+        first_choice = choices[0]
+        if not isinstance(first_choice, dict):
+            raise LimitUpPushError(
+                self._llm_response_error_message(response, response_text, body)
+            )
+        message = first_choice.get("message")
+        if not isinstance(message, dict) or "content" not in message:
+            raise LimitUpPushError(
+                self._llm_response_error_message(response, response_text, body)
+            )
+        return str(message.get("content") or "")
+
+    def _llm_response_error_message(
+        self,
+        response: httpx.Response,
+        response_text: str | None,
+        body: Any,
+    ) -> str:
+        # 兼容接口异常时通常会返回 error/message/code 而不是 choices；
+        # 错误摘要保留状态码和截断响应体，方便运维从指标表直接定位上游原因。
+        details: list[str] = [f"DeepSeek 响应缺少有效 choices status={response.status_code}"]
+        if isinstance(body, dict):
+            error_payload = body.get("error")
+            if isinstance(error_payload, dict):
+                error_message = (
+                    error_payload.get("message")
+                    or error_payload.get("code")
+                    or error_payload.get("type")
+                )
+                if error_message:
+                    details.append(f"error={error_message}")
+            else:
+                message = body.get("message") or body.get("code")
+                if message:
+                    details.append(f"message={message}")
+        truncated = self._truncate_llm_response(response_text)
+        if truncated:
+            details.append(f"body={truncated}")
+        return "; ".join(details)
+
+    def _truncate_llm_response(self, response_text: str | None) -> str | None:
+        if not response_text:
+            return None
+        return response_text[:LLM_ERROR_RESPONSE_LOG_LIMIT]
 
     def _latest_ready_analysis(self, trade_date: date) -> LimitUpAnalysisCache | None:
         return self.db.scalar(

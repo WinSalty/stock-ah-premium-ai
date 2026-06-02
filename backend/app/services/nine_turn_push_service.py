@@ -40,6 +40,7 @@ from app.services.limit_up_push_service import (
     DELIVERY_STATUS_PENDING,
     DELIVERY_STATUS_SENT,
     DELIVERY_STATUS_SKIPPED,
+    LLM_ERROR_RESPONSE_LOG_LIMIT,
 )
 from app.services.llm_metric_definitions import phase_description, phase_label
 from app.services.llm_service import LLM_CHAT_TIMEOUT_SECONDS
@@ -134,23 +135,36 @@ class NineTurnPushService:
         context = snapshot["context"]
         data_quality = snapshot["data_quality"]
         snapshot_hash = self._snapshot_hash(context)
-        existing = self._ready_or_generating_analysis(trade_date, snapshot_hash)
+        existing = self._analysis_for_snapshot(trade_date, snapshot_hash)
         if existing is not None:
-            return existing
-        analysis = NineTurnAnalysisCache(
-            trade_date=trade_date,
-            freq=NINE_TURN_FREQ_DAILY,
-            model=self.settings.nine_turn_push_model,
-            prompt_version=self.settings.nine_turn_push_prompt_version,
-            data_snapshot_hash=snapshot_hash,
-            status=ANALYSIS_STATUS_GENERATING,
-            title=f"{trade_date:%Y-%m-%d} 神奇九转反转信号复盘",
-            context_json=self._json_dumps(context),
-            data_quality_json=self._json_dumps(data_quality),
-        )
-        self.db.add(analysis)
-        self.db.commit()
-        self.db.refresh(analysis)
+            if existing.status in {ANALYSIS_STATUS_READY, ANALYSIS_STATUS_GENERATING}:
+                return existing
+            analysis = existing
+            self._reset_analysis_for_retry(analysis, trade_date, context, data_quality)
+        else:
+            analysis = NineTurnAnalysisCache(
+                trade_date=trade_date,
+                freq=NINE_TURN_FREQ_DAILY,
+                model=self.settings.nine_turn_push_model,
+                prompt_version=self.settings.nine_turn_push_prompt_version,
+                data_snapshot_hash=snapshot_hash,
+                status=ANALYSIS_STATUS_GENERATING,
+                title=f"{trade_date:%Y-%m-%d} 神奇九转反转信号复盘",
+                context_json=self._json_dumps(context),
+                data_quality_json=self._json_dumps(data_quality),
+            )
+            self.db.add(analysis)
+            try:
+                self.db.commit()
+                self.db.refresh(analysis)
+            except IntegrityError:
+                self.db.rollback()
+                analysis = self._analysis_for_snapshot(trade_date, snapshot_hash)
+                if analysis is None:
+                    raise
+                if analysis.status in {ANALYSIS_STATUS_READY, ANALYSIS_STATUS_GENERATING}:
+                    return analysis
+                self._reset_analysis_for_retry(analysis, trade_date, context, data_quality)
         try:
             content_html, content_markdown = self._generate_llm_report(context)
         except Exception as exc:
@@ -525,17 +539,34 @@ class NineTurnPushService:
         request_payload_json = self._json_dumps(payload)
         question_id = uuid4().hex
         started_at = perf_counter()
+        response_body_text: str | None = None
         try:
             with httpx.Client(timeout=LLM_CHAT_TIMEOUT_SECONDS * 2) as client:
                 response = client.post(
                     url, headers={"Authorization": f"Bearer {api_key}"}, json=payload
                 )
-            response.raise_for_status()
-            body = response.json()
-            content = body["choices"][0]["message"]["content"]
+            response_body_text = response.text
+            try:
+                body = response.json()
+            except json.JSONDecodeError as exc:
+                raise NineTurnPushError(
+                    self._llm_response_error_message(response, response_body_text, None)
+                ) from exc
+            try:
+                response.raise_for_status()
+            except httpx.HTTPStatusError as exc:
+                raise NineTurnPushError(
+                    self._llm_response_error_message(response, response_body_text, body)
+                ) from exc
+            content = self._chat_completion_content(response, response_body_text, body)
         except Exception as exc:
             self._record_llm_metric(
-                question_id, False, started_at, request_payload_json, None, str(exc)[:500]
+                question_id,
+                False,
+                started_at,
+                request_payload_json,
+                self._truncate_llm_response(response_body_text),
+                str(exc)[:500],
             )
             raise
         self._record_llm_metric(question_id, True, started_at, request_payload_json, content, None)
@@ -624,7 +655,7 @@ class NineTurnPushService:
             "</div></div>"
         )
 
-    def _ready_or_generating_analysis(
+    def _analysis_for_snapshot(
         self, trade_date: date, snapshot_hash: str
     ) -> NineTurnAnalysisCache | None:
         return self.db.scalar(
@@ -635,13 +666,90 @@ class NineTurnPushService:
                 NineTurnAnalysisCache.model == self.settings.nine_turn_push_model,
                 NineTurnAnalysisCache.prompt_version == self.settings.nine_turn_push_prompt_version,
                 NineTurnAnalysisCache.data_snapshot_hash == snapshot_hash,
-                NineTurnAnalysisCache.status.in_(
-                    [ANALYSIS_STATUS_READY, ANALYSIS_STATUS_GENERATING]
-                ),
             )
             .order_by(desc(NineTurnAnalysisCache.id))
             .limit(1)
         )
+
+    def _reset_analysis_for_retry(
+        self,
+        analysis: NineTurnAnalysisCache,
+        trade_date: date,
+        context: dict[str, Any],
+        data_quality: list[dict[str, Any]],
+    ) -> None:
+        # 同一九转数据快照生成失败后复用原记录重跑，避免唯一键冲突让定时任务持续失败；
+        # 先提交 GENERATING 状态，后续并发轮询会直接退出，不重复消耗模型调用。
+        analysis.status = ANALYSIS_STATUS_GENERATING
+        analysis.title = f"{trade_date:%Y-%m-%d} 神奇九转反转信号复盘"
+        analysis.context_json = self._json_dumps(context)
+        analysis.data_quality_json = self._json_dumps(data_quality)
+        analysis.content_html = None
+        analysis.content_markdown = None
+        analysis.generated_at = None
+        analysis.error_message = None
+        self.db.commit()
+        self.db.refresh(analysis)
+
+    def _chat_completion_content(
+        self,
+        response: httpx.Response,
+        response_text: str | None,
+        body: Any,
+    ) -> str:
+        if not isinstance(body, dict):
+            raise NineTurnPushError(
+                self._llm_response_error_message(response, response_text, body)
+            )
+        choices = body.get("choices")
+        if not isinstance(choices, list) or not choices:
+            raise NineTurnPushError(
+                self._llm_response_error_message(response, response_text, body)
+            )
+        first_choice = choices[0]
+        if not isinstance(first_choice, dict):
+            raise NineTurnPushError(
+                self._llm_response_error_message(response, response_text, body)
+            )
+        message = first_choice.get("message")
+        if not isinstance(message, dict) or "content" not in message:
+            raise NineTurnPushError(
+                self._llm_response_error_message(response, response_text, body)
+            )
+        return str(message.get("content") or "")
+
+    def _llm_response_error_message(
+        self,
+        response: httpx.Response,
+        response_text: str | None,
+        body: Any,
+    ) -> str:
+        # DeepSeek 兼容接口异常体不一定包含 choices；记录状态码、错误字段和响应摘要，
+        # 让后台 LLM 指标能直接定位模型网关、参数或账号侧问题。
+        details: list[str] = [f"DeepSeek 响应缺少有效 choices status={response.status_code}"]
+        if isinstance(body, dict):
+            error_payload = body.get("error")
+            if isinstance(error_payload, dict):
+                error_message = (
+                    error_payload.get("message")
+                    or error_payload.get("code")
+                    or error_payload.get("type")
+                )
+                if error_message:
+                    details.append(f"error={error_message}")
+            else:
+                message = body.get("message") or body.get("code")
+                if message:
+                    details.append(f"message={message}")
+        truncated = self._truncate_llm_response(response_text)
+        if truncated:
+            details.append(f"body={truncated}")
+        return "; ".join(details)
+
+    def _truncate_llm_response(self, response_text: str | None) -> str | None:
+        if not response_text:
+            return None
+        return response_text[:LLM_ERROR_RESPONSE_LOG_LIMIT]
 
     def _enabled_limit_up_recipients(
         self, target_user_ids: list[int] | None = None

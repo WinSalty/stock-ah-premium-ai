@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, date, datetime, timedelta
 
+import pytest
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
@@ -9,6 +10,7 @@ from sqlalchemy.pool import StaticPool
 from app.core.config import Settings
 from app.db.base import Base
 from app.db.models.auth import AppUser
+from app.db.models.chat import LlmCallMetric
 from app.db.models.market import ATradeCalendar
 from app.db.models.notification import (
     LimitUpAnalysisCache,
@@ -198,6 +200,132 @@ def test_limit_up_report_cache_reuses_same_snapshot(monkeypatch) -> None:
     assert first.id == second.id
     assert len(calls) == 1
     assert first.status == "READY"
+
+
+def test_limit_up_failed_snapshot_retries_same_cache(monkeypatch) -> None:
+    """确认同一数据快照首次生成失败后，后续轮询复用原缓存记录重试。
+
+    创建日期：2026-06-02
+    author: sunshengxian
+    """
+
+    db = make_db()
+    service = LimitUpPushService(
+        db,
+        settings=Settings(
+            llm_api_key="key",
+            llm_api_key_file=None,
+            tushare_token="token",
+            tushare_token_file=None,
+        ),
+        tushare_client=FakeTushareClient(
+            {
+                "kpl_list": [
+                    {
+                        "ts_code": "000001.SZ",
+                        "name": "测试股份",
+                        "trade_date": "20260508",
+                        "status": "2连板",
+                        "theme": "人工智能",
+                        "lu_desc": "AI 应用催化",
+                    }
+                ]
+            }
+        ),
+        notification_service=FakeNotificationService(),
+    )
+    calls = 0
+
+    def flaky_generate(context: dict[str, object]) -> tuple[str, str]:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("模型网关临时异常")
+        return "<h2>重试成功</h2>", "重试成功"
+
+    monkeypatch.setattr(service, "_generate_llm_report", flaky_generate)
+
+    with pytest.raises(RuntimeError):
+        service.ensure_analysis_for_trade_date(date(2026, 5, 8))
+    failed = db.scalar(select(LimitUpAnalysisCache))
+    assert failed is not None
+    assert failed.status == "FAILED"
+
+    retried = service.ensure_analysis_for_trade_date(date(2026, 5, 8))
+
+    assert retried is not None
+    assert retried.id == failed.id
+    assert retried.status == "READY"
+    assert retried.error_message is None
+    assert calls == 2
+
+
+def test_limit_up_llm_error_response_is_recorded(monkeypatch) -> None:
+    """确认 DeepSeek 非 choices 错误体会写入指标，便于排查真实上游响应。
+
+    创建日期：2026-06-02
+    author: sunshengxian
+    """
+
+    class FakeResponse:
+        status_code = 200
+        text = '{"error":{"message":"模型网关返回错误","code":"upstream_error"}}'
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, object]:
+            return {
+                "error": {
+                    "message": "模型网关返回错误",
+                    "code": "upstream_error",
+                }
+            }
+
+    class FakeClient:
+        def __init__(self, timeout: float) -> None:
+            self.timeout = timeout
+
+        def __enter__(self) -> FakeClient:
+            return self
+
+        def __exit__(self, exc_type: object, exc: object, tb: object) -> None:
+            return None
+
+        def post(
+            self,
+            url: str,
+            headers: dict[str, str],
+            json: dict[str, object],
+        ) -> FakeResponse:
+            return FakeResponse()
+
+    db = make_db()
+    service = LimitUpPushService(
+        db,
+        settings=Settings(
+            llm_api_key="key",
+            llm_api_key_file=None,
+            tushare_token="token",
+            tushare_token_file=None,
+        ),
+        tushare_client=FakeTushareClient({}),
+        notification_service=FakeNotificationService(),
+    )
+    monkeypatch.setattr("app.services.limit_up_push_service.httpx.Client", FakeClient)
+
+    with pytest.raises(LimitUpPushError, match="模型网关返回错误"):
+        service._chat_completion_with_reasoning("用户提示词", "系统提示词")
+    metric = db.scalar(
+        select(LlmCallMetric).where(LlmCallMetric.phase == "limit_up_analysis")
+    )
+
+    assert metric is not None
+    assert metric.success == 0
+    assert metric.response_content is not None
+    assert "模型网关返回错误" in metric.response_content
+    assert metric.error_message is not None
+    assert "status=200" in metric.error_message
 
 
 def test_limit_up_context_filters_st_stocks(monkeypatch) -> None:

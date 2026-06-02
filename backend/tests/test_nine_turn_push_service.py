@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, date, datetime
 
+import pytest
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
@@ -181,6 +182,61 @@ def test_nine_turn_report_cache_reuses_same_snapshot(monkeypatch) -> None:
     assert len(calls) == 1
     assert first.status == "READY"
     assert "nine_up_turns" in calls[0]
+
+
+def test_nine_turn_failed_snapshot_retries_same_cache(monkeypatch) -> None:
+    """确认九转报告首次生成失败后，后续同快照复用原记录重试。
+
+    创建日期：2026-06-02
+    author: sunshengxian
+    """
+
+    db = make_db()
+    db.add(AStockBasic(ts_code="000001.SZ", symbol="000001", name="平安银行"))
+    db.commit()
+    service = NineTurnPushService(
+        db,
+        settings=settings(),
+        tushare_client=FakeTushareClient(
+            [
+                {
+                    "ts_code": "000001.SZ",
+                    "trade_date": "20260529",
+                    "freq": "daily",
+                    "close": 12.3,
+                    "amount": 100000,
+                    "up_count": 9,
+                    "down_count": 0,
+                    "nine_up_turn": 1,
+                    "nine_down_turn": 0,
+                }
+            ]
+        ),
+    )
+    calls = 0
+
+    def flaky_generate(context: dict[str, object]) -> tuple[str, str]:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("九转模型网关临时异常")
+        return "<h2>九转重试成功</h2>", "九转重试成功"
+
+    monkeypatch.setattr(service, "_generate_llm_report", flaky_generate)
+
+    with pytest.raises(RuntimeError):
+        service.ensure_analysis_for_trade_date(date(2026, 5, 29))
+    failed = db.scalar(select(NineTurnAnalysisCache))
+    assert failed is not None
+    assert failed.status == "FAILED"
+
+    retried = service.ensure_analysis_for_trade_date(date(2026, 5, 29))
+
+    assert retried is not None
+    assert retried.id == failed.id
+    assert retried.status == "READY"
+    assert retried.error_message is None
+    assert calls == 2
 
 
 def test_nine_turn_push_reuses_limit_up_recipients(monkeypatch) -> None:

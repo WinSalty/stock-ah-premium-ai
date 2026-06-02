@@ -86,6 +86,40 @@ def test_resolver_returns_local_candidates_for_semantic_selection() -> None:
     }
 
 
+def test_resolver_prioritizes_exact_stock_name_before_generic_suffix() -> None:
+    """确认完整股票简称不会被同后缀的宽松片段候选挤出消歧列表。
+
+    创建日期：2026-06-02
+    author: codex
+    """
+
+    db = _session()
+    db.add_all(
+        [
+            AStockBasic(ts_code="000027.SZ", symbol="000027", name="深圳能源", list_status="L"),
+            AStockBasic(ts_code="000096.SZ", symbol="000096", name="广聚能源", list_status="L"),
+            AStockBasic(ts_code="000600.SZ", symbol="000600", name="建投能源", list_status="L"),
+            AStockBasic(ts_code="601101.SH", symbol="601101", name="昊华能源", list_status="L"),
+        ]
+    )
+    db.commit()
+
+    resolver = StockIdentityResolver(db)
+    result = resolver.resolve("帮我分析一下昊华能源")
+    candidates = resolver.resolve_candidates("帮我分析一下昊华能源", limit=3)
+
+    # 用户完整点名“昊华能源”时，应直接解析到该股，并在候选截断前排第一；
+    # 否则“能源”泛后缀会召回大量同名尾缀股票，导致后续模型没有机会选择 601101.SH。
+    assert result.resolved is True
+    assert result.identity is not None
+    assert result.identity.ts_code == "601101.SH"
+    assert [candidate.ts_code for candidate in candidates] == [
+        "601101.SH",
+        "000027.SZ",
+        "000096.SZ",
+    ]
+
+
 def test_resolver_maps_ah_hk_name_to_a_code() -> None:
     """确认 AH 港股简称可以保守映射回单只 A 股代码。
 
