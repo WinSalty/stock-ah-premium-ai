@@ -1532,15 +1532,17 @@ body {
 }
 
 .table-header-nowrap {
-  display: inline-flex;
+  display: inline-grid;
+  grid-template-columns: max-content 16px;
   align-items: center;
   gap: 4px;
-  max-width: 100%;
   white-space: nowrap;
 }
 
 .help-title-text {
-  min-width: 0;
+  display: inline-block;
+  min-width: max-content;
+  overflow: visible;
   white-space: nowrap;
 }
 
@@ -1563,13 +1565,14 @@ body {
   display: flex;
   align-items: center;
   justify-content: flex-start;
-  gap: 6px;
+  gap: 10px;
   min-width: 0;
 }
 
 .dividend-summary-table .ant-table-column-title {
-  flex: 0 1 auto;
-  min-width: 0;
+  flex: 0 0 auto;
+  min-width: max-content;
+  overflow: visible;
 }
 
 .dividend-summary-table .ant-table-column-sorter {

@@ -158,7 +158,7 @@ function DividendReinvestmentPage() {
         title: renderHeaderTitle('年化收益率'),
         key: 'annualized_return_pct',
         dataIndex: 'annualized_return_pct',
-        width: 120,
+        width: 138,
         align: 'right',
         sorter: true,
         sortOrder: sortBy === 'annualized_return_pct' ? (sortOrder === 'asc' ? 'ascend' : 'descend') : null,
@@ -168,7 +168,7 @@ function DividendReinvestmentPage() {
         title: renderHeaderTitle('十年均年化'),
         key: 'ten_year_avg_annualized_return_pct',
         dataIndex: 'ten_year_avg_annualized_return_pct',
-        width: 126,
+        width: 144,
         align: 'right',
         sorter: true,
         sortOrder:
@@ -183,7 +183,7 @@ function DividendReinvestmentPage() {
         title: renderHeaderTitle('PE'),
         key: 'latest_pe',
         dataIndex: 'latest_pe',
-        width: 90,
+        width: 100,
         align: 'right',
         sorter: true,
         sortOrder: sortBy === 'latest_pe' ? (sortOrder === 'asc' ? 'ascend' : 'descend') : null,
@@ -193,7 +193,7 @@ function DividendReinvestmentPage() {
         title: renderHeaderTitle('PE_TTM'),
         key: 'latest_pe_ttm',
         dataIndex: 'latest_pe_ttm',
-        width: 112,
+        width: 128,
         align: 'right',
         sorter: true,
         sortOrder: sortBy === 'latest_pe_ttm' ? (sortOrder === 'asc' ? 'ascend' : 'descend') : null,
@@ -203,7 +203,7 @@ function DividendReinvestmentPage() {
         title: renderHeaderTitle('ROE'),
         key: 'latest_roe',
         dataIndex: 'latest_roe',
-        width: 92,
+        width: 104,
         align: 'right',
         sorter: true,
         sortOrder: sortBy === 'latest_roe' ? (sortOrder === 'asc' ? 'ascend' : 'descend') : null,
@@ -213,7 +213,7 @@ function DividendReinvestmentPage() {
         title: renderHeaderTitle('累计收益率'),
         key: 'total_return_pct',
         dataIndex: 'total_return_pct',
-        width: 124,
+        width: 142,
         align: 'right',
         sorter: true,
         sortOrder: sortBy === 'total_return_pct' ? (sortOrder === 'asc' ? 'ascend' : 'descend') : null,
@@ -224,7 +224,7 @@ function DividendReinvestmentPage() {
         title: renderHeaderTitle('累计分红'),
         key: 'total_cash_dividend',
         dataIndex: 'total_cash_dividend',
-        width: 120,
+        width: 138,
         align: 'right',
         sorter: true,
         sortOrder: sortBy === 'total_cash_dividend' ? (sortOrder === 'asc' ? 'ascend' : 'descend') : null,
@@ -236,7 +236,7 @@ function DividendReinvestmentPage() {
         title: renderHeaderTitle('最新股息率'),
         key: 'latest_dividend_yield_ttm',
         dataIndex: 'latest_dividend_yield_ttm',
-        width: 124,
+        width: 142,
         align: 'right',
         sorter: true,
         sortOrder: sortBy === 'latest_dividend_yield_ttm' ? (sortOrder === 'asc' ? 'ascend' : 'descend') : null,
@@ -416,7 +416,7 @@ function DividendReinvestmentPage() {
           dataSource={summaries.data?.items || []}
           columns={columns}
           locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} /> }}
-          scroll={{ x: 2082 }}
+          scroll={{ x: 2224 }}
           onChange={handleTableChange}
           pagination={{
             current: page,
