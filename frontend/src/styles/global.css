@@ -1056,9 +1056,13 @@ body {
 
 .dividend-filter-grid {
   display: grid;
-  grid-template-columns: repeat(6, minmax(140px, 1fr));
+  grid-template-columns: repeat(6, minmax(150px, 1fr));
   gap: 12px;
   align-items: end;
+}
+
+.dividend-filter-grid .ant-form-item-label > label {
+  white-space: nowrap;
 }
 
 .formula-dialog {
@@ -1530,7 +1534,47 @@ body {
 .table-header-nowrap {
   display: inline-flex;
   align-items: center;
+  gap: 4px;
+  max-width: 100%;
   white-space: nowrap;
+}
+
+.help-title-text {
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.help-title-icon-hitbox {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  line-height: 1;
+}
+
+/* 分红再投榜单表头同时包含字段说明和排序器，独立约束间距以避免短字段换行或图标重叠。 */
+.dividend-summary-table .ant-table-thead > tr > th {
+  white-space: nowrap;
+}
+
+.dividend-summary-table .ant-table-column-sorters {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 6px;
+  min-width: 0;
+}
+
+.dividend-summary-table .ant-table-column-title {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+.dividend-summary-table .ant-table-column-sorter {
+  flex: 0 0 auto;
+  margin-inline-start: 0;
 }
 
 .llm-metric-table .ant-table-thead > tr > th,

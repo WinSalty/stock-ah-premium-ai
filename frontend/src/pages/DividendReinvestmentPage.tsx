@@ -69,21 +69,21 @@ const DIVIDEND_SORT_FIELDS: DividendSortField[] = [
 ];
 
 const DIVIDEND_HEADER_HELP: Record<string, string> = {
-  代码: 'Tushare 股票代码，带交易所后缀，例如 600000.SH。',
+  代码: '股票代码，带交易所后缀，例如 600000.SH。',
   名称: 'A 股上市公司简称。',
-  行业: '股票基础资料中的所属行业，用于快速识别业务属性。',
+  行业: '上市公司所属行业，用于快速识别业务属性。',
   年化收益率: '从回测起点买入并把现金分红再投入后，按持有天数折算的年化收益率。',
   十年均年化: '逐年计算最近十个自然年度的年化收益率后取平均；历史不足十年时按可用年度计算。',
-  PE: '最新日线指标的市盈率，主要来自 Tushare daily_basic。',
-  PE_TTM: '滚动市盈率，来自最新 Tushare daily_basic。',
-  ROE: '最新报告期净资产收益率，来自 A 股财务指标表 a_financial_indicator。',
+  PE: '最新市盈率，用于观察当前估值水平。',
+  PE_TTM: '滚动市盈率，用最近四个季度盈利计算当前估值。',
+  ROE: '最新报告期净资产收益率，用于观察股东权益的盈利效率。',
   累计收益率: '期末市值相对初始投入金额的总收益率，包含现金分红再投入后的持仓市值变化。',
   期末市值: '回测期末持仓股数乘以期末或最新收盘价得到的市值。',
   累计分红: '回测期内累计收到并用于再投入的现金分红金额。',
   分红年数: '回测期内存在有效实施分红的自然年度数量。',
   连续分红: '截至回测末期向前连续存在有效分红的最长年度数量。',
-  最新股息率: '最新 TTM 股息率，主要来自 Tushare daily_basic 的 dv_ttm。',
-  PB: '最新市净率，来自 Tushare daily_basic。',
+  最新股息率: '最近滚动口径股息率，用于观察分红相对股价的回报水平。',
+  PB: '最新市净率，用于观察股价相对每股净资产的估值水平。',
   数据质量: '标记该股票在回测期内是否有有效实施分红；无分红会标为 NO_DIVIDEND。',
   问题: '记录影响回测可解释性的原因，例如回测期内无有效实施分红。',
   明细: '打开该股票的年度分红再投过程、持仓市值和年度收益明细。',
@@ -105,10 +105,10 @@ const renderHeaderTitle = (title: string) => {
   const help = DIVIDEND_HEADER_HELP[title];
   return (
     <span className="help-title table-header-nowrap">
-      <span>{title}</span>
+      <span className="help-title-text">{title}</span>
       {help ? (
         <Tooltip title={help}>
-          <span onClick={(event) => event.stopPropagation()}>
+          <span className="help-title-icon-hitbox" onClick={(event) => event.stopPropagation()}>
             <CircleHelp size={13} className="help-title-icon" />
           </span>
         </Tooltip>
@@ -200,7 +200,7 @@ function DividendReinvestmentPage() {
         title: renderHeaderTitle('PE_TTM'),
         key: 'latest_pe_ttm',
         dataIndex: 'latest_pe_ttm',
-        width: 100,
+        width: 112,
         align: 'right',
         sorter: true,
         sortOrder: sortBy === 'latest_pe_ttm' ? (sortOrder === 'asc' ? 'ascend' : 'descend') : null,
@@ -429,12 +429,13 @@ function DividendReinvestmentPage() {
           <Tag color="blue">{summaries.data?.total ?? 0} 条</Tag>
         </div>
         <Table<DividendReinvestmentSummaryItem>
+          className="dividend-summary-table"
           rowKey={(record) => `${record.run_id}-${record.ts_code}`}
           loading={summaries.isLoading || summaries.isFetching}
           dataSource={summaries.data?.items || []}
           columns={columns}
           locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} /> }}
-          scroll={{ x: 2070 }}
+          scroll={{ x: 2082 }}
           onChange={handleTableChange}
           pagination={{
             current: page,
@@ -491,7 +492,7 @@ function DividendReinvestmentPage() {
             默认起点为 2016-01-01，初始投入金额 100000 元；起始买入价取起点之后第一个可用交易日收盘价，持股允许小数股。
           </Typography.Paragraph>
           <Typography.Paragraph>
-            现金分红默认使用 Tushare `cash_div_tax`，再投入价格取除权除息日收盘价；若当天无行情，取之后 10 个交易日内第一个可用收盘价。
+            现金分红默认使用税前现金分红口径，再投入价格取除权除息日收盘价；若当天无行情，取之后 10 个交易日内第一个可用收盘价。
           </Typography.Paragraph>
           <Typography.Paragraph>
             期末市值 = 当前持股数 * 年末或最新收盘价；累计收益率 = (期末市值 - 初始投入金额) / 初始投入金额 * 100%。
