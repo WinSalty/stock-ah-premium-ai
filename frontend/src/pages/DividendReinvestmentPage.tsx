@@ -17,7 +17,7 @@ import type { TableColumnsType, TableProps } from 'antd';
 import ReactECharts from 'echarts-for-react';
 import { saveAs } from 'file-saver';
 import { CircleHelp, Download, Eye, Info, RotateCw, Search, X } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import PageHeader from '../components/PageHeader';
 import OverflowCell from '../components/OverflowCell';
@@ -45,6 +45,7 @@ interface FilterValues {
 }
 
 const DEFAULT_PAGE_SIZE = 30;
+const AUTO_FILTER_DEBOUNCE_MS = 500;
 type DividendSortField =
   | 'annualized_return_pct'
   | 'ten_year_avg_annualized_return_pct'
@@ -118,6 +119,8 @@ const renderHeaderTitle = (title: string) => {
 function DividendReinvestmentPage() {
   const [form] = Form.useForm<FilterValues>();
   const [filters, setFilters] = useState<FilterValues>({});
+  const autoFilterTimerRef = useRef<number | null>(null);
+  const latestFilterKeyRef = useRef('{}');
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
   const [detailStock, setDetailStock] = useState<DividendReinvestmentSummaryItem | null>(null);
@@ -260,17 +263,55 @@ function DividendReinvestmentPage() {
     [sortBy, sortOrder]
   );
 
+  useEffect(
+    () => () => {
+      if (autoFilterTimerRef.current !== null) {
+        window.clearTimeout(autoFilterTimerRef.current);
+      }
+    },
+    []
+  );
+
+  // 筛选条件统一清洗和去重，自动筛选、手动筛选、排序和导出都走同一口径。
+  const updateFiltersFromValues = (values: FilterValues) => {
+    const nextFilters = normalizeFilterValues(values);
+    const nextFilterKey = JSON.stringify(nextFilters);
+    if (latestFilterKeyRef.current !== nextFilterKey) {
+      latestFilterKeyRef.current = nextFilterKey;
+      setFilters(nextFilters);
+    }
+    setPage(1);
+    return nextFilters;
+  };
+
+  // 用户连续输入时只在停顿后触发一次榜单请求，避免关键词逐字输入造成接口抖动。
+  const scheduleAutoFilter = () => {
+    if (autoFilterTimerRef.current !== null) {
+      window.clearTimeout(autoFilterTimerRef.current);
+    }
+    autoFilterTimerRef.current = window.setTimeout(() => {
+      autoFilterTimerRef.current = null;
+      updateFiltersFromValues(form.getFieldsValue());
+    }, AUTO_FILTER_DEBOUNCE_MS);
+  };
+
   // 提交筛选条件时剔除空值，避免空字符串误伤后端的精确枚举和数值条件。
   const applyFilters = (values: FilterValues) => {
-    setFilters(normalizeFilterValues(values));
-    setPage(1);
+    if (autoFilterTimerRef.current !== null) {
+      window.clearTimeout(autoFilterTimerRef.current);
+      autoFilterTimerRef.current = null;
+    }
+    updateFiltersFromValues(values);
   };
 
   // 重置筛选条件后回到第一页，保证用户看到的是最新批次的完整榜单起点。
   const resetFilters = () => {
+    if (autoFilterTimerRef.current !== null) {
+      window.clearTimeout(autoFilterTimerRef.current);
+      autoFilterTimerRef.current = null;
+    }
     form.resetFields();
-    setFilters({});
-    setPage(1);
+    updateFiltersFromValues({});
   };
 
   // 页面只展示最新成功批次，刷新时重新读取榜单即可让后端自动切到最新结果。
@@ -280,9 +321,11 @@ function DividendReinvestmentPage() {
 
   // 导出前读取表单当前值，保证用户刚改筛选条件后直接点导出也能使用最新条件。
   const exportCurrentFilters = async () => {
-    const currentFilters = normalizeFilterValues(form.getFieldsValue());
-    setFilters(currentFilters);
-    setPage(1);
+    if (autoFilterTimerRef.current !== null) {
+      window.clearTimeout(autoFilterTimerRef.current);
+      autoFilterTimerRef.current = null;
+    }
+    const currentFilters = updateFiltersFromValues(form.getFieldsValue());
     setExporting(true);
     try {
       const result = await exportDividendReinvestmentSummaries({
@@ -307,8 +350,7 @@ function DividendReinvestmentPage() {
     sorter,
     extra
   ) => {
-    const currentFilters = normalizeFilterValues(form.getFieldsValue());
-    setFilters(currentFilters);
+    updateFiltersFromValues(form.getFieldsValue());
     if (extra.action === 'paginate') {
       setPage(pagination.current || 1);
       setPageSize(pagination.pageSize || DEFAULT_PAGE_SIZE);
@@ -336,7 +378,7 @@ function DividendReinvestmentPage() {
       />
 
       <section className="panel">
-        <Form form={form} layout="vertical" onFinish={applyFilters}>
+        <Form form={form} layout="vertical" onFinish={applyFilters} onValuesChange={scheduleAutoFilter}>
           <div className="dividend-filter-grid">
             <Form.Item label="关键词" name="keyword">
               <Input allowClear placeholder="代码 / 名称 / 行业" />
