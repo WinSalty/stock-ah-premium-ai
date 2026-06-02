@@ -292,17 +292,7 @@ function DividendReinvestmentPage() {
       <PageHeader
         title="分红再投筛选"
         extra={
-          <Space>
-            <Button
-              title="导出 Excel"
-              icon={<Download size={16} />}
-              onClick={() => void exportCurrentFilters()}
-              loading={exporting}
-            >
-              导出 Excel
-            </Button>
-            <Button title="刷新" icon={<RotateCw size={16} />} onClick={refreshAll} loading={summaries.isFetching} />
-          </Space>
+          <Button title="刷新" icon={<RotateCw size={16} />} onClick={refreshAll} loading={summaries.isFetching} />
         }
       />
 
@@ -354,6 +344,14 @@ function DividendReinvestmentPage() {
                 </Button>
                 <Button icon={<X size={16} />} onClick={resetFilters}>
                   清空
+                </Button>
+                <Button
+                  title="导出 Excel"
+                  icon={<Download size={16} />}
+                  onClick={() => void exportCurrentFilters()}
+                  loading={exporting}
+                >
+                  导出 Excel
                 </Button>
               </Space>
             </Form.Item>
