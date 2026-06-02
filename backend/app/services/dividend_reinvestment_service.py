@@ -5,7 +5,10 @@ from bisect import bisect_left, bisect_right
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
+from io import BytesIO
 from typing import Any
+from xml.sax.saxutils import escape
+from zipfile import ZIP_DEFLATED, ZipFile
 
 from sqlalchemy import asc, desc, func, or_, select
 from sqlalchemy.orm import Session
@@ -15,11 +18,13 @@ from app.db.models.market import (
     ADailyBasic,
     ADailyQuote,
     ADividend,
+    AFinancialIndicator,
     AStockBasic,
     ATradeCalendar,
     DividendReinvestmentBacktestRun,
     DividendReinvestmentBacktestSummary,
     DividendReinvestmentBacktestYearly,
+    StockSelectionFactorSnapshot,
 )
 from app.db.models.sync import SyncCheckpoint
 from app.services.date_utils import format_tushare_date, parse_tushare_date
@@ -32,6 +37,49 @@ DEFAULT_BACKTEST_START_DATE = date(2016, 1, 1)
 DEFAULT_INITIAL_AMOUNT = Decimal("100000")
 MAX_REINVEST_PRICE_LOOKAHEAD_DAYS = 10
 RESULT_UPSERT_CHUNK_SIZE = 500
+TEN_YEAR_AVG_WINDOW = 10
+
+SUMMARY_EXPORT_COLUMNS = [
+    ("ts_code", "代码"),
+    ("name", "名称"),
+    ("industry", "行业"),
+    ("annualized_return_pct", "年化收益率"),
+    ("ten_year_avg_annualized_return_pct", "近十年平均年化收益率"),
+    ("total_return_pct", "累计收益率"),
+    ("final_market_value", "期末市值"),
+    ("total_cash_dividend", "累计分红"),
+    ("dividend_year_count", "分红年数"),
+    ("consecutive_dividend_years", "连续分红年数"),
+    ("latest_dividend_yield_ttm", "最新股息率TTM"),
+    ("latest_pe", "最新PE"),
+    ("latest_pe_ttm", "最新PE_TTM"),
+    ("latest_pb", "最新PB"),
+    ("latest_roe", "最新ROE"),
+    ("rank_score", "综合排序分"),
+    ("data_quality", "数据质量"),
+    ("data_issue", "数据问题"),
+]
+YEARLY_EXPORT_COLUMNS = [
+    ("ts_code", "代码"),
+    ("name", "名称"),
+    ("industry", "行业"),
+    ("year", "年份"),
+    ("year_end_trade_date", "年度交易日"),
+    ("year_end_price", "年末股价"),
+    ("cash_div_per_share", "每股现金分红"),
+    ("cash_div_amount", "现金分红金额"),
+    ("stock_div_per_share", "每股送转"),
+    ("stock_div_shares", "送转股数"),
+    ("reinvest_price_avg", "再投均价"),
+    ("reinvested_shares", "再投股数"),
+    ("holding_shares", "持仓股数"),
+    ("market_value", "市值"),
+    ("return_amount", "累计收益金额"),
+    ("return_pct", "累计收益率"),
+    ("annualized_return_pct", "年度年化收益率"),
+    ("dividend_event_count", "分红事件数"),
+    ("note", "备注"),
+]
 
 
 @dataclass(frozen=True)
@@ -201,15 +249,20 @@ class DividendReinvestmentDataLandingService:
         try:
             stocks = self._candidate_stocks(params)
             latest_basic = self._latest_daily_basic_map()
+            latest_factors = self._latest_selection_factor_map()
+            latest_financials = self._latest_financial_indicator_map()
             summary_rows: list[dict[str, Any]] = []
             yearly_rows: list[dict[str, Any]] = []
             for stock in stocks:
-                # 每只股票独立读取日线和分红，避免一次性把千万级日线全部装入内存。
+                # 每只股票独立读取日线和分红，估值与质量因子使用预加载快照；
+                # 这样计算阶段不会反复访问外部接口，也避免一次性把千万级日线装入内存。
                 summary, yearly = self._calculate_stock(
                     stock,
                     params,
                     run.id,
                     latest_basic.get(stock.ts_code),
+                    latest_factors.get(stock.ts_code),
+                    latest_financials.get(stock.ts_code),
                 )
                 if summary:
                     summary_rows.append(summary)
@@ -427,12 +480,52 @@ class DividendReinvestmentDataLandingService:
             latest.setdefault(row.ts_code, row)
         return latest
 
+    def _latest_selection_factor_map(self) -> dict[str, StockSelectionFactorSnapshot]:
+        """按股票读取最新选股因子快照，复用项目既有 PE/ROE 质量因子口径。
+
+        创建日期：2026-06-02
+        author: sunshengxian
+        """
+
+        rows = self.db.scalars(
+            select(StockSelectionFactorSnapshot).order_by(
+                desc(StockSelectionFactorSnapshot.factor_date),
+                desc(StockSelectionFactorSnapshot.id),
+            )
+        ).all()
+        latest: dict[str, StockSelectionFactorSnapshot] = {}
+        for row in rows:
+            # 因子快照按日期倒序读取，同一股票只取第一条，保证后续回测计算不会混用旧 ROE。
+            latest.setdefault(row.ts_code, row)
+        return latest
+
+    def _latest_financial_indicator_map(self) -> dict[str, AFinancialIndicator]:
+        """按股票读取最新 A 股财务指标，作为选股因子快照缺失时的 ROE 兜底来源。
+
+        创建日期：2026-06-02
+        author: sunshengxian
+        """
+
+        rows = self.db.scalars(
+            select(AFinancialIndicator).order_by(
+                desc(AFinancialIndicator.end_date),
+                desc(AFinancialIndicator.id),
+            )
+        ).all()
+        latest: dict[str, AFinancialIndicator] = {}
+        for row in rows:
+            # 财务指标可能由 LLM 单股研究链路按需补齐；倒序去重可以兼容不完整股票池。
+            latest.setdefault(row.ts_code, row)
+        return latest
+
     def _calculate_stock(
         self,
         stock: AStockBasic,
         params: DividendReinvestmentSyncParams,
         run_id: int,
         latest_basic: ADailyBasic | None,
+        latest_factor: StockSelectionFactorSnapshot | None,
+        latest_financial: AFinancialIndicator | None,
     ) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
         quotes = self._stock_quotes(stock.ts_code, params.start_date, params.end_date)
         if not quotes:
@@ -488,6 +581,18 @@ class DividendReinvestmentDataLandingService:
             start_quote.trade_date,
             final_quote.trade_date,
         )
+        ten_year_avg_annualized = self._ten_year_avg_annualized_return(yearly_rows)
+        latest_pe = latest_basic.pe if latest_basic else None
+        latest_pe_ttm = (
+            latest_basic.pe_ttm
+            if latest_basic and latest_basic.pe_ttm is not None
+            else latest_factor.pe_ttm if latest_factor else None
+        )
+        latest_roe = (
+            latest_factor.roe
+            if latest_factor and latest_factor.roe is not None
+            else latest_financial.roe if latest_financial else None
+        )
         data_quality = "COMPLETE" if event_count else "NO_DIVIDEND"
         summary = {
             "run_id": run_id,
@@ -513,11 +618,21 @@ class DividendReinvestmentDataLandingService:
             "total_return_amount": quantize_decimal(total_return_amount, "0.000001"),
             "total_return_pct": quantize_decimal(total_return_pct),
             "annualized_return_pct": annualized,
+            "ten_year_avg_annualized_return_pct": ten_year_avg_annualized,
             "latest_dividend_yield_ttm": latest_basic.dv_ttm if latest_basic else None,
             "latest_total_mv": latest_basic.total_mv if latest_basic else None,
-            "latest_pe_ttm": latest_basic.pe_ttm if latest_basic else None,
+            "latest_pe": latest_pe,
+            "latest_pe_ttm": latest_pe_ttm,
             "latest_pb": latest_basic.pb if latest_basic else None,
-            "rank_score": self._rank_score(annualized, len(dividend_years), latest_basic),
+            "latest_roe": latest_roe,
+            "rank_score": self._rank_score(
+                annualized,
+                ten_year_avg_annualized,
+                len(dividend_years),
+                latest_basic,
+                latest_pe,
+                latest_roe,
+            ),
             "data_quality": data_quality,
             "data_issue": None if event_count else "回测期内无有效实施分红",
         }
@@ -677,17 +792,56 @@ class DividendReinvestmentDataLandingService:
         proc = (dividend.div_proc or "").strip()
         return not proc or "实施" in proc
 
+    def _ten_year_avg_annualized_return(
+        self, yearly_rows: list[dict[str, Any]]
+    ) -> Decimal | None:
+        """计算最近最多十个年度明细的平均年化收益率。
+
+        创建日期：2026-06-02
+        author: sunshengxian
+        """
+
+        annualized_values = [
+            row["annualized_return_pct"]
+            for row in sorted(yearly_rows, key=lambda item: item["year"], reverse=True)
+            if row.get("annualized_return_pct") is not None
+        ][:TEN_YEAR_AVG_WINDOW]
+        if not annualized_values:
+            return None
+        # 年度明细中已按“从买入日至当年末”计算平均年化收益率；摘要聚合只做最近十年算术平均，
+        # 保证导出年度明细后可以逐行复核，不再引入另一套难以解释的收益口径。
+        return quantize_decimal(
+            sum(annualized_values, Decimal("0")) / Decimal(len(annualized_values))
+        )
+
     def _rank_score(
         self,
         annualized_return_pct: Decimal | None,
+        ten_year_avg_annualized_return_pct: Decimal | None,
         dividend_year_count: int,
         latest_basic: ADailyBasic | None,
+        latest_pe: Decimal | None,
+        latest_roe: Decimal | None,
     ) -> Decimal | None:
         if annualized_return_pct is None:
             return None
+        # 综合分服务默认排序兜底：长期收益是主因子，分红连续性、股息率、ROE 和低 PE 只做温和加分，
+        # 避免单一估值或短期收益异常把榜单推向不可解释的结果。
         score = annualized_return_pct + Decimal(dividend_year_count)
+        if ten_year_avg_annualized_return_pct is not None:
+            score += ten_year_avg_annualized_return_pct * Decimal("0.5")
         if latest_basic and latest_basic.dv_ttm:
             score += latest_basic.dv_ttm
+        if latest_roe is not None:
+            if latest_roe >= Decimal("15"):
+                score += Decimal("8")
+            elif latest_roe >= Decimal("10"):
+                score += Decimal("4")
+        if latest_pe is not None:
+            if latest_pe <= Decimal("10"):
+                score += Decimal("6")
+            elif latest_pe <= Decimal("15"):
+                score += Decimal("3")
         return quantize_decimal(score)
 
     def _annualized_return(
@@ -969,10 +1123,13 @@ class DividendReinvestmentDataLandingService:
         industry: str | None,
         data_quality: str | None,
         min_annualized_return_pct: Decimal | None,
+        min_ten_year_avg_annualized_return_pct: Decimal | None,
         min_dividend_year_count: int | None,
         min_consecutive_dividend_years: int | None,
         min_latest_dividend_yield_ttm: Decimal | None,
+        max_latest_pe: Decimal | None,
         max_latest_pe_ttm: Decimal | None,
+        min_latest_roe: Decimal | None,
         sort_by: str,
         sort_order: str,
         page: int,
@@ -1012,6 +1169,11 @@ class DividendReinvestmentDataLandingService:
                 DividendReinvestmentBacktestSummary.annualized_return_pct
                 >= min_annualized_return_pct
             )
+        if min_ten_year_avg_annualized_return_pct is not None:
+            filters.append(
+                DividendReinvestmentBacktestSummary.ten_year_avg_annualized_return_pct
+                >= min_ten_year_avg_annualized_return_pct
+            )
         if min_dividend_year_count is not None:
             filters.append(
                 DividendReinvestmentBacktestSummary.dividend_year_count
@@ -1027,17 +1189,27 @@ class DividendReinvestmentDataLandingService:
                 DividendReinvestmentBacktestSummary.latest_dividend_yield_ttm
                 >= min_latest_dividend_yield_ttm
             )
+        if max_latest_pe is not None:
+            filters.append(DividendReinvestmentBacktestSummary.latest_pe <= max_latest_pe)
         if max_latest_pe_ttm is not None:
             filters.append(
                 DividendReinvestmentBacktestSummary.latest_pe_ttm <= max_latest_pe_ttm
             )
+        if min_latest_roe is not None:
+            filters.append(DividendReinvestmentBacktestSummary.latest_roe >= min_latest_roe)
         sort_columns = {
             "annualized_return_pct": DividendReinvestmentBacktestSummary.annualized_return_pct,
+            "ten_year_avg_annualized_return_pct": (
+                DividendReinvestmentBacktestSummary.ten_year_avg_annualized_return_pct
+            ),
             "total_return_pct": DividendReinvestmentBacktestSummary.total_return_pct,
             "total_cash_dividend": DividendReinvestmentBacktestSummary.total_cash_dividend,
             "latest_dividend_yield_ttm": (
                 DividendReinvestmentBacktestSummary.latest_dividend_yield_ttm
             ),
+            "latest_pe": DividendReinvestmentBacktestSummary.latest_pe,
+            "latest_pe_ttm": DividendReinvestmentBacktestSummary.latest_pe_ttm,
+            "latest_roe": DividendReinvestmentBacktestSummary.latest_roe,
         }
         # 前端默认关注累计分红，非法排序字段兜底回累计分红，避免旧链接或手写参数回到过时口径。
         sort_column = sort_columns.get(sort_by) or sort_columns["total_cash_dividend"]
@@ -1061,6 +1233,236 @@ class DividendReinvestmentDataLandingService:
             ).all()
         )
         return target_run_id, total, rows
+
+    def export_summaries_xlsx(
+        self,
+        run_id: int | None,
+        keyword: str | None,
+        industry: str | None,
+        data_quality: str | None,
+        min_annualized_return_pct: Decimal | None,
+        min_ten_year_avg_annualized_return_pct: Decimal | None,
+        min_dividend_year_count: int | None,
+        min_consecutive_dividend_years: int | None,
+        min_latest_dividend_yield_ttm: Decimal | None,
+        max_latest_pe: Decimal | None,
+        max_latest_pe_ttm: Decimal | None,
+        min_latest_roe: Decimal | None,
+        sort_by: str,
+        sort_order: str,
+    ) -> tuple[int | None, bytes]:
+        """导出筛选结果和年度明细 Excel。
+
+        创建日期：2026-06-02
+        author: sunshengxian
+        """
+
+        target_run_id, _total, summaries = self.query_summaries(
+            run_id=run_id,
+            keyword=keyword,
+            industry=industry,
+            data_quality=data_quality,
+            min_annualized_return_pct=min_annualized_return_pct,
+            min_ten_year_avg_annualized_return_pct=min_ten_year_avg_annualized_return_pct,
+            min_dividend_year_count=min_dividend_year_count,
+            min_consecutive_dividend_years=min_consecutive_dividend_years,
+            min_latest_dividend_yield_ttm=min_latest_dividend_yield_ttm,
+            max_latest_pe=max_latest_pe,
+            max_latest_pe_ttm=max_latest_pe_ttm,
+            min_latest_roe=min_latest_roe,
+            sort_by=sort_by,
+            sort_order=sort_order,
+            page=1,
+            page_size=1_000_000,
+        )
+        summary_rows = [
+            [self._export_value(summary, key) for key, _label in SUMMARY_EXPORT_COLUMNS]
+            for summary in summaries
+        ]
+        yearly_rows = self._export_yearly_rows(target_run_id, summaries)
+        workbook = self._build_xlsx(
+            sheets=[
+                (
+                    "筛选结果",
+                    [label for _key, label in SUMMARY_EXPORT_COLUMNS],
+                    summary_rows,
+                ),
+                (
+                    "年度明细",
+                    [label for _key, label in YEARLY_EXPORT_COLUMNS],
+                    yearly_rows,
+                ),
+            ]
+        )
+        return target_run_id, workbook
+
+    def _export_yearly_rows(
+        self,
+        run_id: int | None,
+        summaries: list[DividendReinvestmentBacktestSummary],
+    ) -> list[list[Any]]:
+        """按榜单顺序拼接年度明细，确保同一股票的导出行天然聚在一起。
+
+        创建日期：2026-06-02
+        author: sunshengxian
+        """
+
+        if run_id is None or not summaries:
+            return []
+        summary_by_code = {summary.ts_code: summary for summary in summaries}
+        order_by_code = {summary.ts_code: index for index, summary in enumerate(summaries)}
+        yearly_rows = list(
+            self.db.scalars(
+                select(DividendReinvestmentBacktestYearly).where(
+                    DividendReinvestmentBacktestYearly.run_id == run_id,
+                    DividendReinvestmentBacktestYearly.ts_code.in_(order_by_code),
+                )
+            ).all()
+        )
+        yearly_rows.sort(key=lambda row: (order_by_code[row.ts_code], row.year))
+        export_rows: list[list[Any]] = []
+        for yearly in yearly_rows:
+            summary = summary_by_code[yearly.ts_code]
+            row_context = {
+                "ts_code": yearly.ts_code,
+                "name": summary.name,
+                "industry": summary.industry,
+                **yearly.__dict__,
+            }
+            export_rows.append(
+                [self._export_value(row_context, key) for key, _label in YEARLY_EXPORT_COLUMNS]
+            )
+        return export_rows
+
+    def _export_value(self, source: Any, key: str) -> Any:
+        """统一读取 ORM 或字典字段，屏蔽 SQLAlchemy 内部状态对导出的干扰。
+
+        创建日期：2026-06-02
+        author: sunshengxian
+        """
+
+        if isinstance(source, dict):
+            return source.get(key)
+        return getattr(source, key, None)
+
+    def _build_xlsx(self, sheets: list[tuple[str, list[str], list[list[Any]]]]) -> bytes:
+        """使用标准库生成最小 XLSX，避免为筛选导出额外引入运行时依赖。
+
+        创建日期：2026-06-02
+        author: sunshengxian
+        """
+
+        buffer = BytesIO()
+        with ZipFile(buffer, "w", ZIP_DEFLATED) as archive:
+            archive.writestr(
+                "[Content_Types].xml",
+                self._xlsx_content_types(len(sheets)),
+            )
+            archive.writestr("_rels/.rels", self._xlsx_root_rels())
+            archive.writestr("xl/workbook.xml", self._xlsx_workbook(sheets))
+            archive.writestr("xl/_rels/workbook.xml.rels", self._xlsx_workbook_rels(len(sheets)))
+            for index, (sheet_name, headers, rows) in enumerate(sheets, start=1):
+                archive.writestr(
+                    f"xl/worksheets/sheet{index}.xml",
+                    self._xlsx_sheet(sheet_name, headers, rows),
+                )
+        return buffer.getvalue()
+
+    def _xlsx_content_types(self, sheet_count: int) -> str:
+        worksheet_overrides = "".join(
+            (
+                f'<Override PartName="/xl/worksheets/sheet{index}.xml" '
+                'ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>'
+            )
+            for index in range(1, sheet_count + 1)
+        )
+        return (
+            '<?xml version="1.0" encoding="UTF-8"?>'
+            '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+            '<Default Extension="rels" '
+            'ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+            '<Default Extension="xml" ContentType="application/xml"/>'
+            '<Override PartName="/xl/workbook.xml" '
+            'ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>'
+            f"{worksheet_overrides}</Types>"
+        )
+
+    def _xlsx_root_rels(self) -> str:
+        return (
+            '<?xml version="1.0" encoding="UTF-8"?>'
+            '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+            '<Relationship Id="rId1" '
+            'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/'
+            'officeDocument" '
+            'Target="xl/workbook.xml"/>'
+            "</Relationships>"
+        )
+
+    def _xlsx_workbook(self, sheets: list[tuple[str, list[str], list[list[Any]]]]) -> str:
+        sheet_nodes = "".join(
+            (
+                f'<sheet name="{escape(sheet_name)}" sheetId="{index}" '
+                f'r:id="rId{index}"/>'
+            )
+            for index, (sheet_name, _headers, _rows) in enumerate(sheets, start=1)
+        )
+        return (
+            '<?xml version="1.0" encoding="UTF-8"?>'
+            '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" '
+            'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+            f"<sheets>{sheet_nodes}</sheets></workbook>"
+        )
+
+    def _xlsx_workbook_rels(self, sheet_count: int) -> str:
+        rel_nodes = "".join(
+            (
+                f'<Relationship Id="rId{index}" '
+                'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/'
+                'worksheet" '
+                f'Target="worksheets/sheet{index}.xml"/>'
+            )
+            for index in range(1, sheet_count + 1)
+        )
+        return (
+            '<?xml version="1.0" encoding="UTF-8"?>'
+            '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+            f"{rel_nodes}</Relationships>"
+        )
+
+    def _xlsx_sheet(self, _sheet_name: str, headers: list[str], rows: list[list[Any]]) -> str:
+        all_rows = [headers, *rows]
+        row_nodes = []
+        for row_index, row in enumerate(all_rows, start=1):
+            cells = "".join(
+                self._xlsx_cell(self._xlsx_column_name(column_index), row_index, value)
+                for column_index, value in enumerate(row, start=1)
+            )
+            row_nodes.append(f'<row r="{row_index}">{cells}</row>')
+        return (
+            '<?xml version="1.0" encoding="UTF-8"?>'
+            '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+            f"<sheetData>{''.join(row_nodes)}</sheetData></worksheet>"
+        )
+
+    def _xlsx_cell(self, column_name: str, row_index: int, value: Any) -> str:
+        cell_ref = f"{column_name}{row_index}"
+        if value is None:
+            return f'<c r="{cell_ref}"/>'
+        if isinstance(value, Decimal):
+            return f'<c r="{cell_ref}"><v>{value}</v></c>'
+        if isinstance(value, int | float) and not isinstance(value, bool):
+            return f'<c r="{cell_ref}"><v>{value}</v></c>'
+        if isinstance(value, date | datetime):
+            value = value.isoformat()
+        text = escape(str(value), {'"': "&quot;"})
+        return f'<c r="{cell_ref}" t="inlineStr"><is><t>{text}</t></is></c>'
+
+    def _xlsx_column_name(self, index: int) -> str:
+        name = ""
+        while index:
+            index, remainder = divmod(index - 1, 26)
+            name = chr(65 + remainder) + name
+        return name
 
     def yearly_rows(
         self,

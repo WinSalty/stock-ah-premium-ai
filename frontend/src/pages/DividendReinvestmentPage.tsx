@@ -10,16 +10,19 @@ import {
   Space,
   Table,
   Tag,
-  Typography
+  Typography,
+  message
 } from 'antd';
 import type { TableColumnsType, TableProps } from 'antd';
 import ReactECharts from 'echarts-for-react';
-import { Eye, Info, RotateCw, Search, X } from 'lucide-react';
+import { saveAs } from 'file-saver';
+import { Download, Eye, Info, RotateCw, Search, X } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import PageHeader from '../components/PageHeader';
 import OverflowCell from '../components/OverflowCell';
 import {
+  exportDividendReinvestmentSummaries,
   fetchDividendReinvestmentRuns,
   fetchDividendReinvestmentSummaries,
   fetchDividendReinvestmentYearly
@@ -34,23 +37,34 @@ interface FilterValues {
   run_id?: number;
   keyword?: string;
   min_annualized_return_pct?: number;
+  min_ten_year_avg_annualized_return_pct?: number;
   min_dividend_year_count?: number;
   min_consecutive_dividend_years?: number;
   min_latest_dividend_yield_ttm?: number;
+  max_latest_pe?: number;
   max_latest_pe_ttm?: number;
+  min_latest_roe?: number;
 }
 
 const DEFAULT_PAGE_SIZE = 30;
 type DividendSortField =
   | 'annualized_return_pct'
+  | 'ten_year_avg_annualized_return_pct'
   | 'total_return_pct'
   | 'total_cash_dividend'
-  | 'latest_dividend_yield_ttm';
+  | 'latest_dividend_yield_ttm'
+  | 'latest_pe'
+  | 'latest_pe_ttm'
+  | 'latest_roe';
 const DIVIDEND_SORT_FIELDS: DividendSortField[] = [
   'annualized_return_pct',
+  'ten_year_avg_annualized_return_pct',
   'total_return_pct',
   'total_cash_dividend',
-  'latest_dividend_yield_ttm'
+  'latest_dividend_yield_ttm',
+  'latest_pe',
+  'latest_pe_ttm',
+  'latest_roe'
 ];
 
 // 表头标题和排序图标会共享紧凑空间，收益率类标题禁止换行，避免中文被挤成两行。
@@ -64,6 +78,7 @@ function DividendReinvestmentPage() {
   const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
   const [detailStock, setDetailStock] = useState<DividendReinvestmentSummaryItem | null>(null);
   const [formulaOpen, setFormulaOpen] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [sortBy, setSortBy] = useState<DividendSortField>('total_cash_dividend');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
   const runs = useQuery({
@@ -110,6 +125,21 @@ function DividendReinvestmentPage() {
         render: renderPct
       },
       {
+        title: renderHeaderTitle('十年均年化'),
+        key: 'ten_year_avg_annualized_return_pct',
+        dataIndex: 'ten_year_avg_annualized_return_pct',
+        width: 126,
+        align: 'right',
+        sorter: true,
+        sortOrder:
+          sortBy === 'ten_year_avg_annualized_return_pct'
+            ? sortOrder === 'asc'
+              ? 'ascend'
+              : 'descend'
+            : null,
+        render: renderPct
+      },
+      {
         title: renderHeaderTitle('累计收益率'),
         key: 'total_return_pct',
         dataIndex: 'total_return_pct',
@@ -142,8 +172,37 @@ function DividendReinvestmentPage() {
         sortOrder: sortBy === 'latest_dividend_yield_ttm' ? (sortOrder === 'asc' ? 'ascend' : 'descend') : null,
         render: renderPct
       },
-      { title: 'PE_TTM', dataIndex: 'latest_pe_ttm', width: 100, align: 'right', render: renderNumber },
+      {
+        title: 'PE',
+        key: 'latest_pe',
+        dataIndex: 'latest_pe',
+        width: 90,
+        align: 'right',
+        sorter: true,
+        sortOrder: sortBy === 'latest_pe' ? (sortOrder === 'asc' ? 'ascend' : 'descend') : null,
+        render: renderNumber
+      },
+      {
+        title: 'PE_TTM',
+        key: 'latest_pe_ttm',
+        dataIndex: 'latest_pe_ttm',
+        width: 100,
+        align: 'right',
+        sorter: true,
+        sortOrder: sortBy === 'latest_pe_ttm' ? (sortOrder === 'asc' ? 'ascend' : 'descend') : null,
+        render: renderNumber
+      },
       { title: 'PB', dataIndex: 'latest_pb', width: 90, align: 'right', render: renderNumber },
+      {
+        title: 'ROE',
+        key: 'latest_roe',
+        dataIndex: 'latest_roe',
+        width: 92,
+        align: 'right',
+        sorter: true,
+        sortOrder: sortBy === 'latest_roe' ? (sortOrder === 'asc' ? 'ascend' : 'descend') : null,
+        render: renderPct
+      },
       { title: '数据质量', dataIndex: 'data_quality', width: 110, render: renderQuality },
       { title: '问题', dataIndex: 'data_issue', width: 220, render: renderText },
       {
@@ -180,6 +239,28 @@ function DividendReinvestmentPage() {
     summaries.refetch();
   };
 
+  // 导出前读取表单当前值，保证用户刚改筛选条件后直接点导出也能使用最新条件。
+  const exportCurrentFilters = async () => {
+    const currentFilters = normalizeFilterValues(form.getFieldsValue());
+    setFilters(currentFilters);
+    setPage(1);
+    setExporting(true);
+    try {
+      const result = await exportDividendReinvestmentSummaries({
+        ...currentFilters,
+        sort_by: sortBy,
+        sort_order: sortOrder,
+        page: 1,
+        page_size: pageSize
+      });
+      saveAs(result.blob, result.filename);
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '导出失败');
+    } finally {
+      setExporting(false);
+    }
+  };
+
   // 表格分页或排序前读取当前筛选表单，避免用户改了筛选条件后直接点排序时仍沿用旧请求。
   const handleTableChange: TableProps<DividendReinvestmentSummaryItem>['onChange'] = (
     pagination,
@@ -211,7 +292,17 @@ function DividendReinvestmentPage() {
       <PageHeader
         title="分红再投筛选"
         extra={
-          <Button title="刷新" icon={<RotateCw size={16} />} onClick={refreshAll} loading={summaries.isFetching} />
+          <Space>
+            <Button
+              title="导出 Excel"
+              icon={<Download size={16} />}
+              onClick={() => void exportCurrentFilters()}
+              loading={exporting}
+            >
+              导出 Excel
+            </Button>
+            <Button title="刷新" icon={<RotateCw size={16} />} onClick={refreshAll} loading={summaries.isFetching} />
+          </Space>
         }
       />
 
@@ -235,6 +326,9 @@ function DividendReinvestmentPage() {
             <Form.Item label="最低年化收益率" name="min_annualized_return_pct">
               <InputNumber className="full-width" precision={2} />
             </Form.Item>
+            <Form.Item label="最低十年均年化" name="min_ten_year_avg_annualized_return_pct">
+              <InputNumber className="full-width" precision={2} />
+            </Form.Item>
             <Form.Item label="最低分红年数" name="min_dividend_year_count">
               <InputNumber min={0} className="full-width" />
             </Form.Item>
@@ -244,8 +338,14 @@ function DividendReinvestmentPage() {
             <Form.Item label="最低股息率" name="min_latest_dividend_yield_ttm">
               <InputNumber min={0} precision={2} className="full-width" />
             </Form.Item>
+            <Form.Item label="最高 PE" name="max_latest_pe">
+              <InputNumber min={0} precision={2} className="full-width" />
+            </Form.Item>
             <Form.Item label="最高 PE_TTM" name="max_latest_pe_ttm">
               <InputNumber min={0} precision={2} className="full-width" />
+            </Form.Item>
+            <Form.Item label="最低 ROE" name="min_latest_roe">
+              <InputNumber precision={2} className="full-width" />
             </Form.Item>
             <Form.Item label=" ">
               <Space>
@@ -289,7 +389,7 @@ function DividendReinvestmentPage() {
           dataSource={summaries.data?.items || []}
           columns={columns}
           locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} /> }}
-          scroll={{ x: 1760 }}
+          scroll={{ x: 2070 }}
           onChange={handleTableChange}
           pagination={{
             current: page,

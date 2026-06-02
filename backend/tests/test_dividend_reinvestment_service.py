@@ -3,7 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
+from io import BytesIO
 from typing import Any
+from zipfile import ZipFile
 
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
@@ -13,6 +15,7 @@ from app.db.models.market import (
     DividendReinvestmentBacktestRun,
     DividendReinvestmentBacktestSummary,
     DividendReinvestmentBacktestYearly,
+    StockSelectionFactorSnapshot,
 )
 from app.db.models.sync import SyncCheckpoint
 from app.services.dividend_reinvestment_service import DividendReinvestmentDataLandingService
@@ -154,6 +157,7 @@ class FakeTushareClient:
                 "ts_code": "000001.SZ",
                 "trade_date": trade_date,
                 "close": Decimal("12"),
+                "pe": Decimal("7.5"),
                 "pe_ttm": Decimal("8"),
                 "pb": Decimal("1"),
                 "dv_ttm": Decimal("5"),
@@ -214,6 +218,18 @@ def test_dividend_reinvestment_sync_lands_data_and_calculates_backtest() -> None
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(engine)
     with Session(engine) as db:
+        db.add(
+            StockSelectionFactorSnapshot(
+                factor_date=date(2026, 1, 5),
+                ts_code="000001.SZ",
+                symbol="000001",
+                name="平安银行",
+                selection_tags="DIVIDEND,QUALITY",
+                roe=Decimal("16.5"),
+                pe_ttm=Decimal("8.1"),
+            )
+        )
+        db.commit()
         client = FakeTushareClient(calls=[])
         service = DividendReinvestmentDataLandingService(
             db,
@@ -242,6 +258,9 @@ def test_dividend_reinvestment_sync_lands_data_and_calculates_backtest() -> None
     assert summary.total_cash_dividend == Decimal("10000.000000")
     assert summary.final_market_value == Decimal("130000.000000")
     assert summary.total_return_pct == Decimal("30.00000000")
+    assert summary.ten_year_avg_annualized_return_pct is not None
+    assert summary.latest_pe == Decimal("7.50000000")
+    assert summary.latest_roe == Decimal("16.50000000")
     assert yearly.year == 2026
     assert yearly.reinvested_shares == Decimal("833.33333333")
     assert ("daily", {"trade_date": "20260102"}) in client.calls
@@ -357,10 +376,11 @@ def test_query_summaries_uses_latest_success_run_and_filters() -> None:
         )
         db.add(run)
         db.flush()
+        run_id = run.id
         db.add_all(
             [
                 DividendReinvestmentBacktestSummary(
-                    run_id=run.id,
+                    run_id=run_id,
                     ts_code="000001.SZ",
                     symbol="000001",
                     name="平安银行",
@@ -371,13 +391,16 @@ def test_query_summaries_uses_latest_success_run_and_filters() -> None:
                     consecutive_dividend_years=8,
                     total_return_pct=Decimal("30"),
                     annualized_return_pct=Decimal("12.5"),
+                    ten_year_avg_annualized_return_pct=Decimal("9.8"),
                     latest_dividend_yield_ttm=Decimal("4.2"),
+                    latest_pe=Decimal("7.8"),
                     latest_pe_ttm=Decimal("8.5"),
+                    latest_roe=Decimal("14.2"),
                     rank_score=Decimal("24.7"),
                     data_quality="COMPLETE",
                 ),
                 DividendReinvestmentBacktestSummary(
-                    run_id=run.id,
+                    run_id=run_id,
                     ts_code="000002.SZ",
                     symbol="000002",
                     name="万科A",
@@ -388,8 +411,11 @@ def test_query_summaries_uses_latest_success_run_and_filters() -> None:
                     consecutive_dividend_years=0,
                     total_return_pct=Decimal("3"),
                     annualized_return_pct=Decimal("1.2"),
+                    ten_year_avg_annualized_return_pct=Decimal("1.1"),
                     latest_dividend_yield_ttm=Decimal("0.5"),
+                    latest_pe=Decimal("35"),
                     latest_pe_ttm=Decimal("40"),
+                    latest_roe=Decimal("3.2"),
                     rank_score=Decimal("3.7"),
                     data_quality="COMPLETE",
                 ),
@@ -403,10 +429,13 @@ def test_query_summaries_uses_latest_success_run_and_filters() -> None:
             industry=None,
             data_quality="COMPLETE",
             min_annualized_return_pct=Decimal("10"),
+            min_ten_year_avg_annualized_return_pct=Decimal("8"),
             min_dividend_year_count=5,
             min_consecutive_dividend_years=5,
             min_latest_dividend_yield_ttm=Decimal("3"),
+            max_latest_pe=Decimal("10"),
             max_latest_pe_ttm=Decimal("12"),
+            min_latest_roe=Decimal("10"),
             sort_by="annualized_return_pct",
             sort_order="desc",
             page=1,
@@ -418,10 +447,13 @@ def test_query_summaries_uses_latest_success_run_and_filters() -> None:
             industry=None,
             data_quality="COMPLETE",
             min_annualized_return_pct=None,
+            min_ten_year_avg_annualized_return_pct=None,
             min_dividend_year_count=None,
             min_consecutive_dividend_years=None,
             min_latest_dividend_yield_ttm=None,
+            max_latest_pe=None,
             max_latest_pe_ttm=None,
+            min_latest_roe=None,
             sort_by="total_return_pct",
             sort_order="asc",
             page=1,
@@ -435,10 +467,13 @@ def test_query_summaries_uses_latest_success_run_and_filters() -> None:
             industry=None,
             data_quality="COMPLETE",
             min_annualized_return_pct=None,
+            min_ten_year_avg_annualized_return_pct=None,
             min_dividend_year_count=None,
             min_consecutive_dividend_years=None,
             min_latest_dividend_yield_ttm=None,
+            max_latest_pe=None,
             max_latest_pe_ttm=None,
+            min_latest_roe=None,
             sort_by="total_cash_dividend",
             sort_order="desc",
             page=1,
@@ -452,6 +487,117 @@ def test_query_summaries_uses_latest_success_run_and_filters() -> None:
     assert [row.ts_code for row in sorted_rows] == ["000002.SZ", "000001.SZ"]
     assert dividend_total == 2
     assert [row.ts_code for row in dividend_rows] == ["000001.SZ", "000002.SZ"]
+
+
+def test_export_summaries_xlsx_keeps_yearly_rows_grouped_by_stock() -> None:
+    """确认导出文件包含筛选结果和按股票聚合排序的年度明细。
+
+    创建日期：2026-06-02
+    author: sunshengxian
+    """
+
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    with Session(engine) as db:
+        run = DividendReinvestmentBacktestRun(
+            run_key="export-run",
+            start_date=date(2024, 1, 1),
+            end_date=date(2026, 1, 5),
+            initial_amount=Decimal("100000"),
+            cash_div_field="cash_div_tax",
+            status="SUCCESS",
+        )
+        db.add(run)
+        db.flush()
+        run_id = run.id
+        db.add_all(
+            [
+                DividendReinvestmentBacktestSummary(
+                    run_id=run_id,
+                    ts_code="000001.SZ",
+                    symbol="000001",
+                    name="平安银行",
+                    industry="银行",
+                    initial_amount=Decimal("100000"),
+                    total_cash_dividend=Decimal("500"),
+                    dividend_year_count=10,
+                    consecutive_dividend_years=8,
+                    annualized_return_pct=Decimal("12.5"),
+                    ten_year_avg_annualized_return_pct=Decimal("9.8"),
+                    latest_pe=Decimal("7.8"),
+                    latest_pe_ttm=Decimal("8.5"),
+                    latest_roe=Decimal("14.2"),
+                    rank_score=Decimal("24.7"),
+                    data_quality="COMPLETE",
+                ),
+                DividendReinvestmentBacktestSummary(
+                    run_id=run_id,
+                    ts_code="000002.SZ",
+                    symbol="000002",
+                    name="万科A",
+                    industry="房地产",
+                    initial_amount=Decimal("100000"),
+                    total_cash_dividend=Decimal("200"),
+                    dividend_year_count=2,
+                    consecutive_dividend_years=0,
+                    annualized_return_pct=Decimal("1.2"),
+                    ten_year_avg_annualized_return_pct=Decimal("1.1"),
+                    latest_pe=Decimal("35"),
+                    latest_pe_ttm=Decimal("40"),
+                    latest_roe=Decimal("3.2"),
+                    rank_score=Decimal("3.7"),
+                    data_quality="COMPLETE",
+                ),
+                DividendReinvestmentBacktestYearly(
+                    run_id=run_id,
+                    ts_code="000002.SZ",
+                    year=2024,
+                    annualized_return_pct=Decimal("1"),
+                    dividend_event_count=0,
+                ),
+                DividendReinvestmentBacktestYearly(
+                    run_id=run_id,
+                    ts_code="000001.SZ",
+                    year=2025,
+                    annualized_return_pct=Decimal("10"),
+                    dividend_event_count=1,
+                ),
+                DividendReinvestmentBacktestYearly(
+                    run_id=run_id,
+                    ts_code="000001.SZ",
+                    year=2024,
+                    annualized_return_pct=Decimal("8"),
+                    dividend_event_count=1,
+                ),
+            ]
+        )
+        db.commit()
+
+        target_run_id, content = DividendReinvestmentDataLandingService(db).export_summaries_xlsx(
+            run_id=run_id,
+            keyword=None,
+            industry=None,
+            data_quality="COMPLETE",
+            min_annualized_return_pct=None,
+            min_ten_year_avg_annualized_return_pct=None,
+            min_dividend_year_count=None,
+            min_consecutive_dividend_years=None,
+            min_latest_dividend_yield_ttm=None,
+            max_latest_pe=None,
+            max_latest_pe_ttm=None,
+            min_latest_roe=None,
+            sort_by="total_cash_dividend",
+            sort_order="desc",
+        )
+
+    assert target_run_id == run_id
+    with ZipFile(BytesIO(content)) as archive:
+        workbook_xml = archive.read("xl/workbook.xml").decode()
+        yearly_xml = archive.read("xl/worksheets/sheet2.xml").decode()
+    assert "筛选结果" in workbook_xml
+    assert "年度明细" in workbook_xml
+    assert yearly_xml.index("000001.SZ") < yearly_xml.index("000002.SZ")
+    assert yearly_xml.index("<v>2024</v>") < yearly_xml.index("<v>2025</v>")
 
 
 def test_consecutive_dividend_years_starts_from_latest_dividend_year() -> None:

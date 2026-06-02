@@ -83,10 +83,13 @@ class DividendReinvestmentSummaryItem(OrmModel):
     total_return_amount: Decimal | None
     total_return_pct: Decimal | None
     annualized_return_pct: Decimal | None
+    ten_year_avg_annualized_return_pct: Decimal | None
     latest_dividend_yield_ttm: Decimal | None
     latest_total_mv: Decimal | None
+    latest_pe: Decimal | None
     latest_pe_ttm: Decimal | None
     latest_pb: Decimal | None
+    latest_roe: Decimal | None
     rank_score: Decimal | None
     data_quality: str
     data_issue: str | None

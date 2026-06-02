@@ -1,4 +1,4 @@
-import { requestJson } from './client';
+import { API_BASE_URL, ApiError, getAuthToken, requestJson } from './client';
 import type {
   DividendReinvestmentHealth,
   DividendReinvestmentRun,
@@ -30,6 +30,33 @@ export function fetchDividendReinvestmentSummaries(params: DividendReinvestmentS
   );
 }
 
+export async function exportDividendReinvestmentSummaries(params: DividendReinvestmentSummaryParams) {
+  // 导出沿用榜单筛选和排序参数，但不传分页，让后端一次性生成完整筛选结果与年度明细。
+  const search = new URLSearchParams();
+  Object.entries(params).forEach(([key, value]) => {
+    if (!['page', 'page_size'].includes(key) && value !== undefined && value !== null && value !== '') {
+      search.set(key, String(value));
+    }
+  });
+  const token = getAuthToken();
+  const response = await fetch(
+    `${API_BASE_URL}/api/dividend-reinvestment/export?${search.toString()}`,
+    {
+      headers: {
+        ...(token ? { Authorization: `Bearer ${token}` } : {})
+      }
+    }
+  );
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    throw new ApiError(response.status, body.detail || response.statusText);
+  }
+  return {
+    blob: await response.blob(),
+    filename: parseDownloadFilename(response.headers.get('Content-Disposition'))
+  };
+}
+
 export function fetchDividendReinvestmentYearly(tsCode: string, runId?: number | null) {
   // 年度明细按股票代码和可选批次读取；未指定批次时后端使用最新成功回测结果。
   const search = new URLSearchParams();
@@ -39,4 +66,10 @@ export function fetchDividendReinvestmentYearly(tsCode: string, runId?: number |
   return requestJson<DividendReinvestmentYearlyItem[]>(
     `/api/dividend-reinvestment/yearly/${encodeURIComponent(tsCode)}?${search.toString()}`
   );
+}
+
+/** 从后端 Content-Disposition 中解析 UTF-8 文件名，失败时使用稳定兜底名。 */
+function parseDownloadFilename(contentDisposition: string | null) {
+  const match = contentDisposition?.match(/filename\*=UTF-8''([^;]+)/);
+  return match ? decodeURIComponent(match[1]) : '分红再投筛选.xlsx';
 }

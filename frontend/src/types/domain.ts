@@ -290,10 +290,13 @@ export interface DividendReinvestmentSummaryItem {
   total_return_amount: string | null;
   total_return_pct: string | null;
   annualized_return_pct: string | null;
+  ten_year_avg_annualized_return_pct: string | null;
   latest_dividend_yield_ttm: string | null;
   latest_total_mv: string | null;
+  latest_pe: string | null;
   latest_pe_ttm: string | null;
   latest_pb: string | null;
+  latest_roe: string | null;
   rank_score: string | null;
   data_quality: string;
   data_issue: string | null;
@@ -305,15 +308,22 @@ export interface DividendReinvestmentSummaryParams {
   industry?: string;
   data_quality?: string;
   min_annualized_return_pct?: number;
+  min_ten_year_avg_annualized_return_pct?: number;
   min_dividend_year_count?: number;
   min_consecutive_dividend_years?: number;
   min_latest_dividend_yield_ttm?: number;
+  max_latest_pe?: number;
   max_latest_pe_ttm?: number;
+  min_latest_roe?: number;
   sort_by?:
     | 'annualized_return_pct'
+    | 'ten_year_avg_annualized_return_pct'
     | 'total_return_pct'
     | 'total_cash_dividend'
-    | 'latest_dividend_yield_ttm';
+    | 'latest_dividend_yield_ttm'
+    | 'latest_pe'
+    | 'latest_pe_ttm'
+    | 'latest_roe';
   sort_order?: 'asc' | 'desc';
   page: number;
   page_size: number;
