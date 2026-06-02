@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 from app.core.config import Settings
 from app.db.base import Base
 from app.db.models.chat import LlmCallMetric
-from app.db.models.market import AStockBasic
+from app.db.models.market import AStockBasic, HKStockBasic
 from app.services.llm_service import (
     FOLLOW_UP_ASSISTANT_SYSTEM_PROMPT,
     FOLLOW_UP_ROUTER_SYSTEM_PROMPT,
@@ -221,11 +221,11 @@ def test_clear_investment_question_uses_default_deepseek_router(monkeypatch) -> 
     assert "A 股数据包含义" in str(captured["system_prompt"])
 
 
-def test_question_router_payload_includes_local_stock_candidates(monkeypatch) -> None:
-    """确认前置路由把本地股票候选交给 LLM，由模型在受控候选内主动要包。
+def test_question_router_payload_omits_local_stock_candidates(monkeypatch) -> None:
+    """确认前置路由不再携带本地候选，股票代码识别交给独立直识别阶段。
 
-    创建日期：2026-05-09
-    author: sunshengxian
+    创建日期：2026-06-02
+    author: codex
     """
 
     engine = create_engine("sqlite:///:memory:")
@@ -264,7 +264,7 @@ def test_question_router_payload_includes_local_stock_candidates(monkeypatch) ->
                 '"answer_mode":"stock_research",'
                 '"data_demands":[{"market":"A","ts_code":"600036.SH",'
                 '"packages":["quote_valuation","financial_statement"],'
-                '"intent":"stock_research"}],"reason":"候选内命中招商银行"}'
+                '"intent":"stock_research"}],"reason":"模型直接识别招商银行"}'
             )
 
         monkeypatch.setattr(service, "_chat_completion", fake_chat_completion)
@@ -272,8 +272,7 @@ def test_question_router_payload_includes_local_stock_candidates(monkeypatch) ->
         route = service._route_question("招商银行现在怎么看")
 
     payload = json.loads(str(captured["prompt"]))
-    assert payload["stock_candidates"][0]["ts_code"] == "600036.SH"
-    assert payload["stock_candidates"][0]["name"] == "招商银行"
+    assert "stock_candidates" not in payload
     assert route.answer_mode == "stock_research"
     assert route.data_demands[0].packages == ("quote_valuation", "financial_statement")
 
@@ -487,6 +486,198 @@ def test_route_from_payload_accepts_up_to_five_market_data_demands() -> None:
 
     assert len(route.data_demands) == MAX_MARKET_DATA_STOCKS
     assert route.data_demands[-1].ts_code == "000005.SZ"
+
+
+def test_route_prefers_direct_llm_stock_code_extraction(monkeypatch) -> None:
+    """确认个股研究会先让 LLM 直接识别股票代码，再用本地基础表验真。
+
+    创建日期：2026-06-02
+    author: codex
+    """
+
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    with Session(engine) as db:
+        db.add(AStockBasic(ts_code="601101.SH", symbol="601101", name="昊华能源", list_status="L"))
+        db.commit()
+        service = LlmService(
+            db,
+            settings=Settings(
+                llm_api_key="test-key",
+                llm_api_key_file=None,
+                llm_model="deepseek-v4-flash",
+            ),
+        )
+
+        def fake_chat_completion(
+            prompt: str,
+            system_prompt: str | None = None,
+            model: str | None = None,
+            temperature: float = 0.1,
+            trace: LlmCallTrace | None = None,
+            response_format: dict[str, str] | None = None,
+        ) -> str:
+            if trace and trace.phase == "stock_disambiguation":
+                raise AssertionError("直接识别成功时不应再进入候选消歧")
+            assert trace is not None
+            assert trace.phase == "stock_code_extraction"
+            assert response_format == {"type": "json_object"}
+            return (
+                '{"items":[{"name":"昊华能源","ts_code":"601101.SH",'
+                '"market":"SH","confidence":1.0}],'
+                '"ambiguous":false,"reason":"明确命中昊华能源"}'
+            )
+
+        monkeypatch.setattr(service, "_chat_completion", fake_chat_completion)
+
+        route = service._route_with_semantic_stocks(
+            "帮我分析一下昊华能源",
+            {},
+            QuestionRoute(
+                is_answerable=True,
+                should_query_data=True,
+                answer_mode="stock_research",
+            ),
+            "trace-direct",
+            None,
+            None,
+        )
+
+    assert route.data_demands[0].ts_code == "601101.SH"
+    assert route.data_demands[0].market == "A"
+    assert route.data_demands[0].packages == (
+        "quote_valuation",
+        "financial_statement",
+        "business_profile",
+        "dividend_forecast",
+        "shareholder_governance",
+    )
+
+
+def test_direct_llm_stock_code_extraction_normalizes_hk_code(monkeypatch) -> None:
+    """确认 LLM 返回的四位港股代码会补零，并通过港股基础表校验。
+
+    创建日期：2026-06-02
+    author: codex
+    """
+
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    with Session(engine) as db:
+        db.add(HKStockBasic(ts_code="02380.HK", name="中国电力", list_status="L"))
+        db.commit()
+        service = LlmService(
+            db,
+            settings=Settings(
+                llm_api_key="test-key",
+                llm_api_key_file=None,
+                llm_model="deepseek-v4-flash",
+            ),
+        )
+
+        def fake_chat_completion(
+            prompt: str,
+            system_prompt: str | None = None,
+            model: str | None = None,
+            temperature: float = 0.1,
+            trace: LlmCallTrace | None = None,
+            response_format: dict[str, str] | None = None,
+        ) -> str:
+            assert response_format == {"type": "json_object"}
+            return (
+                '{"items":[{"name":"中国电力","ts_code":"2380.HK",'
+                '"market":"HK","confidence":0.9}],'
+                '"ambiguous":false,"reason":"识别为港股中国电力"}'
+            )
+
+        monkeypatch.setattr(service, "_chat_completion", fake_chat_completion)
+
+        route = service._route_with_semantic_stocks(
+            "给我看看中国电力",
+            {},
+            QuestionRoute(
+                is_answerable=True,
+                should_query_data=True,
+                answer_mode="stock_research",
+            ),
+            "trace-hk",
+            None,
+            None,
+        )
+
+    assert route.data_demands[0].ts_code == "02380.HK"
+    assert route.data_demands[0].market == "HK"
+    assert route.data_demands[0].packages == ("financial_statement",)
+
+
+def test_ambiguous_direct_stock_extraction_falls_back_to_candidates(monkeypatch) -> None:
+    """确认“平安”等歧义简称不会裸信 LLM 直识别，会回落本地候选消歧。
+
+    创建日期：2026-06-02
+    author: codex
+    """
+
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    with Session(engine) as db:
+        db.add_all(
+            [
+                AStockBasic(ts_code="000001.SZ", symbol="000001", name="平安银行", list_status="L"),
+                AStockBasic(ts_code="601318.SH", symbol="601318", name="中国平安", list_status="L"),
+            ]
+        )
+        db.commit()
+        service = LlmService(
+            db,
+            settings=Settings(
+                llm_api_key="test-key",
+                llm_api_key_file=None,
+                llm_model="deepseek-v4-flash",
+            ),
+        )
+        phases: list[str] = []
+
+        def fake_chat_completion(
+            prompt: str,
+            system_prompt: str | None = None,
+            model: str | None = None,
+            temperature: float = 0.1,
+            trace: LlmCallTrace | None = None,
+            response_format: dict[str, str] | None = None,
+        ) -> str:
+            assert response_format == {"type": "json_object"}
+            phase = trace.phase if trace else ""
+            phases.append(phase)
+            if phase == "stock_code_extraction":
+                return (
+                    '{"items":[{"name":"中国平安","ts_code":"601318.SH",'
+                    '"market":"A","confidence":0.9}],'
+                    '"ambiguous":true,"reason":"平安可能指多只股票"}'
+                )
+            if phase == "stock_disambiguation":
+                return (
+                    '{"selected_ts_codes":["601318.SH"],'
+                    '"confidence":0.8,"reason":"候选内选择中国平安"}'
+                )
+            raise AssertionError(f"unexpected phase {phase}")
+
+        monkeypatch.setattr(service, "_chat_completion", fake_chat_completion)
+
+        route = service._route_with_semantic_stocks(
+            "平安怎么看",
+            {},
+            QuestionRoute(
+                is_answerable=True,
+                should_query_data=True,
+                answer_mode="stock_research",
+            ),
+            "trace-ambiguous",
+            None,
+            None,
+        )
+
+    assert phases == ["stock_code_extraction", "stock_disambiguation"]
+    assert route.data_demands[0].ts_code == "601318.SH"
 
 
 def test_answer_prompt_includes_market_data_context_and_report_instruction() -> None:
@@ -1323,7 +1514,10 @@ def test_question_router_falls_back_to_qwen_when_deepseek_busy(monkeypatch) -> N
     assert [call["payload"]["model"] for call in calls] == [
         "deepseek-v4-flash",
         "qwen3.6-flash",
+        "deepseek-v4-flash",
+        "qwen3.6-flash",
     ]
+    assert calls[2]["payload"].get("response_format") == {"type": "json_object"}
 
 
 def test_deepseek_busy_falls_back_to_qwen(monkeypatch) -> None:

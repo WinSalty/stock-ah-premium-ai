@@ -2,6 +2,7 @@ from __future__ import annotations
 
 PHASE_LABELS: dict[str, str] = {
     "question_router": "问题路由",
+    "stock_code_extraction": "股票代码识别",
     "stock_disambiguation": "股票消歧",
     "generate_sql": "生成 SQL",
     "repair_sql": "修复 SQL",
@@ -35,6 +36,9 @@ PHASE_LABELS: dict[str, str] = {
 PHASE_DESCRIPTIONS: dict[str, str] = {
     "question_router": (
         "前置路由阶段，判断问题是否属于投资研究、是否需要查结构化数据、是否需要按需补数。"
+    ),
+    "stock_code_extraction": (
+        "股票代码识别阶段，让 LLM 直接从自然语言中提取 A 股或港股代码，再由本地基础表验真。"
     ),
     "stock_disambiguation": (
         "股票名称语义消歧阶段，只在本地股票候选内选择具体 A 股代码，不调用外部行情接口。"
