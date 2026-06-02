@@ -140,6 +140,36 @@ function DividendReinvestmentPage() {
         render: renderPct
       },
       {
+        title: 'PE',
+        key: 'latest_pe',
+        dataIndex: 'latest_pe',
+        width: 90,
+        align: 'right',
+        sorter: true,
+        sortOrder: sortBy === 'latest_pe' ? (sortOrder === 'asc' ? 'ascend' : 'descend') : null,
+        render: renderNumber
+      },
+      {
+        title: 'PE_TTM',
+        key: 'latest_pe_ttm',
+        dataIndex: 'latest_pe_ttm',
+        width: 100,
+        align: 'right',
+        sorter: true,
+        sortOrder: sortBy === 'latest_pe_ttm' ? (sortOrder === 'asc' ? 'ascend' : 'descend') : null,
+        render: renderNumber
+      },
+      {
+        title: 'ROE',
+        key: 'latest_roe',
+        dataIndex: 'latest_roe',
+        width: 92,
+        align: 'right',
+        sorter: true,
+        sortOrder: sortBy === 'latest_roe' ? (sortOrder === 'asc' ? 'ascend' : 'descend') : null,
+        render: renderPct
+      },
+      {
         title: renderHeaderTitle('累计收益率'),
         key: 'total_return_pct',
         dataIndex: 'total_return_pct',
@@ -172,37 +202,7 @@ function DividendReinvestmentPage() {
         sortOrder: sortBy === 'latest_dividend_yield_ttm' ? (sortOrder === 'asc' ? 'ascend' : 'descend') : null,
         render: renderPct
       },
-      {
-        title: 'PE',
-        key: 'latest_pe',
-        dataIndex: 'latest_pe',
-        width: 90,
-        align: 'right',
-        sorter: true,
-        sortOrder: sortBy === 'latest_pe' ? (sortOrder === 'asc' ? 'ascend' : 'descend') : null,
-        render: renderNumber
-      },
-      {
-        title: 'PE_TTM',
-        key: 'latest_pe_ttm',
-        dataIndex: 'latest_pe_ttm',
-        width: 100,
-        align: 'right',
-        sorter: true,
-        sortOrder: sortBy === 'latest_pe_ttm' ? (sortOrder === 'asc' ? 'ascend' : 'descend') : null,
-        render: renderNumber
-      },
       { title: 'PB', dataIndex: 'latest_pb', width: 90, align: 'right', render: renderNumber },
-      {
-        title: 'ROE',
-        key: 'latest_roe',
-        dataIndex: 'latest_roe',
-        width: 92,
-        align: 'right',
-        sorter: true,
-        sortOrder: sortBy === 'latest_roe' ? (sortOrder === 'asc' ? 'ascend' : 'descend') : null,
-        render: renderPct
-      },
       { title: '数据质量', dataIndex: 'data_quality', width: 110, render: renderQuality },
       { title: '问题', dataIndex: 'data_issue', width: 220, render: renderText },
       {
@@ -319,15 +319,6 @@ function DividendReinvestmentPage() {
             <Form.Item label="最低十年均年化" name="min_ten_year_avg_annualized_return_pct">
               <InputNumber className="full-width" precision={2} />
             </Form.Item>
-            <Form.Item label="最低分红年数" name="min_dividend_year_count">
-              <InputNumber min={0} className="full-width" />
-            </Form.Item>
-            <Form.Item label="最低连续分红" name="min_consecutive_dividend_years">
-              <InputNumber min={0} className="full-width" />
-            </Form.Item>
-            <Form.Item label="最低股息率" name="min_latest_dividend_yield_ttm">
-              <InputNumber min={0} precision={2} className="full-width" />
-            </Form.Item>
             <Form.Item label="最高 PE" name="max_latest_pe">
               <InputNumber min={0} precision={2} className="full-width" />
             </Form.Item>
@@ -336,6 +327,15 @@ function DividendReinvestmentPage() {
             </Form.Item>
             <Form.Item label="最低 ROE" name="min_latest_roe">
               <InputNumber precision={2} className="full-width" />
+            </Form.Item>
+            <Form.Item label="最低分红年数" name="min_dividend_year_count">
+              <InputNumber min={0} className="full-width" />
+            </Form.Item>
+            <Form.Item label="最低连续分红" name="min_consecutive_dividend_years">
+              <InputNumber min={0} className="full-width" />
+            </Form.Item>
+            <Form.Item label="最低股息率" name="min_latest_dividend_yield_ttm">
+              <InputNumber min={0} precision={2} className="full-width" />
             </Form.Item>
             <Form.Item label=" ">
               <Space>
