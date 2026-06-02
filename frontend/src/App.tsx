@@ -150,6 +150,8 @@ function useMobileAppViewport() {
  * author: sunshengxian
  */
 function useMobileVisualViewportHeight(enabled: boolean) {
+  const stableViewportHeightRef = useRef<number | null>(null);
+
   useEffect(() => {
     if (!enabled || typeof window === 'undefined') {
       return;
@@ -158,9 +160,23 @@ function useMobileVisualViewportHeight(enabled: boolean) {
     const root = document.documentElement;
     const updateViewportHeight = () => {
       // visualViewport 能反映移动端地址栏收起、横竖屏切换和键盘弹起后的真实可见高度；
-      // 不支持时回退 innerHeight，保证旧版浏览器仍使用稳定的应用壳高度。
-      const viewportHeight = window.visualViewport?.height || window.innerHeight;
-      root.style.setProperty('--mobile-app-height', `${Math.round(viewportHeight)}px`);
+      // 键盘弹起时保留最近一次非键盘高度作为应用壳高度，再单独暴露键盘遮挡量，
+      // 避免问答页整页被键盘压缩顶开，同时仍能把输入区抬到可见区域。
+      const layoutHeight = window.innerHeight;
+      const visualViewport = window.visualViewport;
+      const viewportHeight = visualViewport?.height || layoutHeight;
+      const viewportOffsetTop = visualViewport?.offsetTop || 0;
+      const keyboardInset = Math.max(0, layoutHeight - viewportHeight - viewportOffsetTop);
+      const isKeyboardOpen = keyboardInset > 80;
+      if (!isKeyboardOpen || stableViewportHeightRef.current === null) {
+        stableViewportHeightRef.current = viewportHeight;
+      }
+      const appHeight = isKeyboardOpen
+        ? stableViewportHeightRef.current || viewportHeight
+        : viewportHeight;
+      root.style.setProperty('--mobile-app-height', `${Math.round(appHeight)}px`);
+      root.style.setProperty('--mobile-keyboard-inset', `${Math.round(keyboardInset)}px`);
+      root.classList.toggle('mobile-keyboard-open', isKeyboardOpen);
     };
 
     updateViewportHeight();
@@ -175,6 +191,9 @@ function useMobileVisualViewportHeight(enabled: boolean) {
       window.visualViewport?.removeEventListener('resize', updateViewportHeight);
       window.visualViewport?.removeEventListener('scroll', updateViewportHeight);
       root.style.removeProperty('--mobile-app-height');
+      root.style.removeProperty('--mobile-keyboard-inset');
+      root.classList.remove('mobile-keyboard-open');
+      stableViewportHeightRef.current = null;
     };
   }, [enabled]);
 }

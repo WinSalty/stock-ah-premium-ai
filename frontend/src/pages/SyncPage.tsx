@@ -30,7 +30,9 @@ import {
   fetchSyncRuns
 } from '../api/sync';
 import type {
+  DatasetInfo,
   DividendReinvestmentSyncBatchCreate,
+  DividendReinvestmentSyncMode,
   SyncBatchCreate,
   SyncRun,
   SyncRunCreate,
@@ -57,7 +59,9 @@ interface BatchFormValues {
   range?: [dayjs.Dayjs, dayjs.Dayjs];
 }
 
-interface DividendReinvestmentBatchFormValues extends BatchFormValues {
+interface DividendReinvestmentBatchFormValues {
+  mode: DividendReinvestmentSyncMode;
+  range?: [dayjs.Dayjs, dayjs.Dayjs];
   initial_amount?: number;
   cash_div_field?: 'cash_div_tax' | 'cash_div';
   supplement_dividend_by_stock?: boolean;
@@ -74,6 +78,11 @@ interface RunFilterValues {
 // 同步页按业务目标展示会被刷新的范围，避免用户只看到接口名称时无法判断影响面。
 const AH_SYNC_SCOPE_ITEMS = ['A/H 溢价榜单', '机会筛选与关注', '基础资料、交易日历、官方比价、港股通名单和汇率'];
 const DIVIDEND_SYNC_SCOPE_ITEMS = ['分红再投筛选榜单', '年度再投明细', 'A 股日线、分红、最新估值和 ROE 财务指标'];
+const DIVIDEND_CALCULATE_ONLY_SCOPE_ITEMS = [
+  '仅使用本地已有 A 股日线、分红、估值和 ROE',
+  '重算分红再投筛选榜单',
+  '重算年度再投明细，不访问 Tushare'
+];
 
 /**
  * 数据同步页面。
@@ -95,6 +104,11 @@ function SyncPage() {
     queryFn: () => fetchSyncRuns(runFilters)
   });
   const selectedDataset = Form.useWatch('dataset', form);
+  const dividendMode = Form.useWatch('mode', dividendForm) || 'incremental';
+  const isDividendCalculateOnly = dividendMode === 'calculate_only';
+  const dividendScopeItems = isDividendCalculateOnly
+    ? DIVIDEND_CALCULATE_ONLY_SCOPE_ITEMS
+    : DIVIDEND_SYNC_SCOPE_ITEMS;
   const selectedDatasetInfo = datasets.data?.find((item) => item.name === selectedDataset);
   const datasetInfoMap = useMemo(
     () => new Map((datasets.data || []).map((item) => [item.name, item])),
@@ -157,15 +171,19 @@ function SyncPage() {
   };
 
   const onDividendBatchFinish = (values: DividendReinvestmentBatchFormValues) => {
-    // 分红再投同步默认走按区间聚合接口；逐股补数开关只在修复历史分红或 ROE 覆盖缺口时启用，避免日常同步消耗过多 Tushare 请求次数。
+    const calculateOnly = values.mode === 'calculate_only';
+    // 分红再投同步默认走按区间聚合接口；逐股补数开关只在修复历史分红或 ROE 覆盖缺口时启用。
+    // 仅本地回测模式必须把补数开关归零，保证页面提交和后端执行口径一致，不会访问 Tushare。
     const payload: DividendReinvestmentSyncBatchCreate = {
       mode: values.mode,
       start_date: values.range?.[0]?.format('YYYY-MM-DD'),
       end_date: values.range?.[1]?.format('YYYY-MM-DD'),
       initial_amount: values.initial_amount,
       cash_div_field: values.cash_div_field,
-      supplement_dividend_by_stock: values.supplement_dividend_by_stock,
-      supplement_financial_indicator_by_stock: values.supplement_financial_indicator_by_stock
+      supplement_dividend_by_stock: calculateOnly ? false : values.supplement_dividend_by_stock,
+      supplement_financial_indicator_by_stock: calculateOnly
+        ? false
+        : values.supplement_financial_indicator_by_stock
     };
     dividendMutation.mutate(payload);
   };
@@ -263,7 +281,7 @@ function SyncPage() {
                         <Typography.Text type="secondary">用于刷新分红再投筛选和年度再投过程。</Typography.Text>
                       </div>
                       <div className="sync-scope-list">
-                        {DIVIDEND_SYNC_SCOPE_ITEMS.map((item) => (
+                        {dividendScopeItems.map((item) => (
                           <span key={item}>{item}</span>
                         ))}
                       </div>
@@ -282,9 +300,18 @@ function SyncPage() {
                         <div className="sync-batch-grid dividend-reinvestment-sync-grid">
                           <Form.Item label="同步方式" name="mode" rules={[{ required: true }]}>
                             <Select
+                              onChange={(mode: DividendReinvestmentSyncMode) => {
+                                if (mode === 'calculate_only') {
+                                  dividendForm.setFieldsValue({
+                                    supplement_dividend_by_stock: false,
+                                    supplement_financial_indicator_by_stock: false
+                                  });
+                                }
+                              }}
                               options={[
                                 { value: 'incremental', label: '增量补齐：保留已有原始数据' },
-                                { value: 'full', label: '全量重跑：重算最新榜单' }
+                                { value: 'full', label: '全量重跑：重算最新榜单' },
+                                { value: 'calculate_only', label: '仅本地回测：不访问 Tushare' }
                               ]}
                             />
                           </Form.Item>
@@ -311,14 +338,14 @@ function SyncPage() {
                             name="supplement_dividend_by_stock"
                             valuePropName="checked"
                           >
-                            <Checkbox>逐股补齐更早分红</Checkbox>
+                            <Checkbox disabled={isDividendCalculateOnly}>逐股补齐更早分红</Checkbox>
                           </Form.Item>
                           <Form.Item
                             label="财务指标补数"
                             name="supplement_financial_indicator_by_stock"
                             valuePropName="checked"
                           >
-                            <Checkbox>逐股补齐 ROE 财务指标</Checkbox>
+                            <Checkbox disabled={isDividendCalculateOnly}>逐股补齐 ROE 财务指标</Checkbox>
                           </Form.Item>
                           <Form.Item label=" ">
                             <Button
@@ -327,7 +354,7 @@ function SyncPage() {
                               icon={<Play size={16} />}
                               loading={dividendMutation.isPending}
                             >
-                              开始同步分红再投
+                              {isDividendCalculateOnly ? '开始本地回测' : '开始同步分红再投'}
                             </Button>
                           </Form.Item>
                         </div>
@@ -549,13 +576,13 @@ function SyncPage() {
               }
             },
             {
-              title: '数据集说明',
+              title: '任务说明',
               dataIndex: 'dataset',
-              width: 260,
-              render: (value) => (
+              width: 380,
+              render: (_value, record) => (
                 <OverflowCell
-                  value={datasetInfoMap.get(String(value))?.description || '-'}
-                  threshold={18}
+                  value={buildSyncRunDescription(record, datasetInfoMap.get(record.dataset))}
+                  threshold={30}
                 />
               )
             },
@@ -636,6 +663,12 @@ function SyncPage() {
         <div className="sync-detail-grid">
           <Typography.Text type="secondary">数据集</Typography.Text>
           <Typography.Text>{detailRun?.dataset || '-'}</Typography.Text>
+          <Typography.Text type="secondary">任务说明</Typography.Text>
+          <Typography.Text>
+            {detailRun
+              ? buildSyncRunDescription(detailRun, datasetInfoMap.get(detailRun.dataset))
+              : '-'}
+          </Typography.Text>
           <Typography.Text type="secondary">状态</Typography.Text>
           <Typography.Text>{detailRun?.status || '-'}</Typography.Text>
           <Typography.Text type="secondary">参数</Typography.Text>
@@ -657,6 +690,131 @@ function formatJson(value?: string | null) {
   } catch {
     return value;
   }
+}
+
+type SyncRunParams = Record<string, unknown>;
+
+function parseRunParams(value?: string | null): SyncRunParams {
+  if (!value) {
+    return {};
+  }
+  try {
+    const parsed = JSON.parse(value);
+    return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function runRequestParams(run: SyncRun): SyncRunParams {
+  const parsed = parseRunParams(run.params_json);
+  const request = parsed.request;
+  // 分红再投组合任务会把原始请求和阶段结果拆成 request/result；
+  // 普通数据集任务的 params_json 本身就是请求参数，二者统一后便于生成可读任务说明。
+  if (typeof request === 'object' && request !== null && !Array.isArray(request)) {
+    return request as SyncRunParams;
+  }
+  return parsed;
+}
+
+function runResultParams(run: SyncRun): SyncRunParams {
+  const parsed = parseRunParams(run.params_json);
+  const result = parsed.result;
+  return typeof result === 'object' && result !== null && !Array.isArray(result)
+    ? (result as SyncRunParams)
+    : {};
+}
+
+function textParam(params: SyncRunParams, key: string) {
+  const value = params[key];
+  return value === undefined || value === null || value === '' ? undefined : String(value);
+}
+
+function numberParam(params: SyncRunParams, key: string) {
+  const value = Number(params[key]);
+  return Number.isFinite(value) ? value : 0;
+}
+
+function formatRunMode(mode?: string) {
+  const modeMap: Record<string, string> = {
+    manual: '按输入参数',
+    incremental: '增量补齐',
+    full: '全量重跑',
+    calculate_only: '仅本地回测'
+  };
+  return mode ? modeMap[mode] || mode : '按输入参数';
+}
+
+function formatRunRange(params: SyncRunParams) {
+  const tradeDate = textParam(params, 'trade_date');
+  if (tradeDate) {
+    return `交易日 ${tradeDate}`;
+  }
+  const startDate = textParam(params, 'start_date');
+  const endDate = textParam(params, 'end_date');
+  if (startDate && endDate) {
+    return `${startDate} 至 ${endDate}`;
+  }
+  if (startDate) {
+    return `${startDate} 起`;
+  }
+  if (endDate) {
+    return `截至 ${endDate}`;
+  }
+  return '默认范围';
+}
+
+function formatPositiveRows(label: string, count: number) {
+  return count > 0 ? `${label}${count}` : '';
+}
+
+function buildDividendRunDescription(run: SyncRun, params: SyncRunParams) {
+  const mode = textParam(params, 'mode') || 'incremental';
+  const range = formatRunRange(params);
+  const result = runResultParams(run);
+  if (mode === 'calculate_only') {
+    const summaryRows = numberParam(result, 'summary_rows');
+    const yearlyRows = numberParam(result, 'yearly_rows');
+    const resultText = [formatPositiveRows('摘要', summaryRows), formatPositiveRows('年度明细', yearlyRows)]
+      .filter(Boolean)
+      .join('、');
+    return `仅使用本地已有行情、分红、估值和 ROE 重算分红再投榜单，范围 ${range}，不访问 Tushare${resultText ? `；生成${resultText}` : ''}。`;
+  }
+
+  const stockDividendRows = numberParam(result, 'stock_dividend_rows');
+  const financialRows = numberParam(result, 'financial_indicator_rows');
+  const supplementText = [
+    stockDividendRows > 0 ? '逐股补历史分红' : '',
+    financialRows > 0 ? '逐股补 ROE 财务指标' : ''
+  ]
+    .filter(Boolean)
+    .join('、');
+  const rowsText = [
+    formatPositiveRows('日线', numberParam(result, 'daily_rows')),
+    formatPositiveRows('分红', numberParam(result, 'dividend_rows')),
+    formatPositiveRows('估值', numberParam(result, 'daily_basic_rows')),
+    formatPositiveRows('ROE', financialRows),
+    formatPositiveRows('摘要', numberParam(result, 'summary_rows')),
+    formatPositiveRows('年度明细', numberParam(result, 'yearly_rows'))
+  ]
+    .filter(Boolean)
+    .join('、');
+  return `${formatRunMode(mode)}分红再投基础数据并重算榜单，范围 ${range}${supplementText ? `，包含${supplementText}` : ''}${rowsText ? `；本次处理${rowsText}` : ''}。`;
+}
+
+function buildSyncRunDescription(run: SyncRun, datasetInfo?: DatasetInfo) {
+  const params = runRequestParams(run);
+  if (run.dataset === 'dividend_reinvestment_data_landing') {
+    return buildDividendRunDescription(run, params);
+  }
+  const mode = formatRunMode(textParam(params, 'mode'));
+  const range = formatRunRange(params);
+  const target = datasetInfo?.label || run.dataset;
+  const strategy = datasetInfo?.sync_strategy || datasetInfo?.description || '同步本地业务数据';
+  const tsCode = textParam(params, 'ts_code');
+  const type = textParam(params, 'type');
+  const extra = [tsCode ? `代码 ${tsCode}` : '', type ? `通道 ${type}` : ''].filter(Boolean).join('，');
+  return `${mode}${target}，范围 ${range}${extra ? `，${extra}` : ''}；${strategy}。`;
 }
 
 function copyRunDetail(run: SyncRun | null) {

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import logging
+import queue
+import threading
 from collections.abc import Iterator
 from datetime import datetime
 from typing import Annotated
@@ -14,7 +16,7 @@ from sqlalchemy.orm import Session
 
 from app.api.deps_auth import CurrentUser
 from app.db.models.chat import LlmChatMessage, LlmChatSession
-from app.db.session import get_db
+from app.db.session import SessionLocal, get_db
 from app.schemas.chat import (
     ChatMessageCreate,
     ChatMessageResponse,
@@ -31,6 +33,7 @@ router = APIRouter()
 DbSession = Annotated[Session, Depends(get_db)]
 logger = logging.getLogger(__name__)
 CHAT_TIMEZONE = ZoneInfo("Asia/Shanghai")
+CHAT_STREAM_DONE = object()
 
 
 def _json_line(payload: dict[str, object]) -> str:
@@ -170,6 +173,131 @@ def _touch_session(session: LlmChatSession, question: str, has_history: bool) ->
     if not has_history and session.title == "新的数据问答":
         session.title = _session_title(question)
     session.updated_at = _now_east8()
+
+
+def _store_stream_assistant_message(
+    session_id: int,
+    visible_question: str,
+    sql: str | None,
+    rows: list[dict[str, object]],
+    answer_text: str,
+) -> int | None:
+    """在独立数据库会话中保存流式问答结果。
+
+    创建日期：2026-06-02
+    author: sunshengxian
+    """
+
+    # 流式连接可能被浏览器关闭，后台线程不能复用请求生命周期里的 db；
+    # 因此这里重新打开会话，按“每轮回答只写一条 assistant 消息”的口径落库，
+    # 即使前端不再消费响应，也能在历史记录中看到完整结果。
+    with SessionLocal() as worker_db:
+        session = worker_db.get(LlmChatSession, session_id)
+        if session is None:
+            logger.error("LLM 流式问答落库失败，会话不存在 session_id=%s", session_id)
+            return None
+        assistant_message = LlmChatMessage(
+            session_id=session_id,
+            role="assistant",
+            content=answer_text,
+            sql_text=sql,
+            result_preview_json=json.dumps(rows[:20], ensure_ascii=False, default=str),
+            created_at=_now_east8(),
+            updated_at=_now_east8(),
+        )
+        worker_db.add(assistant_message)
+        _touch_session(session, visible_question, has_history=True)
+        try:
+            worker_db.commit()
+        except Exception:
+            worker_db.rollback()
+            logger.error("LLM 流式问答落库失败 session_id=%s", session_id, exc_info=True)
+            return None
+        return assistant_message.id
+
+
+def _run_chat_stream_worker(
+    session_id: int,
+    payload: ChatMessageCreate,
+    context: dict[str, object],
+    visible_question: str,
+    event_queue: queue.Queue[dict[str, object] | object],
+) -> None:
+    """后台执行流式问答并把进度写入队列。
+
+    创建日期：2026-06-02
+    author: sunshengxian
+    """
+
+    sql = None
+    rows: list[dict[str, object]] = []
+    answer_parts: list[str] = []
+    try:
+        with SessionLocal() as worker_db:
+            sql, rows, chunks = LlmService(worker_db).stream_answer(
+                payload.question,
+                context,
+                model=payload.llm_model,
+            )
+            event_queue.put({"type": "meta", "rows": rows})
+            for chunk in chunks:
+                answer_parts.append(chunk)
+                event_queue.put({"type": "delta", "content": chunk})
+        answer_text = "".join(answer_parts).strip() or "LLM 未返回有效内容。"
+        message_id = _store_stream_assistant_message(
+            session_id,
+            visible_question,
+            sql,
+            rows,
+            answer_text,
+        )
+        event_queue.put(
+            {
+                "type": "done",
+                "message_id": message_id,
+                "answer": answer_text,
+                "rows": rows,
+            }
+        )
+    except LlmDailyLimitExceeded as exc:
+        logger.error("LLM 流式问答触发日限流")
+        answer_text = str(exc)
+        message_id = _store_stream_assistant_message(
+            session_id,
+            visible_question,
+            sql,
+            rows,
+            answer_text,
+        )
+        event_queue.put(
+            {
+                "type": "error",
+                "message_id": message_id,
+                "answer": answer_text,
+                "rows": rows,
+            }
+        )
+    except Exception:
+        logger.error("LLM 流式问答失败", exc_info=True)
+        answer_text = "问答失败：智能分析服务暂时不可用，请稍后重试。"
+        message_id = _store_stream_assistant_message(
+            session_id,
+            visible_question,
+            sql,
+            rows,
+            answer_text,
+        )
+        event_queue.put(
+            {
+                "type": "error",
+                "message_id": message_id,
+                "answer": answer_text,
+                "rows": rows,
+            }
+        )
+    finally:
+        # 结束标记只通知仍在线的前端停止读取；后台线程不会因浏览器断开而提前退出。
+        event_queue.put(CHAT_STREAM_DONE)
 
 
 @router.post("/chat/sessions", response_model=ChatSessionResponse)
@@ -412,88 +540,24 @@ def create_message_stream(
     context["_metric_user_name"] = _display_user_name(current_user)
     context["conversation_history"] = history
 
+    event_queue: queue.Queue[dict[str, object] | object] = queue.Queue()
+    worker = threading.Thread(
+        target=_run_chat_stream_worker,
+        args=(session_id, payload, context, visible_question, event_queue),
+        name=f"chat-stream-session-{session_id}",
+        daemon=True,
+    )
+    worker.start()
+
     def stream() -> Iterator[str]:
-        sql = None
-        rows: list[dict[str, object]] = []
-        answer_parts: list[str] = []
-        try:
-            sql, rows, chunks = LlmService(db).stream_answer(
-                payload.question,
-                context,
-                model=payload.llm_model,
-            )
-            yield _json_line({"type": "meta", "rows": rows})
-            for chunk in chunks:
-                answer_parts.append(chunk)
-                yield _json_line({"type": "delta", "content": chunk})
-            answer_text = "".join(answer_parts).strip() or "LLM 未返回有效内容。"
-            assistant_message = LlmChatMessage(
-                session_id=session_id,
-                role="assistant",
-                content=answer_text,
-                sql_text=sql,
-                result_preview_json=json.dumps(rows[:20], ensure_ascii=False, default=str),
-                created_at=_now_east8(),
-                updated_at=_now_east8(),
-            )
-            db.add(assistant_message)
-            _touch_session(session, visible_question, has_history=True)
-            db.commit()
-            yield _json_line(
-                {
-                    "type": "done",
-                    "message_id": assistant_message.id,
-                    "answer": answer_text,
-                    "rows": rows,
-                }
-            )
-        except LlmDailyLimitExceeded as exc:
-            db.rollback()
-            logger.error("LLM 流式问答触发日限流")
-            answer_text = str(exc)
-            assistant_message = LlmChatMessage(
-                session_id=session_id,
-                role="assistant",
-                content=answer_text,
-                sql_text=sql,
-                result_preview_json=json.dumps(rows[:20], ensure_ascii=False, default=str),
-                created_at=_now_east8(),
-                updated_at=_now_east8(),
-            )
-            db.add(assistant_message)
-            _touch_session(session, visible_question, has_history=True)
-            db.commit()
-            yield _json_line(
-                {
-                    "type": "error",
-                    "message_id": assistant_message.id,
-                    "answer": answer_text,
-                    "rows": rows,
-                }
-            )
-        except Exception:
-            db.rollback()
-            logger.error("LLM 流式问答失败", exc_info=True)
-            answer_text = "问答失败：智能分析服务暂时不可用，请稍后重试。"
-            assistant_message = LlmChatMessage(
-                session_id=session_id,
-                role="assistant",
-                content=answer_text,
-                sql_text=sql,
-                result_preview_json=json.dumps(rows[:20], ensure_ascii=False, default=str),
-                created_at=_now_east8(),
-                updated_at=_now_east8(),
-            )
-            db.add(assistant_message)
-            _touch_session(session, visible_question, has_history=True)
-            db.commit()
-            yield _json_line(
-                {
-                    "type": "error",
-                    "message_id": assistant_message.id,
-                    "answer": answer_text,
-                    "rows": rows,
-                }
-            )
+        # StreamingResponse 的生成器会随浏览器断开而关闭；这里只读取后台队列，
+        # 真正的 LLM 执行和落库在独立线程里完成，避免用户离开页面导致任务被取消。
+        while True:
+            event = event_queue.get()
+            if event is CHAT_STREAM_DONE:
+                break
+            if not isinstance(event, dict):
+                continue
+            yield _json_line(event)
 
     return StreamingResponse(stream(), media_type="application/x-ndjson")

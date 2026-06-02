@@ -38,6 +38,18 @@ class SyncMode(StrEnum):
     FULL = "full"
 
 
+class DividendReinvestmentSyncMode(StrEnum):
+    """分红再投入专用同步模式。
+
+    创建日期：2026-06-02
+    author: sunshengxian
+    """
+
+    INCREMENTAL = "incremental"
+    FULL = "full"
+    CALCULATE_ONLY = "calculate_only"
+
+
 class SyncRunCreate(BaseModel):
     """创建同步任务请求。
 
@@ -84,7 +96,7 @@ class DividendReinvestmentSyncBatchCreate(BaseModel):
     author: sunshengxian
     """
 
-    mode: SyncMode = SyncMode.INCREMENTAL
+    mode: DividendReinvestmentSyncMode = DividendReinvestmentSyncMode.INCREMENTAL
     start_date: date | None = None
     end_date: date | None = None
     initial_amount: Decimal | None = Field(

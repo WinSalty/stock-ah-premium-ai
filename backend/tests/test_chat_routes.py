@@ -1,14 +1,18 @@
 from __future__ import annotations
 
+import time
+
 import pytest
 from fastapi import HTTPException
 from sqlalchemy import create_engine, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.pool import StaticPool
 
 from app.api import routes_chat
 from app.api.routes_chat import (
     batch_delete_sessions,
     create_message,
+    create_message_stream,
     create_session,
     delete_session,
     get_session,
@@ -177,3 +181,66 @@ def test_chat_message_returns_429_when_daily_llm_limit_exceeded(monkeypatch) -> 
 
     assert exc_info.value.status_code == 429
     assert "日限额 100 次" in exc_info.value.detail
+
+
+def test_chat_stream_worker_persists_answer_without_response_consumer(monkeypatch) -> None:
+    """确认流式问答即使前端断开不消费响应，也会在后台跑完并保存回答。
+
+    创建日期：2026-06-02
+    author: sunshengxian
+    """
+
+    class FakeLlmService:
+        def __init__(self, db: Session) -> None:
+            self.db = db
+
+        def stream_answer(
+            self,
+            question: str,
+            context: dict[str, object],
+            model: str | None = None,
+        ) -> tuple[str, list[dict[str, object]], object]:
+            assert question == "招商银行当前估值怎么看？"
+            assert context["session_id"] == 1
+            assert model is None
+            return "select 1", [{"name": "招商银行"}], iter(["第一段", "第二段"])
+
+    monkeypatch.setattr(routes_chat, "LlmService", FakeLlmService)
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    testing_session_local = sessionmaker(
+        bind=engine,
+        autoflush=False,
+        autocommit=False,
+        expire_on_commit=False,
+    )
+    monkeypatch.setattr(routes_chat, "SessionLocal", testing_session_local)
+    Base.metadata.create_all(engine)
+
+    with testing_session_local() as db:
+        user = add_user(db)
+        session = create_session(ChatSessionCreate(title="新的数据问答"), db, user)
+        response = create_message_stream(
+            session.id,
+            ChatMessageCreate(question="招商银行当前估值怎么看？"),
+            db,
+            user,
+        )
+
+    assert response.media_type == "application/x-ndjson"
+    assistant_message = None
+    for _ in range(50):
+        with testing_session_local() as db:
+            assistant_message = db.scalar(
+                select(LlmChatMessage).where(LlmChatMessage.role == "assistant")
+            )
+            if assistant_message is not None:
+                break
+        time.sleep(0.02)
+
+    assert assistant_message is not None
+    assert assistant_message.content == "第一段第二段"
+    assert assistant_message.sql_text == "select 1"

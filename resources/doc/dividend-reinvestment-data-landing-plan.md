@@ -352,6 +352,7 @@
 - `POST /api/sync/batches/dividend-reinvestment-data`
   - 触发数据落地和回测计算。
   - 参数包括 `mode`、`start_date`、`end_date`、`initial_amount`、`cash_div_field`。
+  - `mode=calculate_only` 仅基于本地已有 `a_stock_basic`、`a_daily_quote`、`a_dividend`、`a_daily_basic` 和 `a_financial_indicator` 重算 `dividend_reinvestment_*` 回测结果，不访问 Tushare，也不会执行逐股分红或 ROE 补数。
 
 - `GET /api/dividend-reinvestment/health`
   - 查询股票池、日线、分红、最新每日指标和最近成功回测批次。
@@ -374,6 +375,7 @@
 
 页面结构：
 
+- 数据同步页“同步分红再投数据”支持 `增量补齐`、`全量重跑` 和 `仅本地回测`。其中 `仅本地回测` 用于原始数据已经同步完成后重新生成榜单和年度明细，会自动禁用“逐股补齐更早分红”和“逐股补齐 ROE 财务指标”。
 - 筛选区：回测批次、关键词、最低年化收益率、最低十年均年化、最低分红年数、最低连续分红、最低股息率、最高 PE、最高 PE_TTM、最低 ROE。
 - 测算口径区：位于筛选区下方，可打开弹窗查看计算公式，榜单默认按累计分红降序。
 - 摘要表：股票、行业、年化收益率、近十年平均年化收益率、累计收益率、连续分红年数、累计分红、最新股息率、PE、PE_TTM、PB、ROE、数据质量。

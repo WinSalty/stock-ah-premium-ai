@@ -245,6 +245,21 @@ class DividendReinvestmentDataLandingService:
         """
 
         normalized = self._normalize_params(params)
+        if normalized.mode == "calculate_only":
+            # 仅本地回测模式用于在原始数据已落库后重算榜单和年度明细；
+            # 这里显式跳过所有 Tushare 阶段，即使请求里误带补数开关也不会产生外部取数。
+            summary_rows, yearly_rows = self.calculate_backtest(normalized)
+            return DividendReinvestmentSyncResult(
+                stock_rows=0,
+                calendar_rows=0,
+                daily_rows=0,
+                dividend_rows=0,
+                stock_dividend_rows=0,
+                daily_basic_rows=0,
+                financial_indicator_rows=0,
+                summary_rows=summary_rows,
+                yearly_rows=yearly_rows,
+            )
         # 阶段顺序固定为“基础资料、交易日历、日线、分红、最新指标、回测计算”，
         # 这样失败时可通过各阶段 checkpoint 定位缺口，计算阶段也不会再访问外部接口。
         stock_rows = self._sync_stock_basic()
@@ -371,8 +386,15 @@ class DividendReinvestmentDataLandingService:
         supplement_financial_indicator_by_stock = self._coerce_bool(
             params.get("supplement_financial_indicator_by_stock")
         )
+        if mode not in {"incremental", "full", "calculate_only"}:
+            raise ValueError("分红再投入同步模式仅支持 incremental、full 或 calculate_only")
         if cash_div_field not in {"cash_div_tax", "cash_div"}:
             raise ValueError("现金分红口径仅支持 cash_div_tax 或 cash_div")
+        if mode == "calculate_only":
+            # 仅计算模式的业务承诺是不访问外部接口，因此统一关闭逐股补数开关；
+            # 回测仍会读取本地 a_daily_quote、a_dividend、a_daily_basic 和 a_financial_indicator。
+            supplement_dividend_by_stock = False
+            supplement_financial_indicator_by_stock = False
         return DividendReinvestmentSyncParams(
             mode=mode,
             start_date=start_date,

@@ -266,6 +266,74 @@ def test_dividend_reinvestment_sync_lands_data_and_calculates_backtest() -> None
     assert ("dividend", {"ex_date": "20260103"}) not in client.calls
 
 
+def test_calculate_only_reuses_local_data_without_tushare_calls() -> None:
+    """确认仅本地回测模式不会访问 Tushare，只重算回测结果表。
+
+    创建日期：2026-06-02
+    author: sunshengxian
+    """
+
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    with Session(engine) as db:
+        db.add(
+            AFinancialIndicator(
+                ts_code="000001.SZ",
+                ann_date=date(2026, 1, 6),
+                end_date=date(2025, 12, 31),
+                roe=Decimal("16.5"),
+            )
+        )
+        db.commit()
+        client = FakeTushareClient(calls=[])
+        service = DividendReinvestmentDataLandingService(
+            db,
+            client=client,
+            repository=SqliteUpsertRepository(db),
+        )
+        service.sync(
+            {
+                "mode": "full",
+                "start_date": date(2026, 1, 2),
+                "end_date": date(2026, 1, 5),
+                "initial_amount": Decimal("100000"),
+                "cash_div_field": "cash_div_tax",
+            }
+        )
+        client.calls.clear()
+
+        # 仅计算任务应该完全复用上一轮落库的行情、分红、估值和 ROE；
+        # 即使显式传入补数开关，服务也会在参数标准化阶段关闭，避免测试外的真实环境误消耗 Tushare。
+        result = service.sync(
+            {
+                "mode": "calculate_only",
+                "start_date": date(2026, 1, 2),
+                "end_date": date(2026, 1, 5),
+                "initial_amount": Decimal("100000"),
+                "cash_div_field": "cash_div_tax",
+                "supplement_dividend_by_stock": True,
+                "supplement_financial_indicator_by_stock": True,
+            }
+        )
+        summaries = db.scalars(select(DividendReinvestmentBacktestSummary)).all()
+        runs = db.scalars(select(DividendReinvestmentBacktestRun)).all()
+
+    assert client.calls == []
+    assert result.stock_rows == 0
+    assert result.calendar_rows == 0
+    assert result.daily_rows == 0
+    assert result.dividend_rows == 0
+    assert result.stock_dividend_rows == 0
+    assert result.daily_basic_rows == 0
+    assert result.financial_indicator_rows == 0
+    assert result.summary_rows == 1
+    assert result.yearly_rows == 1
+    assert len(summaries) == 1
+    assert len(runs) == 1
+    assert runs[0].status == "SUCCESS"
+    assert summaries[0].total_return_pct == Decimal("30.00000000")
+
+
 def test_model_row_keeps_null_values_for_bulk_upsert() -> None:
     """确认可空字段不会被过滤，避免 MySQL 批量 upsert 字段集合不一致。
 

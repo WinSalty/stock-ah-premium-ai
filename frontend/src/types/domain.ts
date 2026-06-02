@@ -223,7 +223,12 @@ export interface SyncBatchCreate {
   end_date?: string;
 }
 
-export interface DividendReinvestmentSyncBatchCreate extends SyncBatchCreate {
+export type DividendReinvestmentSyncMode = 'incremental' | 'full' | 'calculate_only';
+
+export interface DividendReinvestmentSyncBatchCreate {
+  mode: DividendReinvestmentSyncMode;
+  start_date?: string;
+  end_date?: string;
   initial_amount?: number;
   cash_div_field?: 'cash_div_tax' | 'cash_div' | string;
   supplement_dividend_by_stock?: boolean;
