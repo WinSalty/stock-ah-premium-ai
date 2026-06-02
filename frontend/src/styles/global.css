@@ -1435,6 +1435,87 @@ body {
   align-items: end;
 }
 
+.sync-section-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: flex-start;
+}
+
+.sync-section-head .panel-title {
+  margin-bottom: 4px;
+}
+
+.sync-action-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.sync-action-card {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid #dbe4ef;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.sync-action-card-head {
+  display: grid;
+  gap: 6px;
+}
+
+.sync-action-card-head .ant-typography {
+  margin: 8px 0 0;
+}
+
+.sync-scope-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.sync-scope-list span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
+  padding: 2px 8px;
+  border: 1px solid #dbe4ef;
+  border-radius: 999px;
+  color: #475569;
+  background: #f8fafc;
+  font-size: 12px;
+}
+
+.sync-action-card .sync-batch-grid {
+  grid-template-columns: minmax(160px, 1fr) minmax(220px, 1.2fr);
+  gap: 8px 10px;
+}
+
+.sync-action-card .sync-batch-grid .ant-form-item:last-child {
+  grid-column: 1 / -1;
+}
+
+.sync-action-card .dividend-reinvestment-sync-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 10px;
+}
+
+.sync-action-card .ant-form-item {
+  margin-bottom: 8px;
+}
+
+.sync-action-card .dividend-reinvestment-sync-grid .ant-form-item:last-child {
+  grid-column: 1 / -1;
+}
+
+.sync-advanced-head {
+  padding-top: 4px;
+  border-top: 1px solid #edf2f7;
+}
+
 .sync-run-filter-grid {
   display: grid;
   grid-template-columns: minmax(160px, 220px) minmax(140px, 180px) minmax(280px, 380px) minmax(100px, 120px) auto;
@@ -2404,6 +2485,7 @@ pre.llm-payload-viewer,
 
   .sync-form-grid,
   .sync-batch-grid,
+  .sync-action-grid,
   .sync-dataset-note,
   .sync-run-filter-grid,
   .dividend-health-grid,
@@ -2425,6 +2507,11 @@ pre.llm-payload-viewer,
   }
 
   .manual-import-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .sync-action-card .sync-batch-grid,
+  .sync-action-card .dividend-reinvestment-sync-grid {
     grid-template-columns: 1fr;
   }
 
@@ -2692,6 +2779,7 @@ pre.llm-payload-viewer,
 
   .sync-form-grid,
   .sync-batch-grid,
+  .sync-action-grid,
   .sync-dataset-note,
   .sync-run-filter-grid,
   .xueqiu-setting-grid,
@@ -2702,6 +2790,11 @@ pre.llm-payload-viewer,
   .llm-metric-filter-grid,
   .metrics-summary-grid,
   .query-filter-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .sync-action-card .sync-batch-grid,
+  .sync-action-card .dividend-reinvestment-sync-grid {
     grid-template-columns: 1fr;
   }
 

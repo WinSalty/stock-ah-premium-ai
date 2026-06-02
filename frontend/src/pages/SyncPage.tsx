@@ -71,6 +71,10 @@ interface RunFilterValues {
   limit?: number;
 }
 
+// 同步页按业务目标展示会被刷新的范围，避免用户只看到接口名称时无法判断影响面。
+const AH_SYNC_SCOPE_ITEMS = ['A/H 溢价榜单', '机会筛选与关注', '基础资料、交易日历、官方比价、港股通名单和汇率'];
+const DIVIDEND_SYNC_SCOPE_ITEMS = ['分红再投筛选榜单', '年度再投明细', 'A 股日线、分红、最新估值和 ROE 财务指标'];
+
 /**
  * 数据同步页面。
  * 创建日期：2026-05-04
@@ -189,117 +193,156 @@ function SyncPage() {
           />
         }
       />
-      <section className="panel">
+      <section className="panel sync-workflow-panel">
         <Tabs
           items={[
             {
               key: 'sync',
-              label: '接口同步',
+              label: '推荐同步方案',
               children: (
                 <Space direction="vertical" size={16} className="full-width">
                   <Alert
                     type="info"
                     showIcon
-                    message="同步说明"
-                    description="建议先用一键增量同步补齐 AH 溢价所需数据；需要重建本地数据时选择一键全量重跑。后端已按东八区定时增量：9:25/9:28 港股通名单、16:15 A 股日线、17:10 官方 AH 比价、7:30 外汇日线；单个数据集也支持按交易日、日期范围或代码同步，行情类全市场范围会按日拆分请求。"
+                    message="先选择业务目标，再选择同步方式"
+                    description="日常补数据优先使用对应业务卡片里的“增量同步”；只有需要重建历史数据时才选择全量重跑。单数据集同步放在高级区，只适合明确知道要补哪张表的场景。"
                   />
-                  <Form
-                    form={batchForm}
-                    layout="vertical"
-                    onFinish={onBatchFinish}
-                    initialValues={{ mode: 'incremental' }}
-                  >
-                    <div className="sync-batch-grid">
-                      <Form.Item label="一键模式" name="mode" rules={[{ required: true }]}>
-                        <Select
-                          options={[
-                            { value: 'incremental', label: '增量同步' },
-                            { value: 'full', label: '全量重跑' }
-                          ]}
-                        />
-                      </Form.Item>
-                      <Form.Item label="覆盖日期范围" name="range">
-                        <DatePicker.RangePicker className="full-width" />
-                      </Form.Item>
-                      <Form.Item label=" ">
-                        <Space wrap>
-                          <Button
-                            type="primary"
-                            htmlType="submit"
-                            icon={<Play size={16} />}
-                            loading={batchMutation.isPending}
+                  <div className="sync-action-grid">
+                    <article className="sync-action-card">
+                      <div className="sync-action-card-head">
+                        <div>
+                          <Tag color="green">A/H 主链路</Tag>
+                          <Typography.Title level={4}>同步 A/H 溢价数据</Typography.Title>
+                        </div>
+                        <Typography.Text type="secondary">用于刷新溢价榜、关注机会和 A/H 对比。</Typography.Text>
+                      </div>
+                      <div className="sync-scope-list">
+                        {AH_SYNC_SCOPE_ITEMS.map((item) => (
+                          <span key={item}>{item}</span>
+                        ))}
+                      </div>
+                      <Form
+                        form={batchForm}
+                        layout="vertical"
+                        onFinish={onBatchFinish}
+                        initialValues={{ mode: 'incremental' }}
+                      >
+                        <div className="sync-batch-grid">
+                          <Form.Item label="同步方式" name="mode" rules={[{ required: true }]}>
+                            <Select
+                              options={[
+                                { value: 'incremental', label: '增量同步：补齐缺口' },
+                                { value: 'full', label: '全量重跑：重建历史' }
+                              ]}
+                            />
+                          </Form.Item>
+                          <Form.Item label="覆盖日期范围" name="range">
+                            <DatePicker.RangePicker className="full-width" />
+                          </Form.Item>
+                          <Form.Item label=" ">
+                            <Space wrap>
+                              <Button
+                                type="primary"
+                                htmlType="submit"
+                                icon={<Play size={16} />}
+                                loading={batchMutation.isPending}
+                              >
+                                开始同步 A/H 数据
+                              </Button>
+                            </Space>
+                          </Form.Item>
+                        </div>
+                      </Form>
+                    </article>
+                    <article className="sync-action-card">
+                      <div className="sync-action-card-head">
+                        <div>
+                          <Tag color="purple">分红再投</Tag>
+                          <Typography.Title level={4}>同步分红再投数据</Typography.Title>
+                        </div>
+                        <Typography.Text type="secondary">用于刷新分红再投筛选和年度再投过程。</Typography.Text>
+                      </div>
+                      <div className="sync-scope-list">
+                        {DIVIDEND_SYNC_SCOPE_ITEMS.map((item) => (
+                          <span key={item}>{item}</span>
+                        ))}
+                      </div>
+                      <Form
+                        form={dividendForm}
+                        layout="vertical"
+                        onFinish={onDividendBatchFinish}
+                        initialValues={{
+                          mode: 'incremental',
+                          initial_amount: 100000,
+                          cash_div_field: 'cash_div_tax',
+                          supplement_dividend_by_stock: false,
+                          supplement_financial_indicator_by_stock: false
+                        }}
+                      >
+                        <div className="sync-batch-grid dividend-reinvestment-sync-grid">
+                          <Form.Item label="同步方式" name="mode" rules={[{ required: true }]}>
+                            <Select
+                              options={[
+                                { value: 'incremental', label: '增量补齐：保留已有原始数据' },
+                                { value: 'full', label: '全量重跑：重算最新榜单' }
+                              ]}
+                            />
+                          </Form.Item>
+                          <Form.Item label="回测日期范围" name="range">
+                            <DatePicker.RangePicker className="full-width" />
+                          </Form.Item>
+                          <Form.Item
+                            label="初始投入"
+                            name="initial_amount"
+                            rules={[{ required: true, message: '请输入初始投入金额' }]}
                           >
-                            一键同步 AH 所需数据
-                          </Button>
-                        </Space>
-                      </Form.Item>
+                            <InputNumber min={1} precision={2} className="full-width" />
+                          </Form.Item>
+                          <Form.Item label="分红口径" name="cash_div_field" rules={[{ required: true }]}>
+                            <Select
+                              options={[
+                                { value: 'cash_div_tax', label: '税后现金分红' },
+                                { value: 'cash_div', label: '税前现金分红' }
+                              ]}
+                            />
+                          </Form.Item>
+                          <Form.Item
+                            label="历史分红补数"
+                            name="supplement_dividend_by_stock"
+                            valuePropName="checked"
+                          >
+                            <Checkbox>逐股补齐更早分红</Checkbox>
+                          </Form.Item>
+                          <Form.Item
+                            label="财务指标补数"
+                            name="supplement_financial_indicator_by_stock"
+                            valuePropName="checked"
+                          >
+                            <Checkbox>逐股补齐 ROE 财务指标</Checkbox>
+                          </Form.Item>
+                          <Form.Item label=" ">
+                            <Button
+                              type="primary"
+                              htmlType="submit"
+                              icon={<Play size={16} />}
+                              loading={dividendMutation.isPending}
+                            >
+                              开始同步分红再投
+                            </Button>
+                          </Form.Item>
+                        </div>
+                      </Form>
+                    </article>
+                  </div>
+                  <div className="sync-section-head sync-advanced-head">
+                    <div>
+                      <div className="panel-title">高级：单数据集同步</div>
+                      <Typography.Text type="secondary">
+                        只在明确知道要补哪张表时使用。选择数据集后，下方会显示该数据集的用途和同步策略。
+                      </Typography.Text>
                     </div>
-                  </Form>
-                  <Form
-                    form={dividendForm}
-                    layout="vertical"
-                    onFinish={onDividendBatchFinish}
-                    initialValues={{
-                      mode: 'incremental',
-                      initial_amount: 100000,
-                      cash_div_field: 'cash_div_tax',
-                      supplement_dividend_by_stock: false,
-                      supplement_financial_indicator_by_stock: false
-                    }}
-                  >
-                    <div className="sync-batch-grid dividend-reinvestment-sync-grid">
-                      <Form.Item label="再投模式" name="mode" rules={[{ required: true }]}>
-                        <Select
-                          options={[
-                            { value: 'incremental', label: '增量补齐' },
-                            { value: 'full', label: '全量重跑' }
-                          ]}
-                        />
-                      </Form.Item>
-                      <Form.Item label="回测日期范围" name="range">
-                        <DatePicker.RangePicker className="full-width" />
-                      </Form.Item>
-                      <Form.Item
-                        label="初始投入"
-                        name="initial_amount"
-                        rules={[{ required: true, message: '请输入初始投入金额' }]}
-                      >
-                        <InputNumber min={1} precision={2} className="full-width" />
-                      </Form.Item>
-                      <Form.Item label="分红口径" name="cash_div_field" rules={[{ required: true }]}>
-                        <Select
-                          options={[
-                            { value: 'cash_div_tax', label: '税后现金分红' },
-                            { value: 'cash_div', label: '税前现金分红' }
-                          ]}
-                        />
-                      </Form.Item>
-                      <Form.Item
-                        label="历史分红补数"
-                        name="supplement_dividend_by_stock"
-                        valuePropName="checked"
-                      >
-                        <Checkbox>逐股补齐更早分红</Checkbox>
-                      </Form.Item>
-                      <Form.Item
-                        label="财务指标补数"
-                        name="supplement_financial_indicator_by_stock"
-                        valuePropName="checked"
-                      >
-                        <Checkbox>逐股补齐 ROE 财务指标</Checkbox>
-                      </Form.Item>
-                      <Form.Item label=" ">
-                        <Button
-                          type="primary"
-                          htmlType="submit"
-                          icon={<Play size={16} />}
-                          loading={dividendMutation.isPending}
-                        >
-                          同步分红再投数据
-                        </Button>
-                      </Form.Item>
-                    </div>
-                  </Form>
+                    <Tag>精确补数</Tag>
+                  </div>
                   <Form
                     form={form}
                     layout="vertical"
@@ -358,7 +401,7 @@ function SyncPage() {
                           icon={<Play size={16} />}
                           loading={mutation.isPending}
                         >
-                          执行同步
+                          执行单数据集同步
                         </Button>
                       </Form.Item>
                     </div>
