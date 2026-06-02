@@ -12,10 +12,10 @@ from sqlalchemy.orm import Session
 
 from app.db.base import Base
 from app.db.models.market import (
+    AFinancialIndicator,
     DividendReinvestmentBacktestRun,
     DividendReinvestmentBacktestSummary,
     DividendReinvestmentBacktestYearly,
-    StockSelectionFactorSnapshot,
 )
 from app.db.models.sync import SyncCheckpoint
 from app.services.dividend_reinvestment_service import DividendReinvestmentDataLandingService
@@ -219,14 +219,11 @@ def test_dividend_reinvestment_sync_lands_data_and_calculates_backtest() -> None
     Base.metadata.create_all(engine)
     with Session(engine) as db:
         db.add(
-            StockSelectionFactorSnapshot(
-                factor_date=date(2026, 1, 5),
+            AFinancialIndicator(
                 ts_code="000001.SZ",
-                symbol="000001",
-                name="平安银行",
-                selection_tags="DIVIDEND,QUALITY",
+                ann_date=date(2026, 1, 6),
+                end_date=date(2025, 12, 31),
                 roe=Decimal("16.5"),
-                pe_ttm=Decimal("8.1"),
             )
         )
         db.commit()

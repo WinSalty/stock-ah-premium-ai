@@ -24,7 +24,6 @@ from app.db.models.market import (
     DividendReinvestmentBacktestRun,
     DividendReinvestmentBacktestSummary,
     DividendReinvestmentBacktestYearly,
-    StockSelectionFactorSnapshot,
 )
 from app.db.models.sync import SyncCheckpoint
 from app.services.date_utils import format_tushare_date, parse_tushare_date
@@ -96,6 +95,7 @@ class DividendReinvestmentSyncParams:
     initial_amount: Decimal
     cash_div_field: str
     supplement_dividend_by_stock: bool = False
+    supplement_financial_indicator_by_stock: bool = False
 
 
 @dataclass(frozen=True)
@@ -112,6 +112,7 @@ class DividendReinvestmentSyncResult:
     dividend_rows: int
     stock_dividend_rows: int
     daily_basic_rows: int
+    financial_indicator_rows: int
     summary_rows: int
     yearly_rows: int
 
@@ -124,6 +125,7 @@ class DividendReinvestmentSyncResult:
             + self.dividend_rows
             + self.stock_dividend_rows
             + self.daily_basic_rows
+            + self.financial_indicator_rows
             + self.summary_rows
             + self.yearly_rows
         )
@@ -195,6 +197,35 @@ class DividendReinvestmentDataLandingService:
         "total_mv",
         "circ_mv",
     ]
+    financial_indicator_fields = [
+        "ts_code",
+        "ann_date",
+        "end_date",
+        "eps",
+        "dt_eps",
+        "roe",
+        "roe_waa",
+        "roe_dt",
+        "roa",
+        "grossprofit_margin",
+        "netprofit_margin",
+        "sales_gpr",
+        "profit_to_gr",
+        "debt_to_assets",
+        "current_ratio",
+        "quick_ratio",
+        "assets_to_eqt",
+        "or_yoy",
+        "q_sales_yoy",
+        "netprofit_yoy",
+        "q_netprofit_yoy",
+        "ocf_to_revenue",
+        "ocfps",
+        "roe_yoy",
+        "bps",
+        "profit_dedt",
+        "update_flag",
+    ]
 
     def __init__(
         self,
@@ -226,6 +257,11 @@ class DividendReinvestmentDataLandingService:
             else 0
         )
         daily_basic_rows = self._sync_latest_daily_basic(normalized.end_date)
+        financial_indicator_rows = (
+            self._sync_candidate_financial_indicators_by_stock(normalized)
+            if normalized.supplement_financial_indicator_by_stock
+            else 0
+        )
         summary_rows, yearly_rows = self.calculate_backtest(normalized)
         return DividendReinvestmentSyncResult(
             stock_rows=stock_rows,
@@ -234,6 +270,7 @@ class DividendReinvestmentDataLandingService:
             dividend_rows=dividend_rows,
             stock_dividend_rows=stock_dividend_rows,
             daily_basic_rows=daily_basic_rows,
+            financial_indicator_rows=financial_indicator_rows,
             summary_rows=summary_rows,
             yearly_rows=yearly_rows,
         )
@@ -249,19 +286,17 @@ class DividendReinvestmentDataLandingService:
         try:
             stocks = self._candidate_stocks(params)
             latest_basic = self._latest_daily_basic_map()
-            latest_factors = self._latest_selection_factor_map()
             latest_financials = self._latest_financial_indicator_map()
             summary_rows: list[dict[str, Any]] = []
             yearly_rows: list[dict[str, Any]] = []
             for stock in stocks:
-                # 每只股票独立读取日线和分红，估值与质量因子使用预加载快照；
-                # 这样计算阶段不会反复访问外部接口，也避免一次性把千万级日线装入内存。
+                # 每只股票独立读取日线和分红，估值和 ROE 只使用本地 Tushare 落地基础表；
+                # 这样计算阶段不会访问外部接口，也不会把 LLM 选股快照混入全市场分红回测。
                 summary, yearly = self._calculate_stock(
                     stock,
                     params,
                     run.id,
                     latest_basic.get(stock.ts_code),
-                    latest_factors.get(stock.ts_code),
                     latest_financials.get(stock.ts_code),
                 )
                 if summary:
@@ -307,6 +342,9 @@ class DividendReinvestmentDataLandingService:
         supplement_dividend_by_stock = self._coerce_bool(
             params.get("supplement_dividend_by_stock")
         )
+        supplement_financial_indicator_by_stock = self._coerce_bool(
+            params.get("supplement_financial_indicator_by_stock")
+        )
         if cash_div_field not in {"cash_div_tax", "cash_div"}:
             raise ValueError("现金分红口径仅支持 cash_div_tax 或 cash_div")
         return DividendReinvestmentSyncParams(
@@ -316,6 +354,7 @@ class DividendReinvestmentDataLandingService:
             initial_amount=initial_amount,
             cash_div_field=cash_div_field,
             supplement_dividend_by_stock=supplement_dividend_by_stock,
+            supplement_financial_indicator_by_stock=supplement_financial_indicator_by_stock,
         )
 
     def _sync_stock_basic(self) -> int:
@@ -436,6 +475,33 @@ class DividendReinvestmentDataLandingService:
             return row_count
         return 0
 
+    def _sync_candidate_financial_indicators_by_stock(
+        self,
+        params: DividendReinvestmentSyncParams,
+    ) -> int:
+        """按候选股票逐只补齐 A 股财务指标，给 ROE 提供全市场基础表来源。
+
+        创建日期：2026-06-02
+        author: sunshengxian
+        """
+
+        row_count = 0
+        for stock in self._candidate_stocks(params):
+            result = self.client.query(
+                "fina_indicator",
+                params={"ts_code": stock.ts_code},
+                fields=self.financial_indicator_fields,
+            )
+            rows = [
+                normalized
+                for row in result.rows
+                if (normalized := self._normalize_financial_indicator_row(row)) is not None
+            ]
+            # 财务指标补数是显式修复任务；逐股提交可降低长跑任务中断后的重跑成本。
+            row_count += self.repository.upsert_many(AFinancialIndicator, rows)
+            self.db.commit()
+        return row_count
+
     def _create_backtest_run(
         self,
         params: DividendReinvestmentSyncParams,
@@ -480,27 +546,8 @@ class DividendReinvestmentDataLandingService:
             latest.setdefault(row.ts_code, row)
         return latest
 
-    def _latest_selection_factor_map(self) -> dict[str, StockSelectionFactorSnapshot]:
-        """按股票读取最新选股因子快照，复用项目既有 PE/ROE 质量因子口径。
-
-        创建日期：2026-06-02
-        author: sunshengxian
-        """
-
-        rows = self.db.scalars(
-            select(StockSelectionFactorSnapshot).order_by(
-                desc(StockSelectionFactorSnapshot.factor_date),
-                desc(StockSelectionFactorSnapshot.id),
-            )
-        ).all()
-        latest: dict[str, StockSelectionFactorSnapshot] = {}
-        for row in rows:
-            # 因子快照按日期倒序读取，同一股票只取第一条，保证后续回测计算不会混用旧 ROE。
-            latest.setdefault(row.ts_code, row)
-        return latest
-
     def _latest_financial_indicator_map(self) -> dict[str, AFinancialIndicator]:
-        """按股票读取最新 A 股财务指标，作为选股因子快照缺失时的 ROE 兜底来源。
+        """按股票读取最新 A 股财务指标，作为分红再投 ROE 的唯一财务口径来源。
 
         创建日期：2026-06-02
         author: sunshengxian
@@ -514,7 +561,7 @@ class DividendReinvestmentDataLandingService:
         ).all()
         latest: dict[str, AFinancialIndicator] = {}
         for row in rows:
-            # 财务指标可能由 LLM 单股研究链路按需补齐；倒序去重可以兼容不完整股票池。
+            # 财务指标可能来自通用同步、分红再投补数或 LLM 单股研究链路；倒序去重取最新报告期。
             latest.setdefault(row.ts_code, row)
         return latest
 
@@ -524,7 +571,6 @@ class DividendReinvestmentDataLandingService:
         params: DividendReinvestmentSyncParams,
         run_id: int,
         latest_basic: ADailyBasic | None,
-        latest_factor: StockSelectionFactorSnapshot | None,
         latest_financial: AFinancialIndicator | None,
     ) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
         quotes = self._stock_quotes(stock.ts_code, params.start_date, params.end_date)
@@ -583,16 +629,8 @@ class DividendReinvestmentDataLandingService:
         )
         ten_year_avg_annualized = self._ten_year_avg_annualized_return(yearly_rows)
         latest_pe = latest_basic.pe if latest_basic else None
-        latest_pe_ttm = (
-            latest_basic.pe_ttm
-            if latest_basic and latest_basic.pe_ttm is not None
-            else latest_factor.pe_ttm if latest_factor else None
-        )
-        latest_roe = (
-            latest_factor.roe
-            if latest_factor and latest_factor.roe is not None
-            else latest_financial.roe if latest_financial else None
-        )
+        latest_pe_ttm = latest_basic.pe_ttm if latest_basic else None
+        latest_roe = latest_financial.roe if latest_financial else None
         data_quality = "COMPLETE" if event_count else "NO_DIVIDEND"
         summary = {
             "run_id": run_id,
@@ -989,6 +1027,46 @@ class DividendReinvestmentDataLandingService:
             normalized[field] = to_decimal(normalized.get(field))
         return self._model_row(ADailyBasic, normalized)
 
+    def _normalize_financial_indicator_row(self, row: dict[str, Any]) -> dict[str, Any] | None:
+        """标准化 A 股财务指标行，过滤缺少报告期的异常返回。
+
+        创建日期：2026-06-02
+        author: sunshengxian
+        """
+
+        normalized = dict(row)
+        normalized["ann_date"] = parse_tushare_date(normalized.get("ann_date"))
+        normalized["end_date"] = parse_tushare_date(normalized.get("end_date"))
+        if normalized.get("end_date") is None:
+            return None
+        for field in (
+            "eps",
+            "dt_eps",
+            "roe",
+            "roe_waa",
+            "roe_dt",
+            "roa",
+            "grossprofit_margin",
+            "netprofit_margin",
+            "sales_gpr",
+            "profit_to_gr",
+            "debt_to_assets",
+            "current_ratio",
+            "quick_ratio",
+            "assets_to_eqt",
+            "or_yoy",
+            "q_sales_yoy",
+            "netprofit_yoy",
+            "q_netprofit_yoy",
+            "ocf_to_revenue",
+            "ocfps",
+            "roe_yoy",
+            "bps",
+            "profit_dedt",
+        ):
+            normalized[field] = to_decimal(normalized.get(field))
+        return self._model_row(AFinancialIndicator, normalized)
+
     def _model_row(self, model: type, row: dict[str, Any]) -> dict[str, Any]:
         columns = set(model.__table__.columns.keys())
         # 批量 upsert 要求同一批行的字段集合稳定；这里保留 None 值，让 SQLAlchemy
@@ -1080,6 +1158,7 @@ class DividendReinvestmentDataLandingService:
                 "dividend_rows": result.dividend_rows,
                 "stock_dividend_rows": result.stock_dividend_rows,
                 "daily_basic_rows": result.daily_basic_rows,
+                "financial_indicator_rows": result.financial_indicator_rows,
                 "summary_rows": result.summary_rows,
                 "yearly_rows": result.yearly_rows,
             },

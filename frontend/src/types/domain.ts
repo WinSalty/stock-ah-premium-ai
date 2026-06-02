@@ -227,6 +227,7 @@ export interface DividendReinvestmentSyncBatchCreate extends SyncBatchCreate {
   initial_amount?: number;
   cash_div_field?: 'cash_div_tax' | 'cash_div' | string;
   supplement_dividend_by_stock?: boolean;
+  supplement_financial_indicator_by_stock?: boolean;
 }
 
 export interface SyncRunFilters {

@@ -116,6 +116,16 @@ INCREMENTAL_SYNC_JOB_SPECS: tuple[IncrementalSyncJobSpec, ...] = (
         day_of_week="mon-sat",
         doc_note="外汇日线按 GMT 交易日更新，东八区早间补齐上一 GMT 交易日。",
     ),
+    IncrementalSyncJobSpec(
+        job_id="sync-a-financial-indicator-weekly",
+        name="同步 A 股财务指标",
+        dataset="a_financial_indicator",
+        params={"mode": "incremental"},
+        hour=22,
+        minute=20,
+        day_of_week="sat",
+        doc_note="普通 fina_indicator 需按单股请求，周末夜间逐股补齐 ROE 等最新财务指标。",
+    ),
 )
 
 

@@ -82,6 +82,7 @@ class FakeDividendReinvestmentDataLandingService:
             dividend_rows=4,
             stock_dividend_rows=0,
             daily_basic_rows=5,
+            financial_indicator_rows=0,
             summary_rows=6,
             yearly_rows=7,
         )

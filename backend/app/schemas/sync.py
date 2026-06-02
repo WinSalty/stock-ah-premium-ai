@@ -100,6 +100,10 @@ class DividendReinvestmentSyncBatchCreate(BaseModel):
         default=False,
         description="是否按候选股票逐只补齐历史分红，适合修复 ex_date 全市场回补缺口",
     )
+    supplement_financial_indicator_by_stock: bool = Field(
+        default=False,
+        description="是否按候选股票逐只补齐 A 股财务指标，适合修复 ROE 覆盖不足",
+    )
 
 
 class TencentUnadjustedSyncBatchResponse(BaseModel):

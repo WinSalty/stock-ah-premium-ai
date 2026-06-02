@@ -121,9 +121,9 @@
 | `latest_dividend_yield_ttm` | 最新 TTM 股息率。 |
 | `latest_total_mv` | 最新总市值。 |
 | `latest_pe` | 最新 PE，来自最新 `a_daily_basic.pe`。 |
-| `latest_pe_ttm` | 最新 PE TTM。 |
+| `latest_pe_ttm` | 最新 PE TTM，来自最新 `a_daily_basic.pe_ttm`。 |
 | `latest_pb` | 最新 PB。 |
-| `latest_roe` | 最新 ROE，优先复用 `stock_selection_factor_snapshot.roe`，缺失时回落到 `a_financial_indicator.roe`。 |
+| `latest_roe` | 最新 ROE，只使用 Tushare 财务指标落地表 `a_financial_indicator.roe`，不再复用选股因子快照。 |
 | `rank_score` | 综合排序分。 |
 | `data_quality` | 数据质量标记，例如 `COMPLETE`、`PARTIAL_PRICE`、`NO_DIVIDEND`。 |
 | `data_issue` | 数据缺口说明。 |
@@ -340,8 +340,8 @@
 1. 页面默认按累计分红降序，便于先看长期现金回报贡献。
 2. 用户可切换年化收益率、近十年平均年化收益率、累计收益率、最新股息率、PE、PE_TTM、ROE 排序。
 3. 综合分以年化收益率为主，叠加近十年平均年化收益率、分红年数、股息率、ROE 和低 PE 温和加分，避免单一高收益或单一低估值主导榜单。
-4. PE 来自最新 `a_daily_basic.pe`；PE_TTM 优先来自最新 `a_daily_basic.pe_ttm`，缺失时使用选股因子宽表快照。
-5. ROE 优先复用选股因子宽表最新快照，缺失时使用按需补数链路已落库的 A 股财务指标表。
+4. PE 和 PE_TTM 来自最新 `a_daily_basic`，不再使用选股因子宽表兜底。
+5. ROE 只来自 `a_financial_indicator.roe`；若覆盖不足，应通过 `a_financial_indicator` 同步数据集或分红再投“财务指标补数”任务逐股补齐。
 
 ## 8. API 和页面建议
 
@@ -409,7 +409,7 @@
 
 本方案新增的红利再投入表是独立能力：
 
-- 原始数据复用 `a_daily_quote`、`a_daily_basic` 和 `a_dividend`，ROE 优先复用 `stock_selection_factor_snapshot`，缺失时使用 `a_financial_indicator`。
+- 原始数据复用 `a_daily_quote`、`a_daily_basic`、`a_dividend` 和 `a_financial_indicator`；ROE 不再使用 `stock_selection_factor_snapshot`，缺失时通过财务指标同步任务补齐。
 - 回测结果单独落 `dividend_reinvestment_*` 表。
 - LLM 如需回答“长期分红再投入表现”问题，应优先查询红利再投入结果表，而不是旧选股宽表。
 

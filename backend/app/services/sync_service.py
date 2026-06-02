@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from app.core.config import get_settings
 from app.db.models.market import (
     ADailyQuote,
+    AFinancialIndicator,
     AStockBasic,
     ATradeCalendar,
     FxRateDaily,
@@ -64,6 +65,7 @@ class DatasetSpec:
 
 AH_HISTORY_START = date(2025, 8, 12)
 CALENDAR_HISTORY_START = date(2025, 1, 1)
+FINANCIAL_INDICATOR_HISTORY_START = date(2023, 1, 1)
 CALENDAR_FUTURE_DAYS = 370
 CONTROL_PARAM_KEYS = {"mode"}
 CORE_SYNC_PLAN: tuple[tuple[str, dict[str, Any]], ...] = (
@@ -295,6 +297,70 @@ DATASET_SPECS: dict[str, DatasetSpec] = {
         supports_date_range=True,
         split_by_trade_date=True,
         full_start_date=AH_HISTORY_START,
+    ),
+    "a_financial_indicator": DatasetSpec(
+        name="a_financial_indicator",
+        label="A 股财务指标",
+        api_name="fina_indicator",
+        fields=[
+            "ts_code",
+            "ann_date",
+            "end_date",
+            "eps",
+            "dt_eps",
+            "roe",
+            "roe_waa",
+            "roe_dt",
+            "roa",
+            "grossprofit_margin",
+            "netprofit_margin",
+            "sales_gpr",
+            "profit_to_gr",
+            "debt_to_assets",
+            "current_ratio",
+            "quick_ratio",
+            "assets_to_eqt",
+            "or_yoy",
+            "q_sales_yoy",
+            "netprofit_yoy",
+            "q_netprofit_yoy",
+            "ocf_to_revenue",
+            "ocfps",
+            "roe_yoy",
+            "bps",
+            "profit_dedt",
+            "update_flag",
+        ],
+        model=AFinancialIndicator,
+        date_fields=("ann_date", "end_date"),
+        decimal_fields=(
+            "eps",
+            "dt_eps",
+            "roe",
+            "roe_waa",
+            "roe_dt",
+            "roa",
+            "grossprofit_margin",
+            "netprofit_margin",
+            "sales_gpr",
+            "profit_to_gr",
+            "debt_to_assets",
+            "current_ratio",
+            "quick_ratio",
+            "assets_to_eqt",
+            "or_yoy",
+            "q_sales_yoy",
+            "netprofit_yoy",
+            "q_netprofit_yoy",
+            "ocf_to_revenue",
+            "ocfps",
+            "roe_yoy",
+            "bps",
+            "profit_dedt",
+        ),
+        description="按本地 A 股基础表逐只同步 Tushare 财务指标，给 ROE 等基本面字段补数。",
+        supports_date_range=True,
+        full_start_date=FINANCIAL_INDICATOR_HISTORY_START,
     ),
 }
 
@@ -531,6 +597,8 @@ class SyncService:
             return sum(
                 self._sync_spec(spec, {**params, "ts_code": item}) for item in DEFAULT_FX_CODES
             )
+        if spec.name == "a_financial_indicator" and "ts_code" not in merged_params:
+            return self._sync_a_financial_indicator_by_stock(spec, params)
         if self._should_split_by_trade_date(spec, params):
             return sum(
                 self._sync_spec(spec, {**self._without_range_params(params), "trade_date": item})
@@ -566,6 +634,28 @@ class SyncService:
         if spec.name == "stock_hsgt" and rows:
             self._prune_hsgt_to_latest_date()
         self.db.commit()
+        return row_count
+
+    def _sync_a_financial_indicator_by_stock(
+        self,
+        spec: DatasetSpec,
+        params: dict[str, Any],
+    ) -> int:
+        """按本地 A 股基础表逐只同步财务指标，适配普通 fina_indicator 单股请求限制。
+
+        创建日期：2026-06-02
+        author: sunshengxian
+        """
+
+        row_count = 0
+        stocks = self.db.scalars(
+            select(AStockBasic)
+            .where(AStockBasic.list_status == "L")
+            .order_by(AStockBasic.ts_code)
+        ).all()
+        for stock in stocks:
+            # Tushare 普通财务指标接口不能按季度一次返回全市场；逐股同步可在长跑中断后幂等重跑。
+            row_count += self._sync_spec(spec, {**params, "ts_code": stock.ts_code})
         return row_count
 
     def _format_error_message(self, exc: Exception) -> str:
@@ -713,6 +803,9 @@ class SyncService:
             self._normalize_fx_row(normalized)
         for field in spec.date_fields:
             normalized[field] = parse_tushare_date(normalized.get(field))
+        if spec.name == "a_financial_indicator" and normalized.get("end_date") is None:
+            # 财务指标表以报告期作为唯一键的一部分；缺报告期的异常行不可幂等覆盖，直接跳过。
+            return {}
         for field in spec.decimal_fields:
             normalized[field] = to_decimal(normalized.get(field))
         if spec.name == "ah_comparison":

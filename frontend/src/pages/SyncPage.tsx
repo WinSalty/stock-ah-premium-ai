@@ -61,6 +61,7 @@ interface DividendReinvestmentBatchFormValues extends BatchFormValues {
   initial_amount?: number;
   cash_div_field?: 'cash_div_tax' | 'cash_div';
   supplement_dividend_by_stock?: boolean;
+  supplement_financial_indicator_by_stock?: boolean;
 }
 
 interface RunFilterValues {
@@ -152,14 +153,15 @@ function SyncPage() {
   };
 
   const onDividendBatchFinish = (values: DividendReinvestmentBatchFormValues) => {
-    // 分红再投同步默认走按区间聚合接口；勾选历史分红补数时才逐股补早期分红，避免日常同步消耗过多 Tushare 请求次数。
+    // 分红再投同步默认走按区间聚合接口；逐股补数开关只在修复历史分红或 ROE 覆盖缺口时启用，避免日常同步消耗过多 Tushare 请求次数。
     const payload: DividendReinvestmentSyncBatchCreate = {
       mode: values.mode,
       start_date: values.range?.[0]?.format('YYYY-MM-DD'),
       end_date: values.range?.[1]?.format('YYYY-MM-DD'),
       initial_amount: values.initial_amount,
       cash_div_field: values.cash_div_field,
-      supplement_dividend_by_stock: values.supplement_dividend_by_stock
+      supplement_dividend_by_stock: values.supplement_dividend_by_stock,
+      supplement_financial_indicator_by_stock: values.supplement_financial_indicator_by_stock
     };
     dividendMutation.mutate(payload);
   };
@@ -241,7 +243,8 @@ function SyncPage() {
                       mode: 'incremental',
                       initial_amount: 100000,
                       cash_div_field: 'cash_div_tax',
-                      supplement_dividend_by_stock: false
+                      supplement_dividend_by_stock: false,
+                      supplement_financial_indicator_by_stock: false
                     }}
                   >
                     <div className="sync-batch-grid dividend-reinvestment-sync-grid">
@@ -277,6 +280,13 @@ function SyncPage() {
                         valuePropName="checked"
                       >
                         <Checkbox>逐股补齐更早分红</Checkbox>
+                      </Form.Item>
+                      <Form.Item
+                        label="财务指标补数"
+                        name="supplement_financial_indicator_by_stock"
+                        valuePropName="checked"
+                      >
+                        <Checkbox>逐股补齐 ROE 财务指标</Checkbox>
                       </Form.Item>
                       <Form.Item label=" ">
                         <Button

@@ -10,13 +10,14 @@ import {
   Space,
   Table,
   Tag,
+  Tooltip,
   Typography,
   message
 } from 'antd';
 import type { TableColumnsType, TableProps } from 'antd';
 import ReactECharts from 'echarts-for-react';
 import { saveAs } from 'file-saver';
-import { Download, Eye, Info, RotateCw, Search, X } from 'lucide-react';
+import { CircleHelp, Download, Eye, Info, RotateCw, Search, X } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import PageHeader from '../components/PageHeader';
@@ -67,8 +68,54 @@ const DIVIDEND_SORT_FIELDS: DividendSortField[] = [
   'latest_roe'
 ];
 
-// 表头标题和排序图标会共享紧凑空间，收益率类标题禁止换行，避免中文被挤成两行。
-const renderHeaderTitle = (title: string) => <span className="table-header-nowrap">{title}</span>;
+const DIVIDEND_HEADER_HELP: Record<string, string> = {
+  代码: 'Tushare 股票代码，带交易所后缀，例如 600000.SH。',
+  名称: 'A 股上市公司简称。',
+  行业: '股票基础资料中的所属行业，用于快速识别业务属性。',
+  年化收益率: '从回测起点买入并把现金分红再投入后，按持有天数折算的年化收益率。',
+  十年均年化: '逐年计算最近十个自然年度的年化收益率后取平均；历史不足十年时按可用年度计算。',
+  PE: '最新日线指标的市盈率，主要来自 Tushare daily_basic。',
+  PE_TTM: '滚动市盈率，来自最新 Tushare daily_basic。',
+  ROE: '最新报告期净资产收益率，来自 A 股财务指标表 a_financial_indicator。',
+  累计收益率: '期末市值相对初始投入金额的总收益率，包含现金分红再投入后的持仓市值变化。',
+  期末市值: '回测期末持仓股数乘以期末或最新收盘价得到的市值。',
+  累计分红: '回测期内累计收到并用于再投入的现金分红金额。',
+  分红年数: '回测期内存在有效实施分红的自然年度数量。',
+  连续分红: '截至回测末期向前连续存在有效分红的最长年度数量。',
+  最新股息率: '最新 TTM 股息率，主要来自 Tushare daily_basic 的 dv_ttm。',
+  PB: '最新市净率，来自 Tushare daily_basic。',
+  数据质量: '标记该股票在回测期内是否有有效实施分红；无分红会标为 NO_DIVIDEND。',
+  问题: '记录影响回测可解释性的原因，例如回测期内无有效实施分红。',
+  明细: '打开该股票的年度分红再投过程、持仓市值和年度收益明细。',
+  年份: '年度明细所属自然年。',
+  股价: '该年度末或最新可用交易日的收盘价。',
+  每股分红: '该年度有效现金分红折算的每股分红金额。',
+  分红金额: '按当年持仓股数计算得到的现金分红总额。',
+  再投均价: '现金分红再投入时使用的平均买入价格。',
+  再投股数: '当年现金分红按再投价格买入的新增股数。',
+  持仓股数: '年度结束后的累计持仓股数，允许小数股。',
+  市值: '年度结束后的持仓股数乘以年度末价格。',
+  收益率: '截至该年度末，市值相对初始投入金额的累计收益率。',
+  年化: '截至该年度末，按持有时间折算的年化收益率。',
+  备注: '记录该年度分红、再投或行情匹配过程中的补充说明。'
+};
+
+// 表头说明和排序图标会共享紧凑空间；问号点击不触发表格排序，避免用户查看口径时误改榜单顺序。
+const renderHeaderTitle = (title: string) => {
+  const help = DIVIDEND_HEADER_HELP[title];
+  return (
+    <span className="help-title table-header-nowrap">
+      <span>{title}</span>
+      {help ? (
+        <Tooltip title={help}>
+          <span onClick={(event) => event.stopPropagation()}>
+            <CircleHelp size={13} className="help-title-icon" />
+          </span>
+        </Tooltip>
+      ) : null}
+    </span>
+  );
+};
 
 /** 分红再投入筛选页面。创建日期：2026-05-30 author: sunshengxian */
 function DividendReinvestmentPage() {
@@ -107,13 +154,13 @@ function DividendReinvestmentPage() {
   const columns = useMemo<TableColumnsType<DividendReinvestmentSummaryItem>>(
     () => [
       {
-        title: '代码',
+        title: renderHeaderTitle('代码'),
         dataIndex: 'ts_code',
         width: 126,
         render: renderText
       },
-      { title: '名称', dataIndex: 'name', width: 120 },
-      { title: '行业', dataIndex: 'industry', width: 130, render: renderText },
+      { title: renderHeaderTitle('名称'), dataIndex: 'name', width: 120 },
+      { title: renderHeaderTitle('行业'), dataIndex: 'industry', width: 130, render: renderText },
       {
         title: renderHeaderTitle('年化收益率'),
         key: 'annualized_return_pct',
@@ -140,7 +187,7 @@ function DividendReinvestmentPage() {
         render: renderPct
       },
       {
-        title: 'PE',
+        title: renderHeaderTitle('PE'),
         key: 'latest_pe',
         dataIndex: 'latest_pe',
         width: 90,
@@ -150,7 +197,7 @@ function DividendReinvestmentPage() {
         render: renderNumber
       },
       {
-        title: 'PE_TTM',
+        title: renderHeaderTitle('PE_TTM'),
         key: 'latest_pe_ttm',
         dataIndex: 'latest_pe_ttm',
         width: 100,
@@ -160,7 +207,7 @@ function DividendReinvestmentPage() {
         render: renderNumber
       },
       {
-        title: 'ROE',
+        title: renderHeaderTitle('ROE'),
         key: 'latest_roe',
         dataIndex: 'latest_roe',
         width: 92,
@@ -179,9 +226,9 @@ function DividendReinvestmentPage() {
         sortOrder: sortBy === 'total_return_pct' ? (sortOrder === 'asc' ? 'ascend' : 'descend') : null,
         render: renderPct
       },
-      { title: '期末市值', dataIndex: 'final_market_value', width: 120, align: 'right', render: renderNumber },
+      { title: renderHeaderTitle('期末市值'), dataIndex: 'final_market_value', width: 120, align: 'right', render: renderNumber },
       {
-        title: '累计分红',
+        title: renderHeaderTitle('累计分红'),
         key: 'total_cash_dividend',
         dataIndex: 'total_cash_dividend',
         width: 120,
@@ -190,8 +237,8 @@ function DividendReinvestmentPage() {
         sortOrder: sortBy === 'total_cash_dividend' ? (sortOrder === 'asc' ? 'ascend' : 'descend') : null,
         render: renderNumber
       },
-      { title: '分红年数', dataIndex: 'dividend_year_count', width: 96, align: 'right' },
-      { title: '连续分红', dataIndex: 'consecutive_dividend_years', width: 96, align: 'right' },
+      { title: renderHeaderTitle('分红年数'), dataIndex: 'dividend_year_count', width: 96, align: 'right' },
+      { title: renderHeaderTitle('连续分红'), dataIndex: 'consecutive_dividend_years', width: 96, align: 'right' },
       {
         title: renderHeaderTitle('最新股息率'),
         key: 'latest_dividend_yield_ttm',
@@ -202,11 +249,11 @@ function DividendReinvestmentPage() {
         sortOrder: sortBy === 'latest_dividend_yield_ttm' ? (sortOrder === 'asc' ? 'ascend' : 'descend') : null,
         render: renderPct
       },
-      { title: 'PB', dataIndex: 'latest_pb', width: 90, align: 'right', render: renderNumber },
-      { title: '数据质量', dataIndex: 'data_quality', width: 110, render: renderQuality },
-      { title: '问题', dataIndex: 'data_issue', width: 220, render: renderText },
+      { title: renderHeaderTitle('PB'), dataIndex: 'latest_pb', width: 90, align: 'right', render: renderNumber },
+      { title: renderHeaderTitle('数据质量'), dataIndex: 'data_quality', width: 110, render: renderQuality },
+      { title: renderHeaderTitle('问题'), dataIndex: 'data_issue', width: 220, render: renderText },
       {
-        title: '明细',
+        title: renderHeaderTitle('明细'),
         key: 'detail',
         fixed: 'right',
         width: 112,
@@ -415,17 +462,17 @@ function DividendReinvestmentPage() {
           loading={yearly.isLoading || yearly.isFetching}
           dataSource={yearly.data || []}
           columns={[
-            { title: '年份', dataIndex: 'year', width: 80 },
-            { title: '股价', dataIndex: 'year_end_price', width: 100, align: 'right', render: renderNumber },
-            { title: '每股分红', dataIndex: 'cash_div_per_share', width: 110, align: 'right', render: renderNumber },
-            { title: '分红金额', dataIndex: 'cash_div_amount', width: 110, align: 'right', render: renderNumber },
-            { title: '再投均价', dataIndex: 'reinvest_price_avg', width: 110, align: 'right', render: renderNumber },
-            { title: '再投股数', dataIndex: 'reinvested_shares', width: 110, align: 'right', render: renderNumber },
-            { title: '持仓股数', dataIndex: 'holding_shares', width: 120, align: 'right', render: renderNumber },
-            { title: '市值', dataIndex: 'market_value', width: 120, align: 'right', render: renderNumber },
-            { title: '收益率', dataIndex: 'return_pct', width: 100, align: 'right', render: renderPct },
-            { title: '年化', dataIndex: 'annualized_return_pct', width: 100, align: 'right', render: renderPct },
-            { title: '备注', dataIndex: 'note', width: 180, render: renderText }
+            { title: renderHeaderTitle('年份'), dataIndex: 'year', width: 80 },
+            { title: renderHeaderTitle('股价'), dataIndex: 'year_end_price', width: 100, align: 'right', render: renderNumber },
+            { title: renderHeaderTitle('每股分红'), dataIndex: 'cash_div_per_share', width: 110, align: 'right', render: renderNumber },
+            { title: renderHeaderTitle('分红金额'), dataIndex: 'cash_div_amount', width: 110, align: 'right', render: renderNumber },
+            { title: renderHeaderTitle('再投均价'), dataIndex: 'reinvest_price_avg', width: 110, align: 'right', render: renderNumber },
+            { title: renderHeaderTitle('再投股数'), dataIndex: 'reinvested_shares', width: 110, align: 'right', render: renderNumber },
+            { title: renderHeaderTitle('持仓股数'), dataIndex: 'holding_shares', width: 120, align: 'right', render: renderNumber },
+            { title: renderHeaderTitle('市值'), dataIndex: 'market_value', width: 120, align: 'right', render: renderNumber },
+            { title: renderHeaderTitle('收益率'), dataIndex: 'return_pct', width: 100, align: 'right', render: renderPct },
+            { title: renderHeaderTitle('年化'), dataIndex: 'annualized_return_pct', width: 100, align: 'right', render: renderPct },
+            { title: renderHeaderTitle('备注'), dataIndex: 'note', width: 180, render: renderText }
           ]}
           pagination={false}
           scroll={{ x: 1220 }}
