@@ -502,11 +502,14 @@ function ChatPage({ currentUser }: ChatPageProps) {
     try {
       const items = await listChatSessions();
       setSessions(items);
-      const savedId = Number(window.localStorage.getItem(LAST_SESSION_KEY));
-      const target = items.find((item) => item.id === savedId) || items[0];
-      if (target) {
-        await openSession(target.id, false);
-      }
+      // 进入问答页默认停留在新会话草稿，只加载历史列表，不自动恢复旧会话；
+      // 用户主动点开历史会话时才读取消息，避免页面一进来就把上次问题接着聊。
+      setSession(null);
+      setTurns([]);
+      setSelectedSessionIds([]);
+      setPresetQuestions((questions) => randomPresetQuestions(questions));
+      form.resetFields();
+      window.localStorage.removeItem(LAST_SESSION_KEY);
     } catch (error) {
       message.error(error instanceof Error ? error.message : '会话加载失败');
     } finally {
