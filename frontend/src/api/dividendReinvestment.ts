@@ -1,7 +1,6 @@
 import { API_BASE_URL, ApiError, getAuthToken, requestJson } from './client';
 import type {
   DividendReinvestmentHealth,
-  DividendReinvestmentRun,
   DividendReinvestmentSummaryParams,
   DividendReinvestmentSummaryResponse,
   DividendReinvestmentYearlyItem
@@ -10,11 +9,6 @@ import type {
 export function fetchDividendReinvestmentHealth() {
   // 查询数据健康状态，用于判断分红、行情和最新指标是否足够支撑筛选榜单展示。
   return requestJson<DividendReinvestmentHealth>('/api/dividend-reinvestment/health');
-}
-
-export function fetchDividendReinvestmentRuns(limit = 20) {
-  // 只读取最近批次，避免回测历史过多时拖慢筛选页初始化。
-  return requestJson<DividendReinvestmentRun[]>(`/api/dividend-reinvestment/runs?limit=${limit}`);
 }
 
 export function fetchDividendReinvestmentSummaries(params: DividendReinvestmentSummaryParams) {

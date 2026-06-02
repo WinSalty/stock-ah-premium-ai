@@ -10,7 +10,7 @@ from typing import Any
 from xml.sax.saxutils import escape
 from zipfile import ZIP_DEFLATED, ZipFile
 
-from sqlalchemy import asc, desc, func, or_, select
+from sqlalchemy import asc, delete, desc, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
@@ -314,6 +314,7 @@ class DividendReinvestmentDataLandingService:
             run.stock_count = len(stocks)
             run.summary_count = len(summary_rows)
             run.finished_at = self._now()
+            self._prune_non_latest_backtest_results(run.id)
             self.db.commit()
             return len(summary_rows), len(yearly_rows)
         except Exception as exc:
@@ -324,6 +325,31 @@ class DividendReinvestmentDataLandingService:
             run.finished_at = self._now()
             self.db.commit()
             raise
+
+    def _prune_non_latest_backtest_results(self, latest_run_id: int) -> None:
+        """清理旧回测批次，只保留最新成功批次供筛选页和导出使用。
+
+        创建日期：2026-06-02
+        author: sunshengxian
+        """
+
+        # 清理动作只在新批次结果已完整写入且即将提交成功时执行；
+        # 失败任务不会进入这里，因此不会误删上一份可用榜单数据。
+        self.db.execute(
+            delete(DividendReinvestmentBacktestYearly).where(
+                DividendReinvestmentBacktestYearly.run_id != latest_run_id
+            )
+        )
+        self.db.execute(
+            delete(DividendReinvestmentBacktestSummary).where(
+                DividendReinvestmentBacktestSummary.run_id != latest_run_id
+            )
+        )
+        self.db.execute(
+            delete(DividendReinvestmentBacktestRun).where(
+                DividendReinvestmentBacktestRun.id != latest_run_id
+            )
+        )
 
     def _normalize_params(self, params: dict[str, Any]) -> DividendReinvestmentSyncParams:
         """标准化同步参数并约束第一版支持的分红口径。

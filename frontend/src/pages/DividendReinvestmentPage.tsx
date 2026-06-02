@@ -6,7 +6,6 @@ import {
   Input,
   InputNumber,
   Modal,
-  Select,
   Space,
   Table,
   Tag,
@@ -24,7 +23,6 @@ import PageHeader from '../components/PageHeader';
 import OverflowCell from '../components/OverflowCell';
 import {
   exportDividendReinvestmentSummaries,
-  fetchDividendReinvestmentRuns,
   fetchDividendReinvestmentSummaries,
   fetchDividendReinvestmentYearly
 } from '../api/dividendReinvestment';
@@ -35,7 +33,6 @@ import type {
 } from '../types/domain';
 
 interface FilterValues {
-  run_id?: number;
   keyword?: string;
   min_annualized_return_pct?: number;
   min_ten_year_avg_annualized_return_pct?: number;
@@ -128,10 +125,6 @@ function DividendReinvestmentPage() {
   const [exporting, setExporting] = useState(false);
   const [sortBy, setSortBy] = useState<DividendSortField>('total_cash_dividend');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
-  const runs = useQuery({
-    queryKey: ['dividend-reinvestment-runs'],
-    queryFn: () => fetchDividendReinvestmentRuns(50)
-  });
   const queryParams: DividendReinvestmentSummaryParams = {
     ...filters,
     sort_by: sortBy,
@@ -280,9 +273,8 @@ function DividendReinvestmentPage() {
     setPage(1);
   };
 
-  // 同时刷新批次和榜单，避免同步刚结束时下拉批次与当前列表状态不一致。
+  // 页面只展示最新成功批次，刷新时重新读取榜单即可让后端自动切到最新结果。
   const refreshAll = () => {
-    runs.refetch();
     summaries.refetch();
   };
 
@@ -346,17 +338,6 @@ function DividendReinvestmentPage() {
       <section className="panel">
         <Form form={form} layout="vertical" onFinish={applyFilters}>
           <div className="dividend-filter-grid">
-            <Form.Item label="回测批次" name="run_id">
-              <Select
-                allowClear
-                placeholder="最新成功批次"
-                loading={runs.isLoading}
-                options={runs.data?.filter((item) => item.status === 'SUCCESS').map((item) => ({
-                  value: item.id,
-                  label: `#${item.id} ${item.start_date}~${item.end_date}`
-                }))}
-              />
-            </Form.Item>
             <Form.Item label="关键词" name="keyword">
               <Input allowClear placeholder="代码 / 名称 / 行业" />
             </Form.Item>

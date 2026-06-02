@@ -304,7 +304,6 @@ export interface DividendReinvestmentSummaryItem {
 }
 
 export interface DividendReinvestmentSummaryParams {
-  run_id?: number;
   keyword?: string;
   industry?: string;
   data_quality?: string;
