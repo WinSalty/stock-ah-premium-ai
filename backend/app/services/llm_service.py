@@ -56,6 +56,61 @@ SUPPORTED_CHAT_MODELS = (DEFAULT_CHAT_MODEL, DEEPSEEK_PRO_CHAT_MODEL, QWEN_CHAT_
 LLM_METRIC_TITLE_MAX_CHARS = 48
 LLM_METRIC_USER_NAME_MAX_CHARS = 64
 LLM_FALLBACK_HTTP_STATUS_CODES = {429, 500, 502, 503, 504}
+DIVIDEND_REINVESTMENT_ANSWER_MODE = "dividend_reinvestment"
+DIVIDEND_REINVESTMENT_KEYWORDS = (
+    "分红再投",
+    "分红再投入",
+    "红利再投",
+    "股息再投",
+    "十年平均年化",
+    "近十年平均年化",
+    "平均年化",
+    "年化大于",
+    "年化收益率",
+    "回测明细",
+    "年度明细",
+    "再投明细",
+)
+DIVIDEND_REINVESTMENT_FACTOR_KEYWORDS = (
+    "roe",
+    "pe",
+    "市盈率",
+    "净资产收益率",
+    "股息率",
+    "分红年数",
+    "连续分红",
+    "rank_score",
+    "综合排序",
+)
+DIVIDEND_REINVESTMENT_SQL_POLICY = (
+    "分红再投筛选和年度明细只允许使用 "
+    "dividend_reinvestment_backtest_run、dividend_reinvestment_backtest_summary、"
+    "dividend_reinvestment_backtest_yearly 三张表。"
+    "筛选、排名、近十年平均年化、最新 PE、ROE、股息率、连续分红年数使用摘要表 summary；"
+    "年度明细、逐年现金分红、再投价格、再投股数、持仓股数、年度市值和年度年化使用 yearly；"
+    "需要股票名称、行业和最新因子时用 summary 与 yearly 按 run_id、ts_code 关联。"
+    "默认只查询最新完成批次：run.status='COMPLETED'，"
+    "并按 run.finished_at DESC、run.id DESC 取最新一批；"
+    "除非用户明确要求历史批次，否则不要跨批次混查。"
+)
+DIVIDEND_REINVESTMENT_MARKDOWN_EXAMPLE = """分红再投回答 Markdown 示例：
+## 一、筛选结论
+
+- **候选特征：** 先说明命中数量和最核心筛选条件。
+- **投资含义：** 用一句话概括这些股票更偏红利复利、估值修复还是周期弹性。
+
+## 二、候选列表
+
+| 股票代码 | 名称 | 近十年平均年化 | 最新ROE | 最新PE | 投资观察 |
+| --- | --- | --- | --- | --- | --- |
+| 600036.SH | 招商银行 | 10.50% | 15.20% | 6.80 | 低估值银行样本，继续看资产质量 |
+
+## 三、年度明细
+
+| 年份 | 现金分红金额 | 再投均价 | 年末持股 | 年末市值 | 年化收益率 |
+| --- | --- | --- | --- | --- | --- |
+| 2025 | 1234.56 | 35.20 | 3210.00 | 120000.00 | 11.20% |
+"""
 
 INVESTMENT_ADVISOR_SYSTEM_PROMPT = """你是专业、有独立观点、注重证据链的金融投资分析顾问。
 这是用户自己的本地投资评估项目，用户需要明确、可执行、可复核的真实建议。
@@ -105,6 +160,18 @@ Markdown 格式示例：
 | --- | --- | --- |
 | 保守型 | 现金流稳定资产 | 分红、估值和波动可控 |
 | 进取型 | 修复弹性资产 | 反证条件未触发 |
+
+分红再投筛选示例：
+## 一、筛选结论
+
+- 候选特征：命中股票必须先说明筛选条件和命中数量。
+- 投资含义：用一句话说明更偏红利复利、低估修复还是周期弹性。
+
+## 二、候选列表
+
+| 股票代码 | 名称 | 近十年平均年化 | 最新ROE | 最新PE | 投资观察 |
+| --- | --- | --- | --- | --- | --- |
+| 600036.SH | 招商银行 | 10.50% | 15.20% | 6.80 | 低估值银行样本，继续看资产质量 |
 """
 
 GENERAL_ASSISTANT_SYSTEM_PROMPT = """你是一个通用中文助手。
@@ -169,6 +236,9 @@ QUESTION_ROUTER_SYSTEM_PROMPT = """你是问答前置路由器。
 - `full_report`：用户明确要求投资分析报告、深度报告或完整报告。
 - `open_research`：A/H 价差、行业、组合、宏观策略、多股开放比较等非单只公司完整分析。
 - `data_only`：用户只要数据、明细、表格或列表，不要求判断。
+- `dividend_reinvestment`：用户围绕分红再投回测摘要和年度明细做筛选、排名、
+近十年平均年化、ROE、PE、股息率、连续分红或逐年再投明细查询；这类必须生成 SQL，
+不要输出 data_demands。
 - `general`：通用知识、翻译、改写、概念解释或问候。
 按需补充市场数据最多输出 5 只股票。A 股数据包可以从 quote_valuation、
 financial_statement、business_profile、dividend_forecast、shareholder_governance、
@@ -213,8 +283,11 @@ A 股侧尽量补估值、财务、分红和治理，港股侧按当前能力补
 用户询问“你好”“你是谁”“你能做什么”“你可以帮我什么”等问候、角色身份和能力介绍问题也属于允许范围。
 违法违规交易、索要敏感信息和账号越权操作不属于范围。
 如果问题需要当前/最近/自选/阈值/列表/排名/筛选/股票代码/精确数值，通常需要查询结构化数据。
+如果用户问“近十年平均年化大于 10%、ROE 大于 2%、PE 小于 7 的股票有哪些”
+或“招商银行 年度明细”等分红再投筛选/明细问题，必须返回
+`answer_mode="dividend_reinvestment"`、`needs_sql=true`、`data_demands=[]`。
 只返回 JSON，不要输出解释。格式：
-{"is_answerable":true或false,"needs_sql":true或false,"answer_mode":"stock_research或full_report或open_research或data_only或general","data_demands":[{"market":"A或HK","ts_code":"600036.SH或02380.HK","packages":["quote_valuation","financial_statement","business_profile","dividend_forecast","shareholder_governance","capital_flow_light"],"intent":"stock_research"}],"reason":"一句话原因"}
+{"is_answerable":true或false,"needs_sql":true或false,"answer_mode":"stock_research或full_report或open_research或data_only或dividend_reinvestment或general","data_demands":[{"market":"A或HK","ts_code":"600036.SH或02380.HK","packages":["quote_valuation","financial_statement","business_profile","dividend_forecast","shareholder_governance","capital_flow_light"],"intent":"stock_research"}],"reason":"一句话原因"}
 """
 
 OUT_OF_SCOPE_MESSAGE = (
@@ -492,6 +565,15 @@ DATA_FIELD_LABELS = {
     "ind_value": "指标值",
     "user_id": "用户ID",
     "watchlist_id": "自选ID",
+    "run_id": "回测批次ID",
+    "run_key": "回测批次",
+    "start_date": "开始日期",
+    "initial_amount": "初始投入金额",
+    "cash_div_field": "现金分红口径",
+    "reinvest_price_policy": "再投价格口径",
+    "share_rounding_policy": "持股取整口径",
+    "stock_count": "股票数",
+    "summary_count": "摘要行数",
     "holding_market": "持有市场",
     "sort_order": "排序",
     "note": "备注",
@@ -577,16 +659,21 @@ DATA_FIELD_LABELS = {
     "turnover_rate": "换手率%",
     "pe": "PE",
     "pe_ttm": "PE TTM",
+    "latest_pe": "最新PE",
     "pb": "PB",
+    "latest_pb": "最新PB",
     "pb_ttm": "PB TTM",
     "ps_ttm": "PS TTM",
     "dividend_yield_ttm": "股息率",
+    "latest_dividend_yield_ttm": "最新股息率TTM",
     "total_mv": "总市值",
+    "latest_total_mv": "最新总市值",
     "total_market_cap": "总市值",
     "hksk_market_cap": "港股市值",
     "circ_mv": "流通市值",
     "eps": "每股收益",
     "roe": "ROE",
+    "latest_roe": "最新ROE",
     "roe_waa": "加权ROE",
     "roe_avg": "平均ROE",
     "roe_dt": "扣非ROE",
@@ -706,6 +793,37 @@ DATA_FIELD_LABELS = {
     "return_20d": "20日涨跌幅",
     "return_60d": "60日涨跌幅",
     "return_120d": "120日涨跌幅",
+    "year": "年份",
+    "year_end_trade_date": "年末交易日",
+    "year_end_price": "年末股价",
+    "cash_div_per_share": "每股现金分红",
+    "cash_div_amount": "现金分红金额",
+    "stock_div_per_share": "每股送转",
+    "stock_div_shares": "送转股数",
+    "reinvest_price_avg": "再投均价",
+    "reinvested_shares": "再投股数",
+    "holding_shares": "持仓股数",
+    "market_value": "年末市值",
+    "initial_price": "初始买入价",
+    "initial_shares": "初始持股数",
+    "final_price": "结束日价格",
+    "final_shares": "结束日持股数",
+    "final_market_value": "期末市值",
+    "total_cash_dividend": "累计现金分红",
+    "total_reinvested_amount": "累计再投金额",
+    "total_reinvested_shares": "累计再投股数",
+    "dividend_event_count": "分红事件数",
+    "dividend_year_count": "分红年数",
+    "consecutive_dividend_years": "连续分红年数",
+    "return_amount": "累计收益金额",
+    "total_return_amount": "累计收益金额",
+    "return_pct": "累计收益率",
+    "total_return_pct": "累计收益率",
+    "annualized_return_pct": "年化收益率",
+    "ten_year_avg_annualized_return_pct": "近十年平均年化",
+    "rank_score": "综合排序分",
+    "data_quality": "数据质量",
+    "data_issue": "数据问题",
 }
 
 
@@ -1428,6 +1546,10 @@ class LlmService:
         history = self._conversation_history(context)
         if not history or not question.strip():
             return False
+        if self._is_dividend_reinvestment_question(question):
+            # 分红再投的“年度明细”等短追问需要回查年度明细表；
+            # 不能被普通追问快路径截走，否则只能基于历史文本复述，无法补齐逐年数据。
+            return False
         try:
             content = self._chat_completion(
                 self._follow_up_route_prompt(question, context),
@@ -1748,6 +1870,16 @@ class LlmService:
             "market_data_context": market_data_context,
             "answer_mode": (route.answer_mode if route else "open_research"),
             "answer_style_policy": self._answer_style_policy(route, market_data_context),
+            "dividend_reinvestment_policy": (
+                DIVIDEND_REINVESTMENT_SQL_POLICY
+                if route and route.answer_mode == DIVIDEND_REINVESTMENT_ANSWER_MODE
+                else None
+            ),
+            "markdown_format_example": (
+                DIVIDEND_REINVESTMENT_MARKDOWN_EXAMPLE
+                if route and route.answer_mode == DIVIDEND_REINVESTMENT_ANSWER_MODE
+                else None
+            ),
             "material_source_policy": (
                 "本轮回答只使用会话历史、页面上下文、结构化市场观察和按需补数上下文；"
                 "项目不再自动注入额外静态材料，不能声称引用了历史研报或未提供的内部资料。"
@@ -1808,6 +1940,13 @@ class LlmService:
         """
 
         answer_mode = route.answer_mode if route else "open_research"
+        if answer_mode == DIVIDEND_REINVESTMENT_ANSWER_MODE:
+            return (
+                "这是分红再投回测筛选或年度明细场景。回答必须先给筛选结论或明细结论，"
+                "再用命中的摘要/年度数据解释投资含义；筛选列表建议使用 Markdown 表格，"
+                "年度明细必须按年份升序或降序清楚展示。若数据质量不是 OK，要把数据问题单独说明。"
+                "表格必须使用合法 GFM 格式，标题、正文和表格不能粘在同一行。"
+            )
         if answer_mode in {"stock_research", "full_report"}:
             return (
                 "这是单只公司投资分析或深度报告场景，应输出充分的个股研究结构：核心结论、"
@@ -2876,7 +3015,7 @@ class LlmService:
         )
         return (
             '你只负责生成只读 MySQL SELECT SQL，必须返回 JSON：{"sql":"..."}。'
-            "只能查询这些视图："
+            "只能查询这些只读视图或表："
             f"{json.dumps(self._schema(), ensure_ascii=False)}。"
             "默认使用官方 AH 比价口径；H/A 字段由官方 A/H 反推；"
             "涉及可操作性时优先查询含 hk_connect 或 watchlist 的视图。"
@@ -2890,6 +3029,9 @@ class LlmService:
             "不要查询旧选股宽表或候选因子宽表。"
             "字段名必须完全来自字段清单；不要使用 stock_name、ha_premium、ah_premium 等不存在字段，"
             "应使用 display_name/a_name/hk_name/name、ha_premium_pct、ah_premium_pct。"
+            "涉及分红再投、红利再投、近十年平均年化、年度明细、再投明细、"
+            "分红回测筛选时，必须遵守以下分红再投 SQL 规则："
+            f"{DIVIDEND_REINVESTMENT_SQL_POLICY}"
             "不要使用写入、DDL、多语句。问题与上下文如下："
             f"{context_json}"
         )
@@ -2917,6 +3059,7 @@ class LlmService:
             "只能使用 schema 中列出的视图和字段名；不要使用写入、DDL、多语句。"
             "常见修正：stock_name 改为 display_name/a_name/hk_name/name；"
             "ha_premium 改为 ha_premium_pct；ah_premium 改为 ah_premium_pct。"
+            f"分红再投问题必须遵守：{DIVIDEND_REINVESTMENT_SQL_POLICY}"
             f"{json.dumps(payload, ensure_ascii=False, default=str)}"
         )
         content = self._chat_completion(
@@ -2994,6 +3137,22 @@ class LlmService:
         keywords = ("ah", "a/h", "h/a", "溢价", "折价", "套利", "价差", "港股通", "a股", "h股")
         normalized = question.lower()
         return any(keyword in normalized for keyword in keywords)
+
+    def _is_dividend_reinvestment_question(self, question: str) -> bool:
+        """识别分红再投筛选和年度明细问题。
+
+        创建日期：2026-06-03
+        author: sunshengxian
+        """
+
+        normalized = question.lower().replace(" ", "")
+        if any(keyword in normalized for keyword in DIVIDEND_REINVESTMENT_KEYWORDS):
+            return True
+        # 用户常用“年化 + ROE + PE”的组合描述分红再投筛选条件；
+        # 同时满足年化和至少一个因子词时，按回测摘要表查询，而不是走普通个股补数。
+        return "年化" in normalized and any(
+            keyword in normalized for keyword in DIVIDEND_REINVESTMENT_FACTOR_KEYWORDS
+        )
 
     def _default_sql_for_question(
         self,
@@ -3106,6 +3265,16 @@ class LlmService:
             )
             payload = self._extract_json(content)
             route = self._route_from_payload(payload)
+            if self._is_dividend_reinvestment_question(question):
+                # 分红再投问题即便模型误判为普通个股研究，也必须走回测摘要/年度表 SQL；
+                # 这能支持“招商银行 年度明细”这类短追问回表，而不是触发 Tushare 按需补数。
+                route = QuestionRoute(
+                    is_answerable=route.is_answerable,
+                    should_query_data=True,
+                    data_demands=(),
+                    reason=route.reason or "分红再投问题强制进入 SQL 路由",
+                    answer_mode=DIVIDEND_REINVESTMENT_ANSWER_MODE,
+                )
             return self._route_with_semantic_stocks(
                 question,
                 context,
@@ -3134,6 +3303,8 @@ class LlmService:
         """
 
         if not route.is_answerable:
+            return route
+        if route.answer_mode == DIVIDEND_REINVESTMENT_ANSWER_MODE:
             return route
         if route.data_demands:
             return route
@@ -3254,7 +3425,14 @@ class LlmService:
         author: sunshengxian
         """
 
-        allowed_modes = {"stock_research", "full_report", "open_research", "data_only", "general"}
+        allowed_modes = {
+            "stock_research",
+            "full_report",
+            "open_research",
+            "data_only",
+            DIVIDEND_REINVESTMENT_ANSWER_MODE,
+            "general",
+        }
         raw_mode = str(payload.get("answer_mode") or "").strip().lower()
         if raw_mode in allowed_modes:
             return raw_mode
@@ -3667,6 +3845,14 @@ class LlmService:
         author: sunshengxian
         """
 
+        if self._is_dividend_reinvestment_question(question):
+            return QuestionRoute(
+                is_answerable=True,
+                should_query_data=True,
+                data_demands=(),
+                reason="本地规则识别为分红再投筛选或年度明细问题",
+                answer_mode=DIVIDEND_REINVESTMENT_ANSWER_MODE,
+            )
         local_scope = self._local_question_scope(question)
         if local_scope is False:
             return QuestionRoute(False, False, reason="本地规则判定为非投资问题")
@@ -3842,6 +4028,8 @@ class LlmService:
         return any(keyword in normalized for keyword in intro_keywords)
 
     def _should_query_data(self, question: str, context: dict[str, Any]) -> bool:
+        if self._is_dividend_reinvestment_question(question):
+            return True
         if any(context.get(key) for key in ("start_date", "end_date", "ts_code", "only_watchlist")):
             return True
         normalized = question.lower().replace(" ", "")
@@ -4053,6 +4241,34 @@ class LlmService:
             "v_market_data_fetch_health": (
                 "columns: id,question_id,intent,market_scope,symbols_json,data_packages_json,"
                 "period_policy,status,cache_hit,row_count,error_message,started_at,finished_at,updated_at"
+            ),
+            "dividend_reinvestment_backtest_run": (
+                "table purpose: 分红再投入回测批次表。默认用最新 status='COMPLETED' 批次，"
+                "按 finished_at DESC,id DESC 取最新一批；columns: id,run_key,start_date,end_date,"
+                "initial_amount,cash_div_field,reinvest_price_policy,share_rounding_policy,status,"
+                "stock_count,summary_count,error_message,started_at,finished_at,created_at,updated_at"
+            ),
+            "dividend_reinvestment_backtest_summary": (
+                "table purpose: 分红再投入筛选摘要表，一只股票在一个 run_id 下只有一行；"
+                "用于筛选近十年平均年化、最新 PE、最新 ROE、股息率、连续分红年数、累计收益。"
+                "columns: id,run_id,ts_code,symbol,name,industry,list_date,"
+                "start_trade_date,end_trade_date,"
+                "initial_amount,initial_price,initial_shares,final_price,final_shares,final_market_value,"
+                "total_cash_dividend,total_reinvested_amount,total_reinvested_shares,dividend_event_count,"
+                "dividend_year_count,consecutive_dividend_years,total_return_amount,total_return_pct,"
+                "annualized_return_pct,ten_year_avg_annualized_return_pct,latest_dividend_yield_ttm,"
+                "latest_total_mv,latest_pe,latest_pe_ttm,latest_pb,latest_roe,rank_score,data_quality,"
+                "data_issue,created_at,updated_at"
+            ),
+            "dividend_reinvestment_backtest_yearly": (
+                "table purpose: 分红再投入年度明细表，"
+                "用于回答某只股票逐年分红、再投和年末收益明细。"
+                "常与 summary 按 run_id,ts_code 关联取得 name、industry 和最新因子。"
+                "columns: id,run_id,ts_code,year,year_end_trade_date,"
+                "year_end_price,cash_div_per_share,"
+                "cash_div_amount,stock_div_per_share,stock_div_shares,reinvest_price_avg,reinvested_shares,"
+                "holding_shares,market_value,return_amount,return_pct,annualized_return_pct,"
+                "dividend_event_count,note,created_at,updated_at"
             ),
             "v_latest_ah_premium": "columns: same as v_latest_official_ah_premium",
             "v_ah_premium_trend": "columns: same as v_official_ah_premium_trend",

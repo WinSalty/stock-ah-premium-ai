@@ -52,6 +52,28 @@ def test_sql_guard_accepts_stock_research_views() -> None:
         assert table in guarded.tables
 
 
+def test_sql_guard_accepts_dividend_reinvestment_tables() -> None:
+    """确认分红再投入回测结果表纳入 LLM 只读白名单。
+
+    创建日期：2026-06-03
+    author: sunshengxian
+    """
+
+    service = SqlGuardService()
+
+    # 分红再投问答会由模型直接生成 SELECT 查询；这里锁住安全层白名单，
+    # 避免提示词允许的回测表在执行前被误判为非白名单对象。
+    guarded = service.validate(
+        "select s.ts_code,s.name from dividend_reinvestment_backtest_summary s "
+        "join dividend_reinvestment_backtest_run r on r.id=s.run_id "
+        "where r.status='COMPLETED'",
+        default_limit=10,
+    )
+
+    assert "dividend_reinvestment_backtest_summary" in guarded.tables
+    assert "dividend_reinvestment_backtest_run" in guarded.tables
+
+
 def test_sql_guard_rejects_write_sql() -> None:
     with pytest.raises(SqlGuardError):
         SqlGuardService().validate("delete from v_latest_ah_premium")

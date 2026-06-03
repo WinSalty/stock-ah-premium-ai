@@ -16,6 +16,8 @@ from app.db.base import Base
 from app.db.models.chat import LlmCallMetric
 from app.db.models.market import AStockBasic, HKStockBasic
 from app.services.llm_service import (
+    DIVIDEND_REINVESTMENT_ANSWER_MODE,
+    DIVIDEND_REINVESTMENT_SQL_POLICY,
     FOLLOW_UP_ASSISTANT_SYSTEM_PROMPT,
     FOLLOW_UP_ROUTER_SYSTEM_PROMPT,
     INVESTMENT_ADVISOR_SYSTEM_PROMPT,
@@ -1123,6 +1125,130 @@ def test_default_sql_uses_watchlist_and_correct_ha_discount_direction() -> None:
     assert sql is not None
     assert "v_watchlist_opportunity" in sql
     assert "ORDER BY ha_premium_pct ASC" in sql
+
+
+def test_dividend_reinvestment_question_forces_sql_route(monkeypatch) -> None:
+    """确认分红再投筛选问题进入专用 SQL 路由，不触发个股补数。
+
+    创建日期：2026-06-03
+    author: sunshengxian
+    """
+
+    service = LlmService(
+        Mock(),
+        settings=Settings(llm_api_key="test-key", llm_api_key_file=None, llm_model="test-model"),
+    )
+
+    def fake_chat_completion(
+        prompt: str,
+        system_prompt: str | None = None,
+        model: str | None = None,
+        temperature: float = 0.1,
+        trace: LlmCallTrace | None = None,
+    ) -> str:
+        return (
+            '{"is_answerable":true,"needs_sql":true,'
+            '"answer_mode":"stock_research",'
+            '"data_demands":[{"market":"A","ts_code":"600036.SH","packages":["quote_valuation"]}],'
+            '"reason":"模型误判为普通个股研究"}'
+        )
+
+    monkeypatch.setattr(service, "_chat_completion", fake_chat_completion)
+
+    route = service._route_question("近十年平均年化大于10%，roe大于2%，pe小于7的股票有哪些？")
+
+    assert route.answer_mode == DIVIDEND_REINVESTMENT_ANSWER_MODE
+    assert route.should_query_data is True
+    assert route.data_demands == ()
+
+
+def test_dividend_reinvestment_detail_question_skips_follow_up_router(monkeypatch) -> None:
+    """确认年度明细短追问继续走 SQL，不被普通追问快路径截走。
+
+    创建日期：2026-06-03
+    author: sunshengxian
+    """
+
+    service = LlmService(
+        Mock(),
+        settings=Settings(llm_api_key="test-key", llm_api_key_file=None, llm_model="test-model"),
+    )
+    monkeypatch.setattr(
+        service,
+        "_chat_completion",
+        Mock(side_effect=AssertionError("dividend detail should skip follow-up router")),
+    )
+
+    assert (
+        service._is_follow_up_question(
+            "招商银行 年度明细",
+            {
+                "conversation_history": [
+                    {"role": "user", "content": "近十年平均年化大于10%的股票有哪些？"},
+                    {"role": "assistant", "content": "## 一、筛选结论\n\n- 招商银行命中。"},
+                ]
+            },
+        )
+        is False
+    )
+
+
+def test_dividend_reinvestment_schema_and_sql_prompt_are_exposed() -> None:
+    """确认 SQL 生成提示词包含分红再投入表结构和查询口径。
+
+    创建日期：2026-06-03
+    author: sunshengxian
+    """
+
+    service = LlmService(
+        Mock(),
+        settings=Settings(llm_api_key="test-key", llm_api_key_file=None, llm_model="test-model"),
+    )
+
+    schema = service._schema()
+    prompt = service._sql_prompt("招商银行 年度明细", {})
+
+    assert "dividend_reinvestment_backtest_summary" in schema
+    assert "dividend_reinvestment_backtest_yearly" in schema
+    assert "ten_year_avg_annualized_return_pct" in schema["dividend_reinvestment_backtest_summary"]
+    assert "year_end_trade_date" in schema["dividend_reinvestment_backtest_yearly"]
+    assert DIVIDEND_REINVESTMENT_SQL_POLICY in prompt
+
+
+def test_dividend_reinvestment_answer_prompt_contains_markdown_example() -> None:
+    """确认分红再投回答阶段提供合法 Markdown 表格示例。
+
+    创建日期：2026-06-03
+    author: sunshengxian
+    """
+
+    service = LlmService(
+        Mock(),
+        settings=Settings(llm_api_key="test-key", llm_api_key_file=None, llm_model="test-model"),
+    )
+    service._supporting_data = Mock(return_value={})  # type: ignore[method-assign]
+
+    prompt = service._answer_prompt(
+        "近十年平均年化大于10%，roe大于2%，pe小于7的股票有哪些？",
+        rows=[
+            {
+                "ts_code": "600036.SH",
+                "name": "招商银行",
+                "ten_year_avg_annualized_return_pct": "10.5",
+                "latest_roe": "15.2",
+                "latest_pe": "6.8",
+            }
+        ],
+        context={},
+        route=QuestionRoute(
+            is_answerable=True,
+            should_query_data=True,
+            answer_mode=DIVIDEND_REINVESTMENT_ANSWER_MODE,
+        ),
+    )
+
+    assert "分红再投回答 Markdown 示例" in prompt
+    assert "| 股票代码 | 名称 | 近十年平均年化 | 最新ROE | 最新PE | 投资观察 |" in prompt
 
 
 def test_threshold_recommendation_fast_path_skips_router_and_market_data(monkeypatch) -> None:

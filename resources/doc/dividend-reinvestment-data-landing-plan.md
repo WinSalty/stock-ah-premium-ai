@@ -420,6 +420,9 @@
 
 - 不由 LLM 自动触发全量回补。
 - LLM 只读取已落库的筛选结果和年度明细。
+- LLM 问答新增 `dividend_reinvestment` 专用路由：遇到近十年平均年化、ROE、PE、股息率、连续分红、分红再投筛选或“招商银行 年度明细”等问题时，强制进入 SQL 回查，不再触发普通个股 Tushare 按需补数。
+- SQL 生成阶段会把 `dividend_reinvestment_backtest_run`、`dividend_reinvestment_backtest_summary` 和 `dividend_reinvestment_backtest_yearly` 的字段清单和用途说明交给 LLM；默认查询最新 `COMPLETED` 批次，筛选用 summary，逐年明细用 yearly，并可按 `run_id + ts_code` 关联股票名称和最新因子。
+- 分红再投明细类短追问不会走普通会话追问快路径，避免只基于上一轮文字复述；回答阶段会附带合法 GFM Markdown 表格示例，要求标题、正文和表格独立成块，降低表格格式粘连风险。
 - 如果数据缺失，面向用户只提示“当前材料不足”，不暴露 Tushare 权限、接口和内部限流策略。
 
 ## 10. 验收口径
