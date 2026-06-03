@@ -8,6 +8,7 @@
 
 ## 已完成
 
+- 智能问答分红再投路由线上热修：服务器历史回测批次状态为 `SUCCESS`，而新版提示词要求 `COMPLETED`，导致“招商银行十年平均年化收益率是多少”等问题生成 SQL 后被状态条件过滤为 0 行。后端已将分红再投最新完成批次口径调整为兼容 `COMPLETED/SUCCESS`，并对 LLM 生成或修复后的分红再投 SQL 做状态归一化；服务器复测可返回招商银行近十年平均年化约 19.04%。目标后端测试和 Ruff 已通过。
 - 分红再投筛选页字段和筛选口径继续调整：榜单估值列顺序改为 PB、PE、PE_TTM，ROE 后紧跟最新股息率，避免估值与盈利质量指标分散；筛选区新增“最高 PB”，并贯通前端请求参数、后端查询接口、导出接口和服务层 `latest_pb <= max_latest_pb` 上限过滤。已补充单元测试验证 PB 上限筛选口径，`backend/.venv/bin/python -m pytest tests/test_dividend_reinvestment_service.py -q` 通过，`npm --prefix frontend run build` 通过，并用本地 in-app Browser 验证筛选框和表头顺序。
 - 分红再投筛选继续完善：主表和年度明细表头新增问号提示，解释收益率、估值、分红、数据质量和年度再投字段口径；分红再投计算已彻底移除 `stock_selection_factor_snapshot` 依赖，PE/PE_TTM/PB/股息率只读取 `a_daily_basic`，ROE 只读取 `a_financial_indicator.roe`。为修复 ROE 覆盖不足，后端新增 `a_financial_indicator` 同步数据集，普通 Tushare `fina_indicator` 按本地在市 A 股逐只同步，并新增周六 22:20 定时补数；同步页新增“逐股补齐 ROE 财务指标”开关，可在重跑分红再投数据前补齐财务指标。
 - 神奇九转推送已接入打板推送体系：后端新增 Tushare `stk_nineturn` 日频拉取、九转报告缓存和推送流水，按最新 A 股交易日构建九转成形、九转下跌和 7/8 计数观察池上下文，复用 DeepSeek LLM 生成 HTML 推送报告；定时任务在晚间数据更新后按九转数据快照幂等生成、推送给打板接收人，并复用雪球发布登录态和定时设置保存或发布九转长文，九转雪球文章不提交封面图。前端在“打板推送”页面新增“神奇九转”标签页，菜单权限继续复用 `limit_up_push`，支持查看报告、手动生成、手动推送、手动提交雪球和查看九转推送流水。

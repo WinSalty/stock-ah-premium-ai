@@ -89,7 +89,7 @@ DIVIDEND_REINVESTMENT_SQL_POLICY = (
     "筛选、排名、近十年平均年化、最新 PE、ROE、股息率、连续分红年数使用摘要表 summary；"
     "年度明细、逐年现金分红、再投价格、再投股数、持仓股数、年度市值和年度年化使用 yearly；"
     "需要股票名称、行业和最新因子时用 summary 与 yearly 按 run_id、ts_code 关联。"
-    "默认只查询最新完成批次：run.status='COMPLETED'，"
+    "默认只查询最新完成批次：run.status IN ('COMPLETED','SUCCESS')，"
     "并按 run.finished_at DESC、run.id DESC 取最新一批；"
     "除非用户明确要求历史批次，否则不要跨批次混查。"
 )
@@ -1245,6 +1245,7 @@ class LlmService:
                     user_id,
                     session_id,
                 )
+                sql = self._normalize_dividend_reinvestment_sql(sql)
                 for attempt in range(2):
                     try:
                         guarded = self.sql_guard.validate(
@@ -1288,6 +1289,7 @@ class LlmService:
                             user_id,
                             session_id,
                         )
+                        sql = self._normalize_dividend_reinvestment_sql(sql)
             except (
                 SQLAlchemyError,
                 SqlGuardError,
@@ -2048,6 +2050,29 @@ class LlmService:
     def _execute_sql(self, sql: str) -> list[dict[str, Any]]:
         result = self.db.execute(text(sql))
         return [dict(row._mapping) for row in result.fetchall()]
+
+    def _normalize_dividend_reinvestment_sql(self, sql: str) -> str:
+        """兼容线上分红再投批次状态，避免 LLM 写死旧状态后查不到已完成数据。
+
+        创建日期：2026-06-03
+        author: sunshengxian
+        """
+
+        dividend_tables = (
+            "dividend_reinvestment_backtest_run",
+            "dividend_reinvestment_backtest_summary",
+            "dividend_reinvestment_backtest_yearly",
+        )
+        if not any(table in sql for table in dividend_tables):
+            return sql
+        # 服务器历史批次使用 SUCCESS，本地新口径提示词曾要求 COMPLETED；
+        # 这里只在分红再投三表范围内扩展完成状态，不改变其它业务表的状态过滤语义。
+        return re.sub(
+            r"(\b(?:`?\w+`?\.)?`?status`?\s*)=\s*(['\"])(COMPLETED)\2",
+            r"\1IN ('COMPLETED', 'SUCCESS')",
+            sql,
+            flags=re.IGNORECASE,
+        )
 
     def _general_answer_prompt(self, question: str, context: dict[str, Any]) -> str:
         """构造通用问答提示，避免把翻译和知识问答误塞进投研约束。
@@ -4243,8 +4268,11 @@ class LlmService:
                 "period_policy,status,cache_hit,row_count,error_message,started_at,finished_at,updated_at"
             ),
             "dividend_reinvestment_backtest_run": (
-                "table purpose: 分红再投入回测批次表。默认用最新 status='COMPLETED' 批次，"
-                "按 finished_at DESC,id DESC 取最新一批；columns: id,run_key,start_date,end_date,"
+                "table purpose: 分红再投入回测批次表。默认查询最新完成批次，"
+                "生产历史批次可能使用 status='SUCCESS'，新版批次可能使用 status='COMPLETED'，"
+                "因此最新完成批次应使用 "
+                "status IN ('COMPLETED','SUCCESS') 并按 finished_at DESC,id DESC 取最新一批；"
+                "columns: id,run_key,start_date,end_date,"
                 "initial_amount,cash_div_field,reinvest_price_policy,share_rounding_policy,status,"
                 "stock_count,summary_count,error_message,started_at,finished_at,created_at,updated_at"
             ),

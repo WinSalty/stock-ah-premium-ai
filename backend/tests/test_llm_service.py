@@ -1213,6 +1213,30 @@ def test_dividend_reinvestment_schema_and_sql_prompt_are_exposed() -> None:
     assert "ten_year_avg_annualized_return_pct" in schema["dividend_reinvestment_backtest_summary"]
     assert "year_end_trade_date" in schema["dividend_reinvestment_backtest_yearly"]
     assert DIVIDEND_REINVESTMENT_SQL_POLICY in prompt
+    assert "SUCCESS" in DIVIDEND_REINVESTMENT_SQL_POLICY
+
+
+def test_dividend_reinvestment_sql_status_accepts_success_batches() -> None:
+    """确认 LLM 写死 COMPLETED 时会兼容服务器历史 SUCCESS 批次。
+
+    创建日期：2026-06-03
+    author: sunshengxian
+    """
+
+    service = LlmService(
+        Mock(),
+        settings=Settings(llm_api_key="test-key", llm_api_key_file=None, llm_model="test-model"),
+    )
+
+    sql = service._normalize_dividend_reinvestment_sql(
+        "SELECT s.ten_year_avg_annualized_return_pct "
+        "FROM dividend_reinvestment_backtest_summary s "
+        "JOIN dividend_reinvestment_backtest_run r ON s.run_id = r.id "
+        "WHERE s.ts_code = '600036.SH' AND r.status = 'COMPLETED' "
+        "ORDER BY r.finished_at DESC, r.id DESC LIMIT 1"
+    )
+
+    assert "r.status IN ('COMPLETED', 'SUCCESS')" in sql
 
 
 def test_dividend_reinvestment_answer_prompt_contains_markdown_example() -> None:
