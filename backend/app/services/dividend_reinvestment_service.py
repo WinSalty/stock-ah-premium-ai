@@ -1254,6 +1254,7 @@ class DividendReinvestmentDataLandingService:
         min_dividend_year_count: int | None,
         min_consecutive_dividend_years: int | None,
         min_latest_dividend_yield_ttm: Decimal | None,
+        max_latest_pb: Decimal | None,
         max_latest_pe: Decimal | None,
         max_latest_pe_ttm: Decimal | None,
         min_latest_roe: Decimal | None,
@@ -1316,6 +1317,9 @@ class DividendReinvestmentDataLandingService:
                 DividendReinvestmentBacktestSummary.latest_dividend_yield_ttm
                 >= min_latest_dividend_yield_ttm
             )
+        if max_latest_pb is not None:
+            # PB 与 PE 一样属于低估值上限筛选，使用“最高值”避免把市净率越高误判为越符合条件。
+            filters.append(DividendReinvestmentBacktestSummary.latest_pb <= max_latest_pb)
         if max_latest_pe is not None:
             filters.append(DividendReinvestmentBacktestSummary.latest_pe <= max_latest_pe)
         if max_latest_pe_ttm is not None:
@@ -1334,6 +1338,7 @@ class DividendReinvestmentDataLandingService:
             "latest_dividend_yield_ttm": (
                 DividendReinvestmentBacktestSummary.latest_dividend_yield_ttm
             ),
+            "latest_pb": DividendReinvestmentBacktestSummary.latest_pb,
             "latest_pe": DividendReinvestmentBacktestSummary.latest_pe,
             "latest_pe_ttm": DividendReinvestmentBacktestSummary.latest_pe_ttm,
             "latest_roe": DividendReinvestmentBacktestSummary.latest_roe,
@@ -1350,8 +1355,12 @@ class DividendReinvestmentDataLandingService:
                 select(DividendReinvestmentBacktestSummary)
                 .where(*filters)
                 .order_by(
+                    # 可空指标先按“是否为空”升序排序，保证 PE、ROE 等补数不足字段在升序和降序下都稳定置底；
+                    # 再按用户选择的指标方向、综合分和股票代码排序，避免分页时同值或空值记录跨页跳动。
+                    asc(sort_column.is_(None)),
                     # 榜单排序只开放收益指标，避免前端传入任意字段造成不可控 SQL 排序。
                     sort_direction(sort_column),
+                    asc(DividendReinvestmentBacktestSummary.rank_score.is_(None)),
                     desc(DividendReinvestmentBacktestSummary.rank_score),
                     DividendReinvestmentBacktestSummary.ts_code,
                 )
@@ -1372,6 +1381,7 @@ class DividendReinvestmentDataLandingService:
         min_dividend_year_count: int | None,
         min_consecutive_dividend_years: int | None,
         min_latest_dividend_yield_ttm: Decimal | None,
+        max_latest_pb: Decimal | None,
         max_latest_pe: Decimal | None,
         max_latest_pe_ttm: Decimal | None,
         min_latest_roe: Decimal | None,
@@ -1394,6 +1404,7 @@ class DividendReinvestmentDataLandingService:
             min_dividend_year_count=min_dividend_year_count,
             min_consecutive_dividend_years=min_consecutive_dividend_years,
             min_latest_dividend_yield_ttm=min_latest_dividend_yield_ttm,
+            max_latest_pb=max_latest_pb,
             max_latest_pe=max_latest_pe,
             max_latest_pe_ttm=max_latest_pe_ttm,
             min_latest_roe=min_latest_roe,

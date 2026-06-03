@@ -458,6 +458,7 @@ def test_query_summaries_uses_latest_success_run_and_filters() -> None:
                     annualized_return_pct=Decimal("12.5"),
                     ten_year_avg_annualized_return_pct=Decimal("9.8"),
                     latest_dividend_yield_ttm=Decimal("4.2"),
+                    latest_pb=Decimal("0.8"),
                     latest_pe=Decimal("7.8"),
                     latest_pe_ttm=Decimal("8.5"),
                     latest_roe=Decimal("14.2"),
@@ -478,6 +479,7 @@ def test_query_summaries_uses_latest_success_run_and_filters() -> None:
                     annualized_return_pct=Decimal("1.2"),
                     ten_year_avg_annualized_return_pct=Decimal("1.1"),
                     latest_dividend_yield_ttm=Decimal("0.5"),
+                    latest_pb=Decimal("2.1"),
                     latest_pe=Decimal("35"),
                     latest_pe_ttm=Decimal("40"),
                     latest_roe=Decimal("3.2"),
@@ -498,6 +500,7 @@ def test_query_summaries_uses_latest_success_run_and_filters() -> None:
             min_dividend_year_count=5,
             min_consecutive_dividend_years=5,
             min_latest_dividend_yield_ttm=Decimal("3"),
+            max_latest_pb=Decimal("1"),
             max_latest_pe=Decimal("10"),
             max_latest_pe_ttm=Decimal("12"),
             min_latest_roe=Decimal("10"),
@@ -516,6 +519,7 @@ def test_query_summaries_uses_latest_success_run_and_filters() -> None:
             min_dividend_year_count=None,
             min_consecutive_dividend_years=None,
             min_latest_dividend_yield_ttm=None,
+            max_latest_pb=None,
             max_latest_pe=None,
             max_latest_pe_ttm=None,
             min_latest_roe=None,
@@ -536,6 +540,7 @@ def test_query_summaries_uses_latest_success_run_and_filters() -> None:
             min_dividend_year_count=None,
             min_consecutive_dividend_years=None,
             min_latest_dividend_yield_ttm=None,
+            max_latest_pb=None,
             max_latest_pe=None,
             max_latest_pe_ttm=None,
             min_latest_roe=None,
@@ -552,6 +557,154 @@ def test_query_summaries_uses_latest_success_run_and_filters() -> None:
     assert [row.ts_code for row in sorted_rows] == ["000002.SZ", "000001.SZ"]
     assert dividend_total == 2
     assert [row.ts_code for row in dividend_rows] == ["000001.SZ", "000002.SZ"]
+
+
+def test_query_summaries_keeps_null_sort_values_last_across_pages() -> None:
+    """确认 ROE 等可空指标排序时空值始终置底，避免分页后在中间夹出 null。
+
+    创建日期：2026-06-02
+    author: sunshengxian
+    """
+
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    with Session(engine) as db:
+        run = DividendReinvestmentBacktestRun(
+            run_key="null-sort-run",
+            start_date=date(2024, 1, 1),
+            end_date=date(2026, 1, 5),
+            initial_amount=Decimal("100000"),
+            cash_div_field="cash_div_tax",
+            status="SUCCESS",
+        )
+        db.add(run)
+        db.flush()
+        db.add_all(
+            [
+                DividendReinvestmentBacktestSummary(
+                    run_id=run.id,
+                    ts_code="000001.SZ",
+                    symbol="000001",
+                    name="高ROE",
+                    initial_amount=Decimal("100000"),
+                    latest_roe=Decimal("18"),
+                    rank_score=Decimal("18"),
+                    data_quality="COMPLETE",
+                ),
+                DividendReinvestmentBacktestSummary(
+                    run_id=run.id,
+                    ts_code="000002.SZ",
+                    symbol="000002",
+                    name="空ROE一",
+                    initial_amount=Decimal("100000"),
+                    latest_roe=None,
+                    rank_score=Decimal("99"),
+                    data_quality="COMPLETE",
+                ),
+                DividendReinvestmentBacktestSummary(
+                    run_id=run.id,
+                    ts_code="000003.SZ",
+                    symbol="000003",
+                    name="低ROE",
+                    initial_amount=Decimal("100000"),
+                    latest_roe=Decimal("3"),
+                    rank_score=Decimal("3"),
+                    data_quality="COMPLETE",
+                ),
+                DividendReinvestmentBacktestSummary(
+                    run_id=run.id,
+                    ts_code="000004.SZ",
+                    symbol="000004",
+                    name="中ROE",
+                    initial_amount=Decimal("100000"),
+                    latest_roe=Decimal("10"),
+                    rank_score=Decimal("10"),
+                    data_quality="COMPLETE",
+                ),
+                DividendReinvestmentBacktestSummary(
+                    run_id=run.id,
+                    ts_code="000005.SZ",
+                    symbol="000005",
+                    name="空ROE二",
+                    initial_amount=Decimal("100000"),
+                    latest_roe=None,
+                    rank_score=Decimal("88"),
+                    data_quality="COMPLETE",
+                ),
+            ]
+        )
+        db.commit()
+        service = DividendReinvestmentDataLandingService(db)
+
+        _, desc_total, desc_page_one = service.query_summaries(
+            run_id=run.id,
+            keyword=None,
+            industry=None,
+            data_quality=None,
+            min_annualized_return_pct=None,
+            min_ten_year_avg_annualized_return_pct=None,
+            min_dividend_year_count=None,
+            min_consecutive_dividend_years=None,
+            min_latest_dividend_yield_ttm=None,
+            max_latest_pb=None,
+            max_latest_pe=None,
+            max_latest_pe_ttm=None,
+            min_latest_roe=None,
+            sort_by="latest_roe",
+            sort_order="desc",
+            page=1,
+            page_size=3,
+        )
+        _, _desc_total, desc_page_two = service.query_summaries(
+            run_id=run.id,
+            keyword=None,
+            industry=None,
+            data_quality=None,
+            min_annualized_return_pct=None,
+            min_ten_year_avg_annualized_return_pct=None,
+            min_dividend_year_count=None,
+            min_consecutive_dividend_years=None,
+            min_latest_dividend_yield_ttm=None,
+            max_latest_pb=None,
+            max_latest_pe=None,
+            max_latest_pe_ttm=None,
+            min_latest_roe=None,
+            sort_by="latest_roe",
+            sort_order="desc",
+            page=2,
+            page_size=3,
+        )
+        _, asc_total, asc_rows = service.query_summaries(
+            run_id=run.id,
+            keyword=None,
+            industry=None,
+            data_quality=None,
+            min_annualized_return_pct=None,
+            min_ten_year_avg_annualized_return_pct=None,
+            min_dividend_year_count=None,
+            min_consecutive_dividend_years=None,
+            min_latest_dividend_yield_ttm=None,
+            max_latest_pb=None,
+            max_latest_pe=None,
+            max_latest_pe_ttm=None,
+            min_latest_roe=None,
+            sort_by="latest_roe",
+            sort_order="asc",
+            page=1,
+            page_size=5,
+        )
+
+    assert desc_total == 5
+    assert [row.ts_code for row in desc_page_one] == ["000001.SZ", "000004.SZ", "000003.SZ"]
+    assert [row.ts_code for row in desc_page_two] == ["000002.SZ", "000005.SZ"]
+    assert asc_total == 5
+    assert [row.ts_code for row in asc_rows] == [
+        "000003.SZ",
+        "000004.SZ",
+        "000001.SZ",
+        "000002.SZ",
+        "000005.SZ",
+    ]
 
 
 def test_export_summaries_xlsx_keeps_yearly_rows_grouped_by_stock() -> None:
@@ -648,6 +801,7 @@ def test_export_summaries_xlsx_keeps_yearly_rows_grouped_by_stock() -> None:
             min_dividend_year_count=None,
             min_consecutive_dividend_years=None,
             min_latest_dividend_yield_ttm=None,
+            max_latest_pb=None,
             max_latest_pe=None,
             max_latest_pe_ttm=None,
             min_latest_roe=None,

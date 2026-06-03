@@ -317,6 +317,7 @@ export interface DividendReinvestmentSummaryParams {
   min_dividend_year_count?: number;
   min_consecutive_dividend_years?: number;
   min_latest_dividend_yield_ttm?: number;
+  max_latest_pb?: number;
   max_latest_pe?: number;
   max_latest_pe_ttm?: number;
   min_latest_roe?: number;
@@ -326,6 +327,7 @@ export interface DividendReinvestmentSummaryParams {
     | 'total_return_pct'
     | 'total_cash_dividend'
     | 'latest_dividend_yield_ttm'
+    | 'latest_pb'
     | 'latest_pe'
     | 'latest_pe_ttm'
     | 'latest_roe';

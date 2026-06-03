@@ -59,6 +59,7 @@ def list_dividend_reinvestment_summaries(
     min_dividend_year_count: Annotated[int | None, Query(ge=0)] = None,
     min_consecutive_dividend_years: Annotated[int | None, Query(ge=0)] = None,
     min_latest_dividend_yield_ttm: Annotated[Decimal | None, Query()] = None,
+    max_latest_pb: Annotated[Decimal | None, Query()] = None,
     max_latest_pe: Annotated[Decimal | None, Query()] = None,
     max_latest_pe_ttm: Annotated[Decimal | None, Query()] = None,
     min_latest_roe: Annotated[Decimal | None, Query()] = None,
@@ -68,7 +69,7 @@ def list_dividend_reinvestment_summaries(
             pattern=(
                 "^(annualized_return_pct|ten_year_avg_annualized_return_pct|"
                 "total_return_pct|total_cash_dividend|latest_dividend_yield_ttm|"
-                "latest_pe|latest_pe_ttm|latest_roe)$"
+                "latest_pb|latest_pe|latest_pe_ttm|latest_roe)$"
             )
         ),
     ] = "total_cash_dividend",
@@ -92,6 +93,7 @@ def list_dividend_reinvestment_summaries(
         min_dividend_year_count=min_dividend_year_count,
         min_consecutive_dividend_years=min_consecutive_dividend_years,
         min_latest_dividend_yield_ttm=min_latest_dividend_yield_ttm,
+        max_latest_pb=max_latest_pb,
         max_latest_pe=max_latest_pe,
         max_latest_pe_ttm=max_latest_pe_ttm,
         min_latest_roe=min_latest_roe,
@@ -121,6 +123,7 @@ def export_dividend_reinvestment_summaries(
     min_dividend_year_count: Annotated[int | None, Query(ge=0)] = None,
     min_consecutive_dividend_years: Annotated[int | None, Query(ge=0)] = None,
     min_latest_dividend_yield_ttm: Annotated[Decimal | None, Query()] = None,
+    max_latest_pb: Annotated[Decimal | None, Query()] = None,
     max_latest_pe: Annotated[Decimal | None, Query()] = None,
     max_latest_pe_ttm: Annotated[Decimal | None, Query()] = None,
     min_latest_roe: Annotated[Decimal | None, Query()] = None,
@@ -130,7 +133,7 @@ def export_dividend_reinvestment_summaries(
             pattern=(
                 "^(annualized_return_pct|ten_year_avg_annualized_return_pct|"
                 "total_return_pct|total_cash_dividend|latest_dividend_yield_ttm|"
-                "latest_pe|latest_pe_ttm|latest_roe)$"
+                "latest_pb|latest_pe|latest_pe_ttm|latest_roe)$"
             )
         ),
     ] = "total_cash_dividend",
@@ -152,6 +155,7 @@ def export_dividend_reinvestment_summaries(
         min_dividend_year_count=min_dividend_year_count,
         min_consecutive_dividend_years=min_consecutive_dividend_years,
         min_latest_dividend_yield_ttm=min_latest_dividend_yield_ttm,
+        max_latest_pb=max_latest_pb,
         max_latest_pe=max_latest_pe,
         max_latest_pe_ttm=max_latest_pe_ttm,
         min_latest_roe=min_latest_roe,

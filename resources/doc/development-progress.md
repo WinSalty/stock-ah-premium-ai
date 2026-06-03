@@ -1,6 +1,6 @@
 # 开发进度记录
 
-更新日期：2026-06-01
+更新日期：2026-06-03
 
 ## 当前状态
 
@@ -8,6 +8,7 @@
 
 ## 已完成
 
+- 分红再投筛选页字段和筛选口径继续调整：榜单估值列顺序改为 PB、PE、PE_TTM，ROE 后紧跟最新股息率，避免估值与盈利质量指标分散；筛选区新增“最高 PB”，并贯通前端请求参数、后端查询接口、导出接口和服务层 `latest_pb <= max_latest_pb` 上限过滤。已补充单元测试验证 PB 上限筛选口径，`backend/.venv/bin/python -m pytest tests/test_dividend_reinvestment_service.py -q` 通过，`npm --prefix frontend run build` 通过，并用本地 in-app Browser 验证筛选框和表头顺序。
 - 分红再投筛选继续完善：主表和年度明细表头新增问号提示，解释收益率、估值、分红、数据质量和年度再投字段口径；分红再投计算已彻底移除 `stock_selection_factor_snapshot` 依赖，PE/PE_TTM/PB/股息率只读取 `a_daily_basic`，ROE 只读取 `a_financial_indicator.roe`。为修复 ROE 覆盖不足，后端新增 `a_financial_indicator` 同步数据集，普通 Tushare `fina_indicator` 按本地在市 A 股逐只同步，并新增周六 22:20 定时补数；同步页新增“逐股补齐 ROE 财务指标”开关，可在重跑分红再投数据前补齐财务指标。
 - 神奇九转推送已接入打板推送体系：后端新增 Tushare `stk_nineturn` 日频拉取、九转报告缓存和推送流水，按最新 A 股交易日构建九转成形、九转下跌和 7/8 计数观察池上下文，复用 DeepSeek LLM 生成 HTML 推送报告；定时任务在晚间数据更新后按九转数据快照幂等生成、推送给打板接收人，并复用雪球发布登录态和定时设置保存或发布九转长文，九转雪球文章不提交封面图。前端在“打板推送”页面新增“神奇九转”标签页，菜单权限继续复用 `limit_up_push`，支持查看报告、手动生成、手动推送、手动提交雪球和查看九转推送流水。
 - 已按分红再投入数据落地方案完成首版代码接入：新增回测批次、股票级摘要和年度明细三张模型表及 `20260529_0040` Alembic 迁移；新增 `dividend_reinvestment_data_landing` 同步数据集，按 `stock_basic`、`trade_cal`、`daily`、`dividend`、最新 `daily_basic`、本地回测计算顺序落地数据，复用 Tushare 客户端默认 0.6 秒限流；新增 `POST /api/sync/batches/dividend-reinvestment-data`，同步页增加“同步分红再投数据”入口，数据查询白名单增加三张回测结果表。新增 `GET /api/dividend-reinvestment/health`、`/runs`、`/summaries` 和 `/yearly/{ts_code}`，前端新增“分红再投筛选”菜单，支持数据健康概览、回测批次选择、收益/分红/估值条件筛选和单股年度明细抽屉；`20260530_0041` 迁移已给既有管理员补充分红再投菜单权限。针对 Tushare 中转长跑时的 SSL EOF、IncompleteRead 和短暂维护响应，客户端新增请求级退避重试并重建 SDK 连接，权限错误仍快速失败。分红回补已从自然日请求优化为按开市交易日 `ex_date` 请求；增量同步修复了 checkpoint 误改回测起点的问题，回测结果写入改为 500 行分块 upsert，避免真实 MySQL 大 SQL 断连。已完成真实数据初始化并生成最新成功回测批次 `3`：`a_daily_quote` 10741682 行，覆盖 2016-01-04 至 2026-05-29；`a_dividend` 25871 行，覆盖 2019-08-01 至 2026-05-29；`a_daily_basic` 6441 行，最新至 2026-05-29；回测股票摘要 2392 条、年度明细 26312 条。已补充单元测试覆盖数据落地、本地回测、统一同步入口、查询白名单、请求级重试、榜单筛选、交易日分红回补、增量回测起点和分块写入；本轮 Ruff、目标 pytest、前端构建和真实查询验收均已通过。

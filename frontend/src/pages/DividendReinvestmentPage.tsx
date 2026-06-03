@@ -39,6 +39,7 @@ interface FilterValues {
   min_dividend_year_count?: number;
   min_consecutive_dividend_years?: number;
   min_latest_dividend_yield_ttm?: number;
+  max_latest_pb?: number;
   max_latest_pe?: number;
   max_latest_pe_ttm?: number;
   min_latest_roe?: number;
@@ -52,6 +53,7 @@ type DividendSortField =
   | 'total_return_pct'
   | 'total_cash_dividend'
   | 'latest_dividend_yield_ttm'
+  | 'latest_pb'
   | 'latest_pe'
   | 'latest_pe_ttm'
   | 'latest_roe';
@@ -61,6 +63,7 @@ const DIVIDEND_SORT_FIELDS: DividendSortField[] = [
   'total_return_pct',
   'total_cash_dividend',
   'latest_dividend_yield_ttm',
+  'latest_pb',
   'latest_pe',
   'latest_pe_ttm',
   'latest_roe'
@@ -183,6 +186,16 @@ function DividendReinvestmentPage() {
         render: renderPct
       },
       {
+        title: renderHeaderTitle('PB'),
+        key: 'latest_pb',
+        dataIndex: 'latest_pb',
+        width: 96,
+        align: 'right',
+        sorter: true,
+        sortOrder: sortBy === 'latest_pb' ? (sortOrder === 'asc' ? 'ascend' : 'descend') : null,
+        render: renderNumber
+      },
+      {
         title: renderHeaderTitle('PE'),
         key: 'latest_pe',
         dataIndex: 'latest_pe',
@@ -213,6 +226,16 @@ function DividendReinvestmentPage() {
         render: renderPct
       },
       {
+        title: renderHeaderTitle('最新股息率'),
+        key: 'latest_dividend_yield_ttm',
+        dataIndex: 'latest_dividend_yield_ttm',
+        width: 142,
+        align: 'right',
+        sorter: true,
+        sortOrder: sortBy === 'latest_dividend_yield_ttm' ? (sortOrder === 'asc' ? 'ascend' : 'descend') : null,
+        render: renderPct
+      },
+      {
         title: renderHeaderTitle('累计收益率'),
         key: 'total_return_pct',
         dataIndex: 'total_return_pct',
@@ -235,17 +258,6 @@ function DividendReinvestmentPage() {
       },
       { title: renderHeaderTitle('分红年数'), dataIndex: 'dividend_year_count', width: 96, align: 'right' },
       { title: renderHeaderTitle('连续分红'), dataIndex: 'consecutive_dividend_years', width: 96, align: 'right' },
-      {
-        title: renderHeaderTitle('最新股息率'),
-        key: 'latest_dividend_yield_ttm',
-        dataIndex: 'latest_dividend_yield_ttm',
-        width: 142,
-        align: 'right',
-        sorter: true,
-        sortOrder: sortBy === 'latest_dividend_yield_ttm' ? (sortOrder === 'asc' ? 'ascend' : 'descend') : null,
-        render: renderPct
-      },
-      { title: renderHeaderTitle('PB'), dataIndex: 'latest_pb', width: 90, align: 'right', render: renderNumber },
       { title: renderHeaderTitle('数据质量'), dataIndex: 'data_quality', width: 110, render: renderQuality },
       { title: renderHeaderTitle('问题'), dataIndex: 'data_issue', width: 220, render: renderText },
       {
@@ -388,6 +400,9 @@ function DividendReinvestmentPage() {
             </Form.Item>
             <Form.Item label="最低十年均年化" name="min_ten_year_avg_annualized_return_pct">
               <InputNumber className="full-width" precision={2} />
+            </Form.Item>
+            <Form.Item label="最高 PB" name="max_latest_pb">
+              <InputNumber min={0} precision={2} className="full-width" />
             </Form.Item>
             <Form.Item label="最高 PE" name="max_latest_pe">
               <InputNumber min={0} precision={2} className="full-width" />
