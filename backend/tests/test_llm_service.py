@@ -16,11 +16,15 @@ from app.db.base import Base
 from app.db.models.chat import LlmCallMetric
 from app.db.models.market import AStockBasic, HKStockBasic
 from app.services.llm_service import (
+    AGGRESSIVE_LIMIT_UP_RECOMMENDATION_MODE,
+    CONSERVATIVE_VALUE_RECOMMENDATION_MODE,
     DIVIDEND_REINVESTMENT_ANSWER_MODE,
     DIVIDEND_REINVESTMENT_SQL_POLICY,
     FOLLOW_UP_ASSISTANT_SYSTEM_PROMPT,
     FOLLOW_UP_ROUTER_SYSTEM_PROMPT,
     INVESTMENT_ADVISOR_SYSTEM_PROMPT,
+    INVESTMENT_PREFERENCE_CLARIFICATION_MESSAGE,
+    INVESTMENT_PREFERENCE_CLARIFICATION_MODE,
     LLM_LIMIT_EXCEEDED_MESSAGE,
     OUT_OF_SCOPE_MESSAGE,
     QUESTION_ROUTER_SYSTEM_PROMPT,
@@ -1273,6 +1277,136 @@ def test_dividend_reinvestment_answer_prompt_contains_markdown_example() -> None
 
     assert "分红再投回答 Markdown 示例" in prompt
     assert "| 股票代码 | 名称 | 近十年平均年化 | 最新ROE | 最新PE | 投资观察 |" in prompt
+
+
+def test_broad_investment_recommendation_asks_preference_without_llm(monkeypatch) -> None:
+    """确认泛投资推荐入口先反问风险偏好，不消耗回答模型调用。
+
+    创建日期：2026-06-03
+    author: codex
+    """
+
+    service = LlmService(
+        Mock(),
+        settings=Settings(llm_api_key=None, llm_api_key_file=None, llm_model=None),
+    )
+    monkeypatch.setattr(
+        service,
+        "_chat_completion",
+        Mock(side_effect=AssertionError("preference clarification should not call LLM")),
+    )
+
+    route = service._route_question("我该买什么股票？")
+    answer = service.answer("我该买什么股票？")
+
+    assert route.answer_mode == INVESTMENT_PREFERENCE_CLARIFICATION_MODE
+    assert route.should_query_data is False
+    assert answer.answer == INVESTMENT_PREFERENCE_CLARIFICATION_MESSAGE
+    assert answer.sql is None
+    assert answer.rows == []
+
+
+def test_investment_preference_reply_routes_to_conservative_data(monkeypatch) -> None:
+    """确认“保守型”追问进入分红再投价值推荐路由。
+
+    创建日期：2026-06-03
+    author: codex
+    """
+
+    service = LlmService(
+        Mock(),
+        settings=Settings(llm_api_key="test-key", llm_api_key_file=None, llm_model="test-model"),
+    )
+    monkeypatch.setattr(
+        service,
+        "_chat_completion",
+        Mock(side_effect=AssertionError("preference reply should skip follow-up/router LLM")),
+    )
+    context = {
+        "conversation_history": [
+            {"role": "user", "content": "我该买什么股票？"},
+            {"role": "assistant", "content": INVESTMENT_PREFERENCE_CLARIFICATION_MESSAGE},
+        ]
+    }
+
+    route = service._route_question("长期持有保守型", context)
+
+    assert service._is_follow_up_question("长期持有保守型", context) is False
+    assert route.answer_mode == CONSERVATIVE_VALUE_RECOMMENDATION_MODE
+    assert route.should_query_data is True
+    assert route.data_demands == ()
+
+
+def test_investment_preference_reply_routes_to_limit_up_report(monkeypatch) -> None:
+    """确认“风险高收益型”追问读取最新打板报告。
+
+    创建日期：2026-06-03
+    author: codex
+    """
+
+    service = LlmService(
+        Mock(),
+        settings=Settings(llm_api_key="test-key", llm_api_key_file=None, llm_model="test-model"),
+    )
+    monkeypatch.setattr(
+        service,
+        "_chat_completion",
+        Mock(side_effect=AssertionError("aggressive preference should use local route")),
+    )
+    context = {
+        "conversation_history": [
+            {"role": "user", "content": "我可以投资哪些股票？"},
+            {"role": "assistant", "content": INVESTMENT_PREFERENCE_CLARIFICATION_MESSAGE},
+        ]
+    }
+
+    route = service._route_question("风险高收益型", context)
+    sql = service._default_sql_for_route(route)
+
+    assert route.answer_mode == AGGRESSIVE_LIMIT_UP_RECOMMENDATION_MODE
+    assert route.should_query_data is True
+    assert "limit_up_analysis_cache" in str(sql)
+    assert "status = 'READY'" in str(sql)
+
+
+def test_investment_recommendation_schema_and_prompt_are_exposed() -> None:
+    """确认保守型和风险型推荐的数据源字段会喂给 SQL 模型。
+
+    创建日期：2026-06-03
+    author: codex
+    """
+
+    service = LlmService(
+        Mock(),
+        settings=Settings(llm_api_key="test-key", llm_api_key_file=None, llm_model="test-model"),
+    )
+
+    schema = service._schema()
+    conservative_prompt = service._sql_prompt("长期持有保守型", {})
+    aggressive_prompt = service._sql_prompt("风险高收益型", {})
+    conservative_policy = service._answer_style_policy(
+        QuestionRoute(
+            is_answerable=True,
+            should_query_data=True,
+            answer_mode=CONSERVATIVE_VALUE_RECOMMENDATION_MODE,
+        ),
+        None,
+    )
+    aggressive_policy = service._answer_style_policy(
+        QuestionRoute(
+            is_answerable=True,
+            should_query_data=True,
+            answer_mode=AGGRESSIVE_LIMIT_UP_RECOMMENDATION_MODE,
+        ),
+        None,
+    )
+
+    assert "limit_up_analysis_cache" in schema
+    assert "content_markdown" in schema["limit_up_analysis_cache"]
+    assert "不超过 10 只" in conservative_prompt
+    assert "limit_up_analysis_cache" in aggressive_prompt
+    assert "不超过 10 只" in conservative_policy
+    assert "显著提示" in aggressive_policy
 
 
 def test_threshold_recommendation_fast_path_skips_router_and_market_data(monkeypatch) -> None:

@@ -53,6 +53,7 @@ class SqlGuardService:
         "dividend_reinvestment_backtest_run",
         "dividend_reinvestment_backtest_summary",
         "dividend_reinvestment_backtest_yearly",
+        "limit_up_analysis_cache",
         "v_market_data_fetch_health",
         "v_sync_health",
         "v_data_quality_issues",

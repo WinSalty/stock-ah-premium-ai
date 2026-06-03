@@ -183,6 +183,57 @@ def test_chat_message_returns_429_when_daily_llm_limit_exceeded(monkeypatch) -> 
     assert "日限额 100 次" in exc_info.value.detail
 
 
+def test_chat_message_hides_rows_from_response_but_keeps_audit_preview(monkeypatch) -> None:
+    """确认非流式问答不把数据摘要返回前端，但仍保存服务端审计预览。
+
+    创建日期：2026-06-03
+    author: codex
+    """
+
+    class FakeLlmService:
+        def __init__(self, db: Session) -> None:
+            self.db = db
+
+        def answer(
+            self,
+            question: str,
+            context: dict[str, object],
+            model: str | None = None,
+        ) -> ChatAnswer:
+            assert question == "招商银行十年平均年化收益率是多少？"
+            assert context["session_id"] == 1
+            return ChatAnswer(
+                answer="招商银行近十年平均年化约 19.04%。",
+                sql="select 1",
+                rows=[{"name": "招商银行", "ten_year_avg_annualized_return_pct": "19.04"}],
+            )
+
+    monkeypatch.setattr(routes_chat, "LlmService", FakeLlmService)
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    with Session(engine) as db:
+        user = add_user(db)
+        session = create_session(ChatSessionCreate(title="新的数据问答"), db, user)
+
+        response = create_message(
+            session.id,
+            ChatMessageCreate(question="招商银行十年平均年化收益率是多少？"),
+            db,
+            user,
+        )
+        assistant_message = db.scalar(
+            select(LlmChatMessage).where(
+                LlmChatMessage.session_id == session.id,
+                LlmChatMessage.role == "assistant",
+            )
+        )
+
+    assert response.rows == []
+    assert assistant_message is not None
+    assert assistant_message.result_preview_json is not None
+    assert "招商银行" in assistant_message.result_preview_json
+
+
 def test_chat_stream_worker_persists_answer_without_response_consumer(monkeypatch) -> None:
     """确认流式问答即使前端断开不消费响应，也会在后台跑完并保存回答。
 
@@ -202,7 +253,7 @@ def test_chat_stream_worker_persists_answer_without_response_consumer(monkeypatc
         ) -> tuple[str, list[dict[str, object]], object]:
             assert question == "招商银行当前估值怎么看？"
             assert context["session_id"] == 1
-            assert model is None
+            assert model == "deepseek-v4-flash"
             return "select 1", [{"name": "招商银行"}], iter(["第一段", "第二段"])
 
     monkeypatch.setattr(routes_chat, "LlmService", FakeLlmService)
@@ -244,3 +295,5 @@ def test_chat_stream_worker_persists_answer_without_response_consumer(monkeypatc
     assert assistant_message is not None
     assert assistant_message.content == "第一段第二段"
     assert assistant_message.sql_text == "select 1"
+    assert assistant_message.result_preview_json is not None
+    assert "招商银行" in assistant_message.result_preview_json

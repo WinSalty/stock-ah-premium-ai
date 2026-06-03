@@ -74,6 +74,25 @@ def test_sql_guard_accepts_dividend_reinvestment_tables() -> None:
     assert "dividend_reinvestment_backtest_run" in guarded.tables
 
 
+def test_sql_guard_accepts_limit_up_analysis_cache() -> None:
+    """确认风险高收益型推荐可读取最新打板报告缓存。
+
+    创建日期：2026-06-03
+    author: codex
+    """
+
+    service = SqlGuardService()
+
+    # 打板报告只作为短线风险偏好推荐的数据源，安全层仍限制为只读 SELECT。
+    guarded = service.validate(
+        "select title,content_markdown from limit_up_analysis_cache "
+        "where status='READY' order by trade_date desc limit 1",
+        default_limit=10,
+    )
+
+    assert "limit_up_analysis_cache" in guarded.tables
+
+
 def test_sql_guard_rejects_write_sql() -> None:
     with pytest.raises(SqlGuardError):
         SqlGuardService().validate("delete from v_latest_ah_premium")

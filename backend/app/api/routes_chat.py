@@ -107,15 +107,9 @@ def _parse_rows(message: LlmChatMessage) -> list[dict[str, object]]:
     author: sunshengxian
     """
 
-    if not message.result_preview_json:
-        return []
-    try:
-        rows = json.loads(message.result_preview_json)
-    except json.JSONDecodeError:
-        return []
-    if not isinstance(rows, list):
-        return []
-    return [row for row in rows if isinstance(row, dict)]
+    # LLM 回答的原始查询样本只用于后端审计和排查，不再通过历史消息接口返回前端，
+    # 避免页面展示“数据摘要”时暴露过多底层样本和字段口径。
+    return []
 
 
 def _message_response(message: LlmChatMessage) -> ChatStoredMessageResponse:
@@ -239,7 +233,9 @@ def _run_chat_stream_worker(
                 context,
                 model=payload.llm_model,
             )
-            event_queue.put({"type": "meta", "rows": rows})
+            # meta/done/error 事件不再携带 rows；LLM 内部仍可使用 rows 生成答案，
+            # 但前端不展示底层数据摘要，减少字段泄露和移动端渲染负担。
+            event_queue.put({"type": "meta", "rows": []})
             for chunk in chunks:
                 answer_parts.append(chunk)
                 event_queue.put({"type": "delta", "content": chunk})
@@ -256,7 +252,7 @@ def _run_chat_stream_worker(
                 "type": "done",
                 "message_id": message_id,
                 "answer": answer_text,
-                "rows": rows,
+                "rows": [],
             }
         )
     except LlmDailyLimitExceeded as exc:
@@ -274,7 +270,7 @@ def _run_chat_stream_worker(
                 "type": "error",
                 "message_id": message_id,
                 "answer": answer_text,
-                "rows": rows,
+                "rows": [],
             }
         )
     except Exception:
@@ -292,7 +288,7 @@ def _run_chat_stream_worker(
                 "type": "error",
                 "message_id": message_id,
                 "answer": answer_text,
-                "rows": rows,
+                "rows": [],
             }
         )
     finally:
@@ -499,7 +495,8 @@ def create_message(
     return ChatMessageResponse(
         message_id=assistant_message.id,
         answer=answer.answer,
-        rows=answer.rows,
+        # 非流式接口同样不向前端返回数据摘要；rows 仍落库供服务端审计。
+        rows=[],
     )
 
 
