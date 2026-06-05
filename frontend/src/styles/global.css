@@ -291,15 +291,15 @@ body {
   background: #f5f7fb;
 }
 
-html.mobile-keyboard-open,
-html.mobile-keyboard-open body {
-  /* 移动端键盘弹起时外层文档只作为固定应用壳承载层，禁止浏览器聚焦输入框时滚动整页。 */
+html.mobile-app-viewport.mobile-keyboard-open,
+html.mobile-app-viewport.mobile-keyboard-open body {
+  /* 移动端键盘弹起时只锁登录后的应用壳外层文档，登录页继续交给浏览器自然滚动。 */
   height: var(--mobile-app-height, 100dvh);
   overflow: hidden;
   overscroll-behavior: none;
 }
 
-html.mobile-keyboard-open body {
+html.mobile-app-viewport.mobile-keyboard-open body {
   /* iOS Safari 会尝试移动 body 来暴露正在输入的 textarea；固定 body 后只允许内部 chat-history 滚动。 */
   position: fixed;
   inset: 0;

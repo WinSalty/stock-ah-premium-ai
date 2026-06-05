@@ -160,6 +160,7 @@ function useMobileVisualViewportHeight(enabled: boolean) {
     }
 
     const root = document.documentElement;
+    root.classList.add('mobile-app-viewport');
     const updateViewportHeight = () => {
       // visualViewport 能反映移动端地址栏收起、横竖屏切换和键盘弹起后的真实可见高度；
       // iOS 部分浏览器会在键盘弹起时同步缩小 innerHeight，因此这里用最近一次非键盘稳定高度
@@ -222,6 +223,7 @@ function useMobileVisualViewportHeight(enabled: boolean) {
       window.visualViewport?.removeEventListener('scroll', updateViewportHeight);
       root.style.removeProperty('--mobile-app-height');
       root.style.removeProperty('--mobile-keyboard-inset');
+      root.classList.remove('mobile-app-viewport');
       root.classList.remove('mobile-keyboard-open');
       stableViewportHeightRef.current = null;
     };
@@ -236,13 +238,14 @@ function useMobileVisualViewportHeight(enabled: boolean) {
 function App() {
   const queryClient = useQueryClient();
   const isMobileApp = useMobileAppViewport();
-  useMobileVisualViewportHeight(isMobileApp);
   const hasAppliedMobileDefaultRef = useRef(false);
   const initialPageFromUrlRef = useRef<PageKey | null>(getPageFromLocation());
   const shareToken = window.location.pathname.match(/^\/limit-up-share\/([^/]+)$/)?.[1];
   const [page, setPage] = useState<PageKey>(() => initialPageFromUrlRef.current || 'overview');
   const [user, setUser] = useState<UserInfo | null>(null);
   const [isCheckingAuth, setIsCheckingAuth] = useState(Boolean(getAuthToken()));
+  // 视觉视口锁只服务登录后的移动端应用壳；登录页需要保留浏览器原生滚动，避免密码框聚焦后卡住。
+  useMobileVisualViewportHeight(isMobileApp && Boolean(user));
   const pages: Partial<Record<PageKey, ReactNode>> = {
     overview: user ? <OverviewPage currentUser={user} /> : null,
     sync: <SyncPage />,
