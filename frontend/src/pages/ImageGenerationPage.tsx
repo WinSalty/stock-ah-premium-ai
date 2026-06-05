@@ -407,7 +407,7 @@ function ImageGalleryCard({
         ) : null}
         <div className="image-gallery-meta">
           {showUser ? <span>{item.display_name || item.username || item.user_id}</span> : null}
-          <span>{formatEast8DateTime(item.created_at)}</span>
+          <span>{formatEast8DateTime(item.created_at, { naiveAsEast8: true })}</span>
         </div>
         {item.status === 'READY' ? (
           <Button size="small" icon={<Download size={14} />} onClick={download}>
@@ -465,7 +465,9 @@ function ImageGalleryCard({
                   {log.status_code ? <Tag color="orange">HTTP {log.status_code}</Tag> : null}
                   {log.retry_count ? <Tag color="blue">重试 {log.retry_count} 次</Tag> : null}
                 </Space>
-                <Typography.Text type="secondary">{formatEast8DateTime(log.created_at)}</Typography.Text>
+                <Typography.Text type="secondary">
+                  {formatEast8DateTime(log.created_at, { naiveAsEast8: true })}
+                </Typography.Text>
                 <Typography.Paragraph className="image-error-log-detail">
                   {log.detail_message}
                 </Typography.Paragraph>

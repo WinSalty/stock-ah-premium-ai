@@ -18,6 +18,13 @@
 - 功能测试需要真实 Tushare 权限、LLM Key 和 MySQL 环境时，必须由用户确认后再执行。
 - 本项目内任何代码、脚本、SQL、迁移和自动化任务的新增或修改，都必须使用中文注释写清业务意图、数据来源、过滤条件、幂等/重跑口径和异常边界；触碰到缺少中文注释的既有逻辑时，必须在本次改动范围内补齐。
 
+## 时间与时区口径
+
+- 新增或修改任何时间字段时，必须先明确该字段是 `UTC naive`、`东八区 naive` 还是带时区 ISO 字符串，不能在前端或后端凭感觉手动加减 8 小时。
+- 后端使用 `datetime.now(UTC).replace(tzinfo=None)` 写入的字段按 `UTC naive` 入库，前端使用 `formatEast8DateTime(value)` 展示，由工具统一转成东八区。
+- 数据库 `server_default=func.now()`、MySQL `CURRENT_TIMESTAMP`、`created_at`、`updated_at` 等由数据库生成且无时区后缀的字段，在当前服务器口径下按东八区本地时间理解；前端展示必须使用 `formatEast8DateTime(value, { naiveAsEast8: true })`，避免再次按 UTC 转换导致快 8 小时。
+- 如果新接口返回时间给前端，优先在 schema/注释/页面调用处标明时间来源；发现展示快 8 小时或慢 8 小时，先检查字段来源和格式化参数，不得用临时字符串拼接或硬编码偏移修补。
+
 ## Git Push 操作口径
 
 - 本项目远端为 `https://github.com/WinSalty/stock-ah-premium-ai.git`，本机命令行 Git 使用 macOS `osxkeychain` 凭据；IDEA 推送成功通常说明 IDEA 自身登录态有效，但 Codex/终端推送可直接走同一套命令行 Git 配置。
