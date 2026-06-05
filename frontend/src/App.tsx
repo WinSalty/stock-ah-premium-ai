@@ -59,6 +59,7 @@ type AppMenuItem = {
 };
 
 const MOBILE_APP_MEDIA_QUERY = '(max-width: 720px)';
+const MOBILE_KEYBOARD_INSET_THRESHOLD = 80;
 const MOBILE_PRIMARY_PAGE_KEYS: PageKey[] = ['chat', 'image_generation', 'premium', 'overview', 'profile'];
 const PAGE_QUERY_KEY = 'page';
 
@@ -151,6 +152,7 @@ function useMobileAppViewport() {
  */
 function useMobileVisualViewportHeight(enabled: boolean) {
   const stableViewportHeightRef = useRef<number | null>(null);
+  const scrollResetFrameRef = useRef<number | null>(null);
 
   useEffect(() => {
     if (!enabled || typeof window === 'undefined') {
@@ -160,16 +162,26 @@ function useMobileVisualViewportHeight(enabled: boolean) {
     const root = document.documentElement;
     const updateViewportHeight = () => {
       // visualViewport 能反映移动端地址栏收起、横竖屏切换和键盘弹起后的真实可见高度；
-      // 键盘弹起时保留最近一次非键盘高度作为应用壳高度，再单独暴露键盘遮挡量，
-      // 避免问答页整页被键盘压缩顶开，同时仍能把输入区抬到可见区域。
+      // iOS 部分浏览器会在键盘弹起时同步缩小 innerHeight，因此这里用最近一次非键盘稳定高度
+      // 反推键盘遮挡量，避免差值被算成 0 后整页被浏览器聚焦滚动顶到上方。
       const layoutHeight = window.innerHeight;
       const visualViewport = window.visualViewport;
       const viewportHeight = visualViewport?.height || layoutHeight;
       const viewportOffsetTop = visualViewport?.offsetTop || 0;
-      const keyboardInset = Math.max(0, layoutHeight - viewportHeight - viewportOffsetTop);
-      const isKeyboardOpen = keyboardInset > 80;
+      const observedViewportBottom = Math.round(viewportHeight + viewportOffsetTop);
+      const previousStableHeight = stableViewportHeightRef.current || Math.max(layoutHeight, observedViewportBottom);
+      const keyboardInset = Math.max(
+        0,
+        layoutHeight - viewportHeight - viewportOffsetTop,
+        previousStableHeight - viewportHeight - viewportOffsetTop
+      );
+      const isKeyboardOpen = keyboardInset > MOBILE_KEYBOARD_INSET_THRESHOLD;
       if (!isKeyboardOpen || stableViewportHeightRef.current === null) {
-        stableViewportHeightRef.current = viewportHeight;
+        stableViewportHeightRef.current = Math.max(
+          stableViewportHeightRef.current || 0,
+          layoutHeight,
+          observedViewportBottom
+        );
       }
       const appHeight = isKeyboardOpen
         ? stableViewportHeightRef.current || viewportHeight
@@ -177,17 +189,35 @@ function useMobileVisualViewportHeight(enabled: boolean) {
       root.style.setProperty('--mobile-app-height', `${Math.round(appHeight)}px`);
       root.style.setProperty('--mobile-keyboard-inset', `${Math.round(keyboardInset)}px`);
       root.classList.toggle('mobile-keyboard-open', isKeyboardOpen);
+      if (isKeyboardOpen && scrollResetFrameRef.current === null) {
+        // 键盘聚焦时移动端浏览器可能会尝试滚动文档来暴露输入框；应用壳本身固定在视口内，
+        // 因此把外层文档滚回顶部，真正的内容滚动只交给问答历史区处理。
+        scrollResetFrameRef.current = window.requestAnimationFrame(() => {
+          scrollResetFrameRef.current = null;
+          window.scrollTo({ top: 0, left: 0 });
+        });
+      }
+    };
+
+    const resetViewportHeight = () => {
+      // 横竖屏切换会改变布局基准，高度缓存必须清空后重算，避免沿用上一方向误判键盘遮挡。
+      stableViewportHeightRef.current = null;
+      updateViewportHeight();
     };
 
     updateViewportHeight();
     window.addEventListener('resize', updateViewportHeight);
-    window.addEventListener('orientationchange', updateViewportHeight);
+    window.addEventListener('orientationchange', resetViewportHeight);
     window.visualViewport?.addEventListener('resize', updateViewportHeight);
     window.visualViewport?.addEventListener('scroll', updateViewportHeight);
 
     return () => {
+      if (scrollResetFrameRef.current !== null) {
+        window.cancelAnimationFrame(scrollResetFrameRef.current);
+        scrollResetFrameRef.current = null;
+      }
       window.removeEventListener('resize', updateViewportHeight);
-      window.removeEventListener('orientationchange', updateViewportHeight);
+      window.removeEventListener('orientationchange', resetViewportHeight);
       window.visualViewport?.removeEventListener('resize', updateViewportHeight);
       window.visualViewport?.removeEventListener('scroll', updateViewportHeight);
       root.style.removeProperty('--mobile-app-height');
