@@ -151,8 +151,7 @@ function useMobileAppViewport() {
  * author: sunshengxian
  */
 function useMobileVisualViewportHeight(enabled: boolean) {
-  const stableViewportHeightRef = useRef<number | null>(null);
-  const scrollResetFrameRef = useRef<number | null>(null);
+  const nonKeyboardViewportHeightRef = useRef<number | null>(null);
 
   useEffect(() => {
     if (!enabled || typeof window === 'undefined') {
@@ -161,71 +160,80 @@ function useMobileVisualViewportHeight(enabled: boolean) {
 
     const root = document.documentElement;
     root.classList.add('mobile-app-viewport');
+
+    const isEditingInput = () => {
+      const element = document.activeElement;
+      if (!element) {
+        return false;
+      }
+      return (
+        element instanceof HTMLInputElement ||
+        element instanceof HTMLTextAreaElement ||
+        element instanceof HTMLSelectElement ||
+        element.getAttribute('contenteditable') === 'true'
+      );
+    };
+
     const updateViewportHeight = () => {
-      // visualViewport 能反映移动端地址栏收起、横竖屏切换和键盘弹起后的真实可见高度；
-      // iOS 部分浏览器会在键盘弹起时同步缩小 innerHeight，因此这里用最近一次非键盘稳定高度
-      // 反推键盘遮挡量，避免差值被算成 0 后整页被浏览器聚焦滚动顶到上方。
+      // 移动端应用壳始终跟随 visualViewport 的真实可见高度；地址栏收放和键盘弹起都由壳自身变高/变矮承接，
+      // 不再混用稳定布局高度去二次扣减内部区域，避免 iOS Safari 在外层文档和固定底栏之间反复顶动页面。
       const layoutHeight = window.innerHeight;
       const visualViewport = window.visualViewport;
       const viewportHeight = visualViewport?.height || layoutHeight;
       const viewportOffsetTop = visualViewport?.offsetTop || 0;
-      const observedViewportBottom = Math.round(viewportHeight + viewportOffsetTop);
-      const previousStableHeight = stableViewportHeightRef.current || Math.max(layoutHeight, observedViewportBottom);
+      const roundedViewportHeight = Math.round(viewportHeight);
+      const roundedViewportOffsetTop = Math.round(viewportOffsetTop);
+      const baselineHeight = nonKeyboardViewportHeightRef.current || Math.max(layoutHeight, roundedViewportHeight);
       const keyboardInset = Math.max(
         0,
-        layoutHeight - viewportHeight - viewportOffsetTop,
-        previousStableHeight - viewportHeight - viewportOffsetTop
+        baselineHeight - roundedViewportHeight - roundedViewportOffsetTop,
+        layoutHeight - roundedViewportHeight - roundedViewportOffsetTop
       );
-      const isKeyboardOpen = keyboardInset > MOBILE_KEYBOARD_INSET_THRESHOLD;
-      if (!isKeyboardOpen || stableViewportHeightRef.current === null) {
-        stableViewportHeightRef.current = Math.max(
-          stableViewportHeightRef.current || 0,
+      const isKeyboardOpen = isEditingInput() && keyboardInset > MOBILE_KEYBOARD_INSET_THRESHOLD;
+      if (!isKeyboardOpen) {
+        nonKeyboardViewportHeightRef.current = Math.max(
+          nonKeyboardViewportHeightRef.current || 0,
           layoutHeight,
-          observedViewportBottom
+          roundedViewportHeight + roundedViewportOffsetTop
         );
       }
-      const appHeight = isKeyboardOpen
-        ? stableViewportHeightRef.current || viewportHeight
-        : viewportHeight;
-      root.style.setProperty('--mobile-app-height', `${Math.round(appHeight)}px`);
+      root.style.setProperty('--mobile-app-height', `${roundedViewportHeight}px`);
+      root.style.setProperty('--mobile-viewport-offset-top', `${roundedViewportOffsetTop}px`);
       root.style.setProperty('--mobile-keyboard-inset', `${Math.round(keyboardInset)}px`);
       root.classList.toggle('mobile-keyboard-open', isKeyboardOpen);
-      if (isKeyboardOpen && scrollResetFrameRef.current === null) {
-        // 键盘聚焦时移动端浏览器可能会尝试滚动文档来暴露输入框；应用壳本身固定在视口内，
-        // 因此把外层文档滚回顶部，真正的内容滚动只交给问答历史区处理。
-        scrollResetFrameRef.current = window.requestAnimationFrame(() => {
-          scrollResetFrameRef.current = null;
-          window.scrollTo({ top: 0, left: 0 });
-        });
-      }
     };
 
     const resetViewportHeight = () => {
       // 横竖屏切换会改变布局基准，高度缓存必须清空后重算，避免沿用上一方向误判键盘遮挡。
-      stableViewportHeightRef.current = null;
+      nonKeyboardViewportHeightRef.current = null;
       updateViewportHeight();
+    };
+
+    const updateViewportHeightAfterFocus = () => {
+      window.setTimeout(updateViewportHeight, 0);
     };
 
     updateViewportHeight();
     window.addEventListener('resize', updateViewportHeight);
     window.addEventListener('orientationchange', resetViewportHeight);
+    window.addEventListener('focusin', updateViewportHeightAfterFocus);
+    window.addEventListener('focusout', updateViewportHeightAfterFocus);
     window.visualViewport?.addEventListener('resize', updateViewportHeight);
     window.visualViewport?.addEventListener('scroll', updateViewportHeight);
 
     return () => {
-      if (scrollResetFrameRef.current !== null) {
-        window.cancelAnimationFrame(scrollResetFrameRef.current);
-        scrollResetFrameRef.current = null;
-      }
       window.removeEventListener('resize', updateViewportHeight);
       window.removeEventListener('orientationchange', resetViewportHeight);
+      window.removeEventListener('focusin', updateViewportHeightAfterFocus);
+      window.removeEventListener('focusout', updateViewportHeightAfterFocus);
       window.visualViewport?.removeEventListener('resize', updateViewportHeight);
       window.visualViewport?.removeEventListener('scroll', updateViewportHeight);
       root.style.removeProperty('--mobile-app-height');
+      root.style.removeProperty('--mobile-viewport-offset-top');
       root.style.removeProperty('--mobile-keyboard-inset');
       root.classList.remove('mobile-app-viewport');
       root.classList.remove('mobile-keyboard-open');
-      stableViewportHeightRef.current = null;
+      nonKeyboardViewportHeightRef.current = null;
     };
   }, [enabled]);
 }
@@ -438,9 +446,9 @@ function MobileAppShell({
     if (!content) {
       return;
     }
-    // 移动端页面复用同一个滚动容器，切换菜单后必须回到顶部，避免沿用上个页面的滚动位置。
+    // 移动端页面复用同一个内部滚动容器，切换菜单只重置应用内容滚动；
+    // 不触碰 window 滚动，避免 iOS Safari 地址栏展开后把底部导航挤出可视区。
     content.scrollTo({ top: 0, left: 0 });
-    window.scrollTo({ top: 0, left: 0 });
     window.requestAnimationFrame(() => {
       content.scrollTo({ top: 0, left: 0 });
     });

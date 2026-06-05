@@ -291,18 +291,24 @@ body {
   background: #f5f7fb;
 }
 
-html.mobile-app-viewport.mobile-keyboard-open,
-html.mobile-app-viewport.mobile-keyboard-open body {
-  /* 移动端键盘弹起时只锁登录后的应用壳外层文档，登录页继续交给浏览器自然滚动。 */
+html.mobile-app-viewport,
+html.mobile-app-viewport body {
+  /* 登录后的移动端应用由固定 App 壳承接全部滚动，外层文档不再参与 Safari 地址栏和键盘的滚动计算。 */
   height: var(--mobile-app-height, 100dvh);
   overflow: hidden;
   overscroll-behavior: none;
 }
 
-html.mobile-app-viewport.mobile-keyboard-open body {
-  /* iOS Safari 会尝试移动 body 来暴露正在输入的 textarea；固定 body 后只允许内部 chat-history 滚动。 */
+html.mobile-app-viewport #root {
+  height: var(--mobile-app-height, 100dvh);
+  overflow: hidden;
+}
+
+html.mobile-app-viewport body {
+  /* 固定 body 后，底部导航和问答输入区只跟随 visualViewport 高度变化，不被外层 window 滚动顶走。 */
   position: fixed;
   inset: 0;
+  width: 100%;
 }
 
 .app-shell {
@@ -378,9 +384,12 @@ html.mobile-app-viewport.mobile-keyboard-open body {
 }
 
 .mobile-app-shell {
-  /* 移动端壳固定在真实可视区域内，避免文档滚动或地址栏高度变化时把底部菜单推到页面中部。 */
+  /* 移动端壳固定在 visualViewport 可见区域内，地址栏收放和键盘弹起都通过 CSS 变量同步尺寸。 */
   position: fixed;
-  inset: 0;
+  top: var(--mobile-viewport-offset-top, 0);
+  right: 0;
+  bottom: auto;
+  left: 0;
   display: flex;
   flex-direction: column;
   width: 100%;
@@ -2661,7 +2670,7 @@ pre.llm-payload-viewer,
     overflow: hidden;
   }
 
-  html.mobile-keyboard-open .mobile-app-content.mobile-page-chat + .mobile-app-tabbar {
+  html.mobile-app-viewport.mobile-keyboard-open .mobile-app-content.mobile-page-chat + .mobile-app-tabbar {
     display: none;
   }
 
@@ -2685,11 +2694,6 @@ pre.llm-payload-viewer,
     border: 0;
     border-radius: 0;
     background: #f8fafc;
-  }
-
-  html.mobile-keyboard-open .mobile-app-content.mobile-page-chat .chat-workspace {
-    /* 键盘弹起时只压缩问答内部工作区，外层应用壳不再整体改高，避免顶部和历史区被浏览器顶开。 */
-    height: max(320px, calc(100% - var(--mobile-keyboard-inset, 0px)));
   }
 
   .mobile-app-content.mobile-page-chat .chat-mobile-topbar {
