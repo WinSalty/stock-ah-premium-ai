@@ -176,6 +176,38 @@ def test_failed_generation_refunds_quota(tmp_path: Path) -> None:
     assert "供应商失败" in logs[0].detail_message
 
 
+def test_retry_failed_generation_creates_new_task(tmp_path: Path) -> None:
+    """确认失败图片可一键重试并创建新的后台生成任务。
+
+    创建日期：2026-06-05
+    author: sunshengxian
+    """
+
+    db = make_db()
+    user = add_user(db, "retry-user")
+    failing_service = ImageGenerationService(
+        db,
+        make_settings(tmp_path),
+        FakeImageClient(fail=True),
+    )
+    failed_response = failing_service.create_generation(
+        user,
+        "A retryable image",
+        "1024x1024",
+    )
+    failing_service.process_generation(failed_response.id)
+
+    retry_service = ImageGenerationService(db, make_settings(tmp_path), FakeImageClient())
+    retry_response = retry_service.retry_generation(user, failed_response.id)
+
+    assert retry_response.id != failed_response.id
+    assert retry_response.status == "GENERATING"
+    assert retry_response.prompt == "A retryable image"
+    assert retry_response.size == "1024x1024"
+    assert retry_response.quota is not None
+    assert retry_response.quota.used_count == 1
+
+
 def test_reference_generation_uses_reference_payload(tmp_path: Path) -> None:
     """确认参考图会先本地落盘，再传给供应商适配层。
 

@@ -184,6 +184,36 @@ class ImageGenerationService:
                 error_type=exc.__class__.__name__,
             )
 
+    def retry_generation(self, user: AppUser, generation_id: int) -> ImageGenerationResponse:
+        """按原图片记录重新创建生成任务，复用 prompt、尺寸和参考图。
+
+        创建日期：2026-06-05
+        author: sunshengxian
+        """
+
+        original_record = self.get_generation(user, generation_id)
+        if original_record.status != IMAGE_GENERATION_STATUS_FAILED:
+            raise ImageGenerationError("只有失败的图片记录可以重试")
+        owner = self.db.get(AppUser, original_record.user_id)
+        if owner is None:
+            raise ImageGenerationError("图片所属用户不存在", 404)
+        reference_image = None
+        if original_record.reference_file_relative_path:
+            # 重试带参考图的任务时先读取原参考图，再进入 create_generation 扣次数；
+            # 这样参考图文件缺失不会误消耗用户今日生成次数。
+            reference_path, reference_mime_type = self._reference_payload_file(original_record)
+            reference_image = UploadedReferenceImage(
+                filename=Path(original_record.reference_file_relative_path).name,
+                content=reference_path.read_bytes(),
+                mime_type=reference_mime_type,
+            )
+        return self.create_generation(
+            owner,
+            original_record.prompt,
+            original_record.size,
+            reference_image,
+        )
+
     def process_generation(self, generation_id: int) -> None:
         """后台处理图片生成任务，用户离开页面后仍继续推进记录状态。
 

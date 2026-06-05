@@ -122,6 +122,31 @@ def get_image_generation(
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
 
 
+@router.post(
+    "/image-generation/generations/{generation_id}/retry",
+    response_model=ImageGenerationResponse,
+)
+def retry_image_generation(
+    generation_id: int,
+    db: DbSession,
+    user: ImageGenerationUser,
+    background_tasks: BackgroundTasks,
+) -> ImageGenerationResponse:
+    """一键重试失败图片，复用原描述、尺寸和参考图后重新进入后台生成。
+
+    创建日期：2026-06-05
+    author: sunshengxian
+    """
+
+    try:
+        response = ImageGenerationService(db).retry_generation(user, generation_id)
+    except ImageGenerationError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+    if response.status == IMAGE_GENERATION_STATUS_GENERATING:
+        background_tasks.add_task(process_image_generation_background, response.id)
+    return response
+
+
 @router.get("/image-generation/generations/{generation_id}/file")
 def get_image_generation_file(
     generation_id: int,

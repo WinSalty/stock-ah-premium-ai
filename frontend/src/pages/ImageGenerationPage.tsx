@@ -9,7 +9,8 @@ import {
   fetchImageGenerationErrorLogs,
   fetchImageGenerations,
   fetchMyImageGenerationQuota,
-  fetchProtectedImageBlobUrl
+  fetchProtectedImageBlobUrl,
+  retryImageGeneration
 } from '../api/imageGeneration';
 import type { ImageGenerationErrorLog, ImageGenerationItem, UserInfo } from '../types/domain';
 import { formatEast8DateTime } from '../utils/datetime';
@@ -23,11 +24,9 @@ interface ImageGenerationFormValues {
   size: string;
 }
 
-const DEFAULT_HISTORY_STATUS = 'READY,GENERATING';
-
 const statusOptions = [
-  { label: '已完成和生成中', value: DEFAULT_HISTORY_STATUS },
   { label: '全部状态', value: '' },
+  { label: '已完成和生成中', value: 'READY,GENERATING' },
   { label: '已完成', value: 'READY' },
   { label: '失败', value: 'FAILED' },
   { label: '生成中', value: 'GENERATING' }
@@ -41,7 +40,7 @@ const statusOptions = [
 function ImageGenerationPage({ currentUser }: ImageGenerationPageProps) {
   const [form] = Form.useForm<ImageGenerationFormValues>();
   const queryClient = useQueryClient();
-  const [statusFilter, setStatusFilter] = useState(DEFAULT_HISTORY_STATUS);
+  const [statusFilter, setStatusFilter] = useState('');
   const [keyword, setKeyword] = useState('');
   const [referenceFile, setReferenceFile] = useState<File | null>(null);
   const [referencePreviewUrl, setReferencePreviewUrl] = useState<string | null>(null);
@@ -85,6 +84,23 @@ function ImageGenerationPage({ currentUser }: ImageGenerationPageProps) {
       }
     },
     onError: (error) => message.error(error instanceof Error ? error.message : '图片生成失败')
+  });
+  // 失败图片的重试会新建后台任务；成功后刷新历史和额度，让用户离开页面后回来也能看到最新状态。
+  const retryMutation = useMutation({
+    mutationFn: retryImageGeneration,
+    onSuccess: (record) => {
+      setLatestRecord(record);
+      queryClient.invalidateQueries({ queryKey: ['image-generation-quota'] });
+      queryClient.invalidateQueries({ queryKey: ['image-generations'] });
+      if (record.status === 'GENERATING') {
+        message.success('已重新开始生成，稍后可在历史图片里查看进度');
+      } else if (record.status === 'READY') {
+        message.success('图片已生成并保存');
+      } else {
+        message.warning(record.error_message || '图片重试失败，本次不会计入今日次数');
+      }
+    },
+    onError: (error) => message.error(error instanceof Error ? error.message : '图片重试失败')
   });
 
   useEffect(() => {
@@ -231,7 +247,14 @@ function ImageGenerationPage({ currentUser }: ImageGenerationPageProps) {
         ) : generations.data?.items.length ? (
           <div className="image-gallery-grid">
             {generations.data.items.map((item) => (
-              <ImageGalleryCard key={item.id} item={item} showUser={isAdmin} showErrorDetails={isAdmin} />
+              <ImageGalleryCard
+                key={item.id}
+                item={item}
+                showUser={isAdmin}
+                showErrorDetails={isAdmin}
+                retrying={retryMutation.isPending && retryMutation.variables === item.id}
+                onRetry={(record) => retryMutation.mutate(record.id)}
+              />
             ))}
           </div>
         ) : (
@@ -270,12 +293,16 @@ function ImageGalleryCard({
   item,
   showUser = false,
   compact = false,
-  showErrorDetails = false
+  showErrorDetails = false,
+  retrying = false,
+  onRetry
 }: {
   item: ImageGenerationItem;
   showUser?: boolean;
   compact?: boolean;
   showErrorDetails?: boolean;
+  retrying?: boolean;
+  onRetry?: (item: ImageGenerationItem) => void;
 }) {
   const mediaRef = useRef<HTMLDivElement | null>(null);
   const [imageUrl, setImageUrl] = useState<string | null>(null);
@@ -412,6 +439,16 @@ function ImageGalleryCard({
         {item.status === 'READY' ? (
           <Button size="small" icon={<Download size={14} />} onClick={download}>
             下载
+          </Button>
+        ) : null}
+        {item.status === 'FAILED' && onRetry ? (
+          <Button
+            size="small"
+            icon={<RefreshCw size={14} />}
+            loading={retrying}
+            onClick={() => onRetry(item)}
+          >
+            重试
           </Button>
         ) : null}
         {showErrorDetails && item.status === 'FAILED' ? (

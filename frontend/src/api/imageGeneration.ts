@@ -95,6 +95,20 @@ export function fetchImageGenerationErrorLogs(generationId: number) {
 }
 
 /**
+ * 对失败的图片生成记录发起一键重试，后端会复用原描述、尺寸和参考图创建新的异步任务。
+ * 创建日期：2026-06-05
+ * author: sunshengxian
+ */
+export function retryImageGeneration(generationId: number) {
+  return requestJson<ImageGenerationItem>(
+    `/api/image-generation/generations/${generationId}/retry`,
+    {
+      method: 'POST'
+    }
+  );
+}
+
+/**
  * 带鉴权读取图片 Blob，避免把图片文件接口暴露成公开静态资源。
  * 创建日期：2026-05-27
  * author: sunshengxian
