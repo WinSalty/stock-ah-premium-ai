@@ -71,7 +71,7 @@ function ImageGenerationPage({ currentUser }: ImageGenerationPageProps) {
       if (record.status === 'READY') {
         message.success('图片已生成并保存');
       } else {
-        message.warning(record.error_message || '图片生成失败，已返还次数');
+        message.warning(record.error_message || '图片生成失败，本次不会计入今日次数');
       }
     },
     onError: (error) => message.error(error instanceof Error ? error.message : '图片生成失败')
@@ -108,9 +108,9 @@ function ImageGenerationPage({ currentUser }: ImageGenerationPageProps) {
       <section className="image-generation-hero">
         <div>
           <Typography.Text className="image-generation-kicker">AI Image Studio</Typography.Text>
-          <Typography.Title level={2}>用文字和参考图生成可回看的本地图片资产</Typography.Title>
+          <Typography.Title level={2}>用文字和参考图生成你的图片灵感</Typography.Title>
           <Typography.Paragraph>
-            图片会保存到服务器独立数据目录，普通用户只看自己的历史记录，管理员可审计全部图片。
+            输入画面想法，选择适合的比例，生成结果会自动进入你的历史图片，方便随时预览和下载。
           </Typography.Paragraph>
         </div>
         <div className="image-generation-quota-card">
@@ -161,7 +161,7 @@ function ImageGenerationPage({ currentUser }: ImageGenerationPageProps) {
               <img src={referencePreviewUrl} alt="参考图预览" />
               <div>
                 <Typography.Text strong>{referenceFile?.name}</Typography.Text>
-                <Typography.Text type="secondary">参考图会先保存到本地，再由后端尝试调用供应商参考图接口。</Typography.Text>
+                <Typography.Text type="secondary">参考图会帮助生成结果贴近原图的构图、色彩或主体风格。</Typography.Text>
               </div>
               <Button type="text" icon={<X size={16} />} onClick={clearReference} />
             </div>
@@ -170,7 +170,7 @@ function ImageGenerationPage({ currentUser }: ImageGenerationPageProps) {
             type="info"
             showIcon
             className="image-generation-note"
-            message="参考图能力会优先尝试供应商 OpenAI 兼容编辑接口；如果供应商暂未开放，会清晰提示并返还本次次数。"
+            message="上传参考图可以帮助画面延续构图、色彩或主体风格；不需要参考时，直接用文字描述也可以生成。"
           />
           <Button
             type="primary"
@@ -188,7 +188,7 @@ function ImageGenerationPage({ currentUser }: ImageGenerationPageProps) {
           <div>
             <div className="panel-title">历史图片</div>
             <Typography.Text type="secondary">
-              {isAdmin ? '管理员可查看全部用户生成记录。' : '这里只展示你自己的图片记录。'}
+              {isAdmin ? '在这里查看近期生成的图片和提示词。' : '这里会保留你最近生成的图片和提示词。'}
             </Typography.Text>
           </div>
           <Space wrap>
