@@ -13,6 +13,7 @@
 - LLM 按需补齐 Tushare 股票数据通用开发方案：[llm-tushare-on-demand-stock-data-plan.md](./resources/doc/llm-tushare-on-demand-stock-data-plan.md)
 - 分红再投入筛选数据落地方案：[dividend-reinvestment-data-landing-plan.md](./resources/doc/dividend-reinvestment-data-landing-plan.md)
 - 分红再投入所需数据落地清单：[dividend-reinvestment-required-data-landing-plan.md](./resources/doc/dividend-reinvestment-required-data-landing-plan.md)
+- 打板报告多轮分析与筹码补数改造计划：[limit-up-multi-stage-analysis-refactor-plan.md](./resources/doc/limit-up-multi-stage-analysis-refactor-plan.md)
 - 文生图基础服务接入开发方案：[text-to-image-service-plan.md](./resources/doc/text-to-image-service-plan.md)
 - 开发进度记录：[development-progress.md](./resources/doc/development-progress.md)
 - 项目启动手册：[startup-guide.md](./resources/doc/startup-guide.md)
