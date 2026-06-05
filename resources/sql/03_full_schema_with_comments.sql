@@ -398,6 +398,25 @@ CREATE TABLE IF NOT EXISTS `ai_image_user_quota` (
   KEY `idx_ai_image_user_quota_user` (`user_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='AI 图片生成用户每日次数配置表';
 
+CREATE TABLE IF NOT EXISTS `ai_image_generation_error_log` (
+  `id` INT NOT NULL AUTO_INCREMENT COMMENT '自增主键',
+  `generation_id` INT NOT NULL COMMENT '图片生成记录 ID',
+  `user_id` INT NOT NULL COMMENT '图片所属用户 ID',
+  `provider` VARCHAR(64) NOT NULL DEFAULT '86gamestore' COMMENT '图片生成供应商标识',
+  `model` VARCHAR(64) NOT NULL COMMENT '实际调用的文生图模型',
+  `phase` VARCHAR(64) NOT NULL COMMENT '失败阶段，如 generate、provider_reference、store_reference',
+  `retry_count` INT NOT NULL DEFAULT 0 COMMENT '本次供应商调用已重试次数',
+  `status_code` INT DEFAULT NULL COMMENT '供应商 HTTP 状态码',
+  `error_type` VARCHAR(128) NOT NULL COMMENT '异常类型',
+  `user_message` VARCHAR(512) NOT NULL COMMENT '用户侧失败摘要',
+  `detail_message` LONGTEXT NOT NULL COMMENT '管理员排查用详细错误，已截断且不含鉴权头',
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '记录创建时间',
+  `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '记录更新时间',
+  PRIMARY KEY (`id`),
+  KEY `idx_ai_image_generation_error_log_generation` (`generation_id`, `created_at`),
+  KEY `idx_ai_image_generation_error_log_user` (`user_id`, `created_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='AI 图片生成错误日志表';
+
 CREATE TABLE IF NOT EXISTS `watchlist_stock` (
   `id` INT NOT NULL AUTO_INCREMENT COMMENT '自增主键',
   `user_id` INT NOT NULL DEFAULT 1 COMMENT '所属用户 ID',

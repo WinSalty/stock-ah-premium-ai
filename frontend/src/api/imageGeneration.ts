@@ -1,6 +1,7 @@
 import { API_BASE_URL, ApiError, getAuthToken, requestJson } from './client';
 import type {
   ImageGenerationAdminQuota,
+  ImageGenerationErrorLog,
   ImageGenerationItem,
   ImageGenerationListResponse,
   ImageGenerationQuota
@@ -85,6 +86,12 @@ export function resetImageGenerationQuota(userId: number) {
   return requestJson<ImageGenerationAdminQuota>(`/api/image-generation/admin/quotas/${userId}/reset`, {
     method: 'POST'
   });
+}
+
+export function fetchImageGenerationErrorLogs(generationId: number) {
+  return requestJson<ImageGenerationErrorLog[]>(
+    `/api/image-generation/generations/${generationId}/error-logs`
+  );
 }
 
 /**

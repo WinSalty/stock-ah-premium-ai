@@ -89,3 +89,24 @@ class ImageGenerationAdminQuotaResponse(BaseModel):
     quota_date: date
     last_reset_at: datetime | None = None
     updated_at: datetime | None = None
+
+
+class ImageGenerationErrorLogResponse(BaseModel):
+    """管理员查看图片生成错误日志响应。
+
+    创建日期：2026-06-05
+    author: sunshengxian
+    """
+
+    id: int
+    generation_id: int
+    user_id: int
+    provider: str
+    model: str
+    phase: str
+    retry_count: int
+    status_code: int | None = None
+    error_type: str
+    user_message: str
+    detail_message: str
+    created_at: datetime

@@ -14,9 +14,15 @@ from sqlalchemy.orm import Session
 
 from app.core.config import Settings, get_settings
 from app.db.models.auth import AppUser
-from app.db.models.image_generation import AiImageGeneration, AiImageUserQuota
+from app.db.models.image_generation import (
+    AiImageGeneration,
+    AiImageGenerationErrorLog,
+    AiImageUserQuota,
+)
+from app.db.session import SessionLocal
 from app.schemas.image_generation import (
     ImageGenerationAdminQuotaResponse,
+    ImageGenerationErrorLogResponse,
     ImageGenerationListResponse,
     ImageGenerationQuotaResponse,
     ImageGenerationResponse,
@@ -36,6 +42,7 @@ IMAGE_GENERATION_STATUS_READY = "READY"
 IMAGE_GENERATION_STATUS_FAILED = "FAILED"
 IMAGE_GENERATION_MODE_TEXT = "TEXT_TO_IMAGE"
 IMAGE_GENERATION_MODE_REFERENCE = "IMAGE_REFERENCE"
+IMAGE_GENERATION_USER_FAILED_MESSAGE = "图片生成失败，请稍后重试或联系管理员查看原因。"
 SUPPORTED_IMAGE_SIZES = {
     "1024x1024",
     "2048x2048",
@@ -117,7 +124,7 @@ class ImageGenerationService:
         size: str | None = None,
         reference_image: UploadedReferenceImage | None = None,
     ) -> ImageGenerationResponse:
-        """创建图片生成记录，失败时返还本次扣减次数。
+        """创建图片生成任务并立即返回，实际供应商调用由后台任务继续处理。
 
         创建日期：2026-05-27
         author: sunshengxian
@@ -152,8 +159,6 @@ class ImageGenerationService:
         self.db.add(record)
         self.db.commit()
         self.db.refresh(record)
-
-        started_at = perf_counter()
         try:
             stored_reference = (
                 self._store_reference_image(record, user, reference_image)
@@ -166,24 +171,60 @@ class ImageGenerationService:
                 record.reference_file_size_bytes = stored_reference.size_bytes
                 record.reference_file_sha256 = stored_reference.sha256
                 self.db.commit()
+            self.db.refresh(record)
+            return self.record_response(record, user, quota)
+        except (OSError, ValueError) as exc:
+            return self._mark_failed_and_refund(
+                record,
+                user,
+                IMAGE_GENERATION_USER_FAILED_MESSAGE,
+                perf_counter(),
+                detail_message=str(exc),
+                phase="store_reference",
+                error_type=exc.__class__.__name__,
+            )
 
-            if stored_reference is not None and reference_image is not None:
+    def process_generation(self, generation_id: int) -> None:
+        """后台处理图片生成任务，用户离开页面后仍继续推进记录状态。
+
+        创建日期：2026-06-05
+        author: sunshengxian
+        """
+
+        record = self.db.get(AiImageGeneration, generation_id)
+        if record is None or record.deleted_at is not None:
+            return
+        if record.status != IMAGE_GENERATION_STATUS_GENERATING:
+            return
+        user = self.db.get(AppUser, record.user_id)
+        if user is None:
+            self._mark_failed_and_refund(
+                record,
+                AppUser(id=record.user_id, username="", password_hash="", role="USER"),
+                IMAGE_GENERATION_USER_FAILED_MESSAGE,
+                perf_counter(),
+                detail_message="图片所属用户不存在",
+                phase="load_user",
+                error_type="UserNotFound",
+            )
+            return
+
+        started_at = perf_counter()
+        try:
+            if record.reference_file_relative_path:
+                reference_path, reference_mime_type = self._reference_payload_file(record)
                 provider_result = self.client.generate_with_reference(
-                    normalized_prompt,
-                    normalized_size,
-                    self.settings.image_gen_model,
+                    record.prompt,
+                    record.size,
+                    record.model,
                     ReferenceImagePayload(
-                        filename=reference_image.filename or "reference.png",
-                        content=reference_image.content,
-                        mime_type=stored_reference.mime_type,
+                        filename=Path(record.reference_file_relative_path).name,
+                        content=reference_path.read_bytes(),
+                        mime_type=reference_mime_type,
                     ),
                 )
             else:
-                provider_result = self.client.generate(
-                    normalized_prompt,
-                    normalized_size,
-                    self.settings.image_gen_model,
-                )
+                provider_result = self.client.generate(record.prompt, record.size, record.model)
 
             image_bytes = provider_result.image_bytes
             external_url = provider_result.image_url
@@ -209,13 +250,41 @@ class ImageGenerationService:
             record.elapsed_ms = (perf_counter() - started_at) * 1000
             record.error_message = None
             self.db.commit()
-            self.db.refresh(record)
-            quota = self.get_user_quota(user.id)
-            return self.record_response(record, user, quota)
         except ImageGenerationUnsupportedError as exc:
-            return self._mark_failed_and_refund(record, user, str(exc), started_at)
+            self._mark_failed_and_refund(
+                record,
+                user,
+                "当前暂不支持参考图生成，请移除参考图后重试。",
+                started_at,
+                detail_message=str(exc),
+                phase="provider_reference",
+                error_type=exc.__class__.__name__,
+                status_code=exc.status_code,
+            )
         except (ImageGenerationClientError, httpx.HTTPError, OSError, ValueError) as exc:
-            return self._mark_failed_and_refund(record, user, str(exc), started_at)
+            self._mark_failed_and_refund(
+                record,
+                user,
+                IMAGE_GENERATION_USER_FAILED_MESSAGE,
+                started_at,
+                detail_message=str(exc),
+                phase="generate",
+                error_type=exc.__class__.__name__,
+                status_code=getattr(exc, "status_code", None),
+                retry_count=getattr(exc, "retry_count", 0),
+            )
+        except Exception as exc:
+            # 后台任务不能把未知异常抛回已关闭的前端请求；这里统一转为失败记录和管理员日志，
+            # 避免用户下次进入页面时看到任务长期停留在“生成中”。
+            self._mark_failed_and_refund(
+                record,
+                user,
+                IMAGE_GENERATION_USER_FAILED_MESSAGE,
+                started_at,
+                detail_message=str(exc),
+                phase="unexpected",
+                error_type=exc.__class__.__name__,
+            )
 
     def list_generations(
         self,
@@ -385,6 +454,28 @@ class ImageGenerationService:
         self.db.refresh(quota)
         return self.admin_quota_response(user, quota)
 
+    def list_error_logs(
+        self,
+        admin_user: AppUser,
+        generation_id: int,
+    ) -> list[ImageGenerationErrorLogResponse]:
+        """管理员查看单条图片生成失败的详细日志。
+
+        创建日期：2026-06-05
+        author: sunshengxian
+        """
+
+        if admin_user.role != ROLE_ADMIN:
+            raise ImageGenerationError("没有访问权限", 403)
+        rows = list(
+            self.db.scalars(
+                select(AiImageGenerationErrorLog)
+                .where(AiImageGenerationErrorLog.generation_id == generation_id)
+                .order_by(AiImageGenerationErrorLog.id.desc())
+            ).all()
+        )
+        return [self.error_log_response(row) for row in rows]
+
     def record_response(
         self,
         record: AiImageGeneration,
@@ -474,6 +565,31 @@ class ImageGenerationService:
             updated_at=quota.updated_at,
         )
 
+    def error_log_response(
+        self,
+        log: AiImageGenerationErrorLog,
+    ) -> ImageGenerationErrorLogResponse:
+        """转换图片生成错误日志响应，仅用于管理员排查。
+
+        创建日期：2026-06-05
+        author: sunshengxian
+        """
+
+        return ImageGenerationErrorLogResponse(
+            id=log.id,
+            generation_id=log.generation_id,
+            user_id=log.user_id,
+            provider=log.provider,
+            model=log.model,
+            phase=log.phase,
+            retry_count=log.retry_count,
+            status_code=log.status_code,
+            error_type=log.error_type,
+            user_message=log.user_message,
+            detail_message=log.detail_message,
+            created_at=log.created_at,
+        )
+
     def _consume_quota(self, user_id: int) -> ImageGenerationQuotaResponse:
         """生成前扣减次数，使用行锁避免并发越过每日上限。
 
@@ -536,8 +652,13 @@ class ImageGenerationService:
         user: AppUser,
         message: str,
         started_at: float,
+        detail_message: str,
+        phase: str,
+        error_type: str,
+        status_code: int | None = None,
+        retry_count: int = 0,
     ) -> ImageGenerationResponse:
-        """记录失败并返还次数，保留失败流水便于用户回看和复制 prompt。
+        """记录失败摘要、返还次数，并把详细异常写入管理员日志表。
 
         创建日期：2026-05-27
         author: sunshengxian
@@ -550,10 +671,50 @@ class ImageGenerationService:
             {"error": record.error_message},
             ensure_ascii=False,
         )
+        self._append_error_log(
+            record,
+            record.error_message,
+            detail_message,
+            phase,
+            error_type,
+            status_code,
+            retry_count,
+        )
         self.db.commit()
         self.db.refresh(record)
         self._refund_quota(user.id)
         return self.record_response(record, user, self.get_user_quota(user.id))
+
+    def _append_error_log(
+        self,
+        record: AiImageGeneration,
+        user_message: str,
+        detail_message: str,
+        phase: str,
+        error_type: str,
+        status_code: int | None,
+        retry_count: int,
+    ) -> None:
+        """写入图片生成错误详情，供管理员查看而不直接暴露给普通用户。
+
+        创建日期：2026-06-05
+        author: sunshengxian
+        """
+
+        self.db.add(
+            AiImageGenerationErrorLog(
+                generation_id=record.id,
+                user_id=record.user_id,
+                provider=record.provider,
+                model=record.model,
+                phase=phase,
+                retry_count=max(retry_count, 0),
+                status_code=status_code,
+                error_type=error_type[:128],
+                user_message=user_message,
+                detail_message=self._safe_detail_message(detail_message),
+            )
+        )
 
     def _store_reference_image(
         self,
@@ -599,8 +760,27 @@ class ImageGenerationService:
             raise ValueError("生成图片超过本地保存上限")
         detected_mime_type = self._detect_mime_type(image_bytes, mime_type)
         if detected_mime_type not in SUPPORTED_REFERENCE_MIME_TYPES:
-            detected_mime_type = "image/png"
+            raise ValueError("生成结果不是可识别的图片文件")
         return self._store_bytes(record, user, image_bytes, detected_mime_type, category="outputs")
+
+    def _reference_payload_file(self, record: AiImageGeneration) -> tuple[Path, str]:
+        """读取已保存参考图，后台任务用它重新组装供应商请求。
+
+        创建日期：2026-06-05
+        author: sunshengxian
+        """
+
+        if not record.reference_file_relative_path or not record.reference_mime_type:
+            raise ValueError("参考图文件不存在")
+        reference_path = (
+            self._storage_root()
+            .joinpath(record.reference_file_relative_path)
+            .resolve()
+        )
+        storage_root = self._storage_root().resolve()
+        if not reference_path.is_relative_to(storage_root) or not reference_path.exists():
+            raise ValueError("参考图文件不存在")
+        return reference_path, record.reference_mime_type
 
     def _store_bytes(
         self,
@@ -708,6 +888,15 @@ class ImageGenerationService:
 
         return (message or "图片生成失败").strip()[:512]
 
+    def _safe_detail_message(self, message: str) -> str:
+        """截断管理员错误详情，避免供应商完整响应撑爆日志表。
+
+        创建日期：2026-06-05
+        author: sunshengxian
+        """
+
+        return (message or "图片生成失败").strip()[:4000]
+
     def _storage_root(self) -> Path:
         """返回独立数据盘图片存储根目录。
 
@@ -725,3 +914,17 @@ class ImageGenerationService:
         """
 
         return datetime.now(IMAGE_GENERATION_TIMEZONE).date()
+
+
+def process_image_generation_background(generation_id: int) -> None:
+    """使用独立数据库会话执行图片生成后台任务。
+
+    创建日期：2026-06-05
+    author: sunshengxian
+    """
+
+    db = SessionLocal()
+    try:
+        ImageGenerationService(db).process_generation(generation_id)
+    finally:
+        db.close()

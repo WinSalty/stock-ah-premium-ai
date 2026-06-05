@@ -199,6 +199,27 @@
   font-size: 12px;
 }
 
+.image-error-log-list {
+  width: 100%;
+}
+
+.image-error-log-item {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.image-error-log-detail {
+  max-height: 220px;
+  margin-bottom: 0 !important;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 @media (max-width: 720px) {
   .image-generation-hero {
     grid-template-columns: 1fr;

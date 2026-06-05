@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import base64
+import time
 from dataclasses import dataclass
 from typing import Any
 
 import httpx
 
 from app.core.config import Settings
+
+IMAGE_GENERATION_RATE_LIMIT_RETRY_ATTEMPTS = 5
+IMAGE_GENERATION_RATE_LIMIT_RETRY_SECONDS = 0.2
 
 
 class ImageGenerationClientError(RuntimeError):
@@ -19,6 +23,7 @@ class ImageGenerationClientError(RuntimeError):
     def __init__(self, message: str, status_code: int | None = None) -> None:
         super().__init__(message)
         self.status_code = status_code
+        self.retry_count = 0
 
 
 class ImageGenerationUnsupportedError(ImageGenerationClientError):
@@ -76,7 +81,8 @@ class ImageGenerationClient:
         api_key = self._api_key()
         payload = {"model": model, "prompt": prompt, "size": size, "n": 1}
         with httpx.Client(timeout=self.settings.image_gen_timeout_seconds) as client:
-            response = client.post(
+            response, retry_count = self._post_with_rate_limit_retry(
+                client,
                 f"{self.settings.image_gen_base_url.rstrip('/')}/v1/images/generations",
                 headers={
                     "Authorization": f"Bearer {api_key}",
@@ -84,7 +90,9 @@ class ImageGenerationClient:
                 },
                 json=payload,
             )
-        return self._parse_response(response)
+        result = self._parse_response(response, retry_count)
+        result.response_summary["retry_count"] = retry_count
+        return result
 
     def generate_with_reference(
         self,
@@ -101,7 +109,8 @@ class ImageGenerationClient:
 
         api_key = self._api_key()
         with httpx.Client(timeout=self.settings.image_gen_timeout_seconds) as client:
-            response = client.post(
+            response, retry_count = self._post_with_rate_limit_retry(
+                client,
                 f"{self.settings.image_gen_base_url.rstrip('/')}/v1/images/edits",
                 headers={"Authorization": f"Bearer {api_key}"},
                 data={"model": model, "prompt": prompt, "size": size, "n": "1"},
@@ -118,7 +127,59 @@ class ImageGenerationClient:
                 "当前文生图供应商暂未开放参考图 API",
                 response.status_code,
             )
-        return self._parse_response(response)
+        result = self._parse_response(response, retry_count)
+        result.response_summary["retry_count"] = retry_count
+        return result
+
+    def _post_with_rate_limit_retry(
+        self,
+        client: httpx.Client,
+        url: str,
+        **kwargs: Any,
+    ) -> tuple[httpx.Response, int]:
+        """对图片输入频率限制做短重试，避免毫秒级限流直接打断用户任务。
+
+        创建日期：2026-06-05
+        author: sunshengxian
+        """
+
+        retry_count = 0
+        for attempt in range(IMAGE_GENERATION_RATE_LIMIT_RETRY_ATTEMPTS + 1):
+            response = client.post(url, **kwargs)
+            if not self._is_rate_limit_response(response):
+                return response, retry_count
+            if attempt >= IMAGE_GENERATION_RATE_LIMIT_RETRY_ATTEMPTS:
+                return response, retry_count
+            retry_count += 1
+            time.sleep(self._rate_limit_retry_seconds(response))
+        return response, retry_count
+
+    def _is_rate_limit_response(self, response: httpx.Response) -> bool:
+        """识别供应商返回的 gpt-image 图片输入频率限制错误。
+
+        创建日期：2026-06-05
+        author: sunshengxian
+        """
+
+        if response.status_code != 429:
+            return False
+        message = self._error_message(response).lower()
+        return "rate limit reached" in message and "gpt-image" in message
+
+    def _rate_limit_retry_seconds(self, response: httpx.Response) -> float:
+        """按响应头读取重试间隔，缺省使用保守短等待。
+
+        创建日期：2026-06-05
+        author: sunshengxian
+        """
+
+        retry_after = response.headers.get("retry-after")
+        if retry_after:
+            try:
+                return max(float(retry_after), IMAGE_GENERATION_RATE_LIMIT_RETRY_SECONDS)
+            except ValueError:
+                return IMAGE_GENERATION_RATE_LIMIT_RETRY_SECONDS
+        return IMAGE_GENERATION_RATE_LIMIT_RETRY_SECONDS
 
     def _api_key(self) -> str:
         """读取供应商 API Key，避免上层误把空密钥发给外部服务。
@@ -132,7 +193,11 @@ class ImageGenerationClient:
             raise ImageGenerationClientError("文生图服务密钥未配置")
         return api_key
 
-    def _parse_response(self, response: httpx.Response) -> ImageGenerationProviderResult:
+    def _parse_response(
+        self,
+        response: httpx.Response,
+        retry_count: int = 0,
+    ) -> ImageGenerationProviderResult:
         """解析 OpenAI Images 兼容返回。
 
         创建日期：2026-05-27
@@ -140,7 +205,9 @@ class ImageGenerationClient:
         """
 
         if not response.is_success:
-            raise ImageGenerationClientError(self._error_message(response), response.status_code)
+            error = ImageGenerationClientError(self._error_message(response), response.status_code)
+            error.retry_count = retry_count
+            raise error
         payload = response.json()
         data = payload.get("data") if isinstance(payload, dict) else None
         if not isinstance(data, list) or not data:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import httpx
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
@@ -9,8 +10,10 @@ from sqlalchemy.pool import StaticPool
 from app.core.config import Settings
 from app.db.base import Base
 from app.db.models.auth import AppUser
-from app.db.models.image_generation import AiImageGeneration
+from app.db.models.image_generation import AiImageGeneration, AiImageGenerationErrorLog
 from app.services.image_generation_client import (
+    IMAGE_GENERATION_RATE_LIMIT_RETRY_ATTEMPTS,
+    ImageGenerationClient,
     ImageGenerationClientError,
     ImageGenerationProviderResult,
     ImageGenerationUnsupportedError,
@@ -121,6 +124,14 @@ def test_image_generation_saves_file_and_consumes_quota(tmp_path: Path) -> None:
     service = ImageGenerationService(db, make_settings(tmp_path), FakeImageClient())
 
     response = service.create_generation(user, "A green finance dashboard", "1024x1024")
+    assert response.status == "GENERATING"
+
+    service.process_generation(response.id)
+    response = service.record_response(
+        service.get_generation(user, response.id),
+        user,
+        service.get_user_quota(user.id),
+    )
 
     assert response.status == "READY"
     assert response.image_url == f"/api/image-generation/generations/{response.id}/file"
@@ -145,12 +156,24 @@ def test_failed_generation_refunds_quota(tmp_path: Path) -> None:
     service = ImageGenerationService(db, make_settings(tmp_path), FakeImageClient(fail=True))
 
     response = service.create_generation(user, "A red error illustration", "1024x1024")
+    assert response.status == "GENERATING"
+
+    service.process_generation(response.id)
+    response = service.record_response(
+        service.get_generation(user, response.id),
+        user,
+        service.get_user_quota(user.id),
+    )
 
     assert response.status == "FAILED"
     assert response.quota is not None
     assert response.quota.used_count == 0
     assert response.quota.remaining_count == 10
-    assert "供应商失败" in (response.error_message or "")
+    assert "供应商失败" not in (response.error_message or "")
+    assert "图片生成失败" in (response.error_message or "")
+    logs = db.query(AiImageGenerationErrorLog).filter_by(generation_id=response.id).all()
+    assert logs
+    assert "供应商失败" in logs[0].detail_message
 
 
 def test_reference_generation_uses_reference_payload(tmp_path: Path) -> None:
@@ -171,6 +194,10 @@ def test_reference_generation_uses_reference_payload(tmp_path: Path) -> None:
         "1024x1024",
         UploadedReferenceImage("ref.png", PNG_BYTES, "image/png"),
     )
+    assert response.status == "GENERATING"
+
+    service.process_generation(response.id)
+    response = service.record_response(service.get_generation(user, response.id), user)
 
     assert response.status == "READY"
     assert response.generation_mode == "IMAGE_REFERENCE"
@@ -202,11 +229,19 @@ def test_unsupported_reference_refunds_quota(tmp_path: Path) -> None:
         "1024x1024",
         UploadedReferenceImage("ref.png", PNG_BYTES, "image/png"),
     )
+    assert response.status == "GENERATING"
+
+    service.process_generation(response.id)
+    response = service.record_response(
+        service.get_generation(user, response.id),
+        user,
+        service.get_user_quota(user.id),
+    )
 
     assert response.status == "FAILED"
     assert response.quota is not None
     assert response.quota.used_count == 0
-    assert "参考图 API" in (response.error_message or "")
+    assert "参考图生成" in (response.error_message or "")
 
 
 def test_regular_user_cannot_read_other_user_image(tmp_path: Path) -> None:
@@ -231,3 +266,41 @@ def test_regular_user_cannot_read_other_user_image(tmp_path: Path) -> None:
         raise AssertionError("普通用户不应读取他人图片")
 
     assert service.get_generation(admin, response.id).id == response.id
+
+
+def test_rate_limit_response_retries_five_times(tmp_path: Path) -> None:
+    """确认 gpt-image rate limit 会按约定最多重试 5 次。
+
+    创建日期：2026-06-05
+    author: sunshengxian
+    """
+
+    request_count = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal request_count
+        request_count += 1
+        return httpx.Response(
+            429,
+            json={
+                "error": {
+                    "message": (
+                        "Rate limit reached for gpt-image-2-codex "
+                        "(for limit gpt-image) on input-images per min"
+                    )
+                }
+            },
+            request=request,
+        )
+
+    client = ImageGenerationClient(make_settings(tmp_path))
+    with httpx.Client(transport=httpx.MockTransport(handler)) as http_client:
+        response, retry_count = client._post_with_rate_limit_retry(
+            http_client,
+            "https://example.test/v1/images/generations",
+            json={},
+        )
+
+    assert response.status_code == 429
+    assert retry_count == IMAGE_GENERATION_RATE_LIMIT_RETRY_ATTEMPTS
+    assert request_count == IMAGE_GENERATION_RATE_LIMIT_RETRY_ATTEMPTS + 1

@@ -83,3 +83,32 @@ class AiImageUserQuota(TimestampMixin, Base):
 
     user: Mapped[AppUser] = relationship(foreign_keys=[user_id])
     updated_by: Mapped[AppUser | None] = relationship(foreign_keys=[updated_by_user_id])
+
+
+class AiImageGenerationErrorLog(TimestampMixin, Base):
+    """AI 图片生成错误日志，供管理员排查后台任务和供应商失败细节。
+
+    创建日期：2026-06-05
+    author: sunshengxian
+    """
+
+    __tablename__ = "ai_image_generation_error_log"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    generation_id: Mapped[int] = mapped_column(
+        ForeignKey("ai_image_generation.id"),
+        nullable=False,
+        index=True,
+    )
+    user_id: Mapped[int] = mapped_column(ForeignKey("app_user.id"), nullable=False, index=True)
+    provider: Mapped[str] = mapped_column(String(64), nullable=False, default="86gamestore")
+    model: Mapped[str] = mapped_column(String(64), nullable=False)
+    phase: Mapped[str] = mapped_column(String(64), nullable=False)
+    retry_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    status_code: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    error_type: Mapped[str] = mapped_column(String(128), nullable=False)
+    user_message: Mapped[str] = mapped_column(String(512), nullable=False)
+    detail_message: Mapped[str] = mapped_column(Text, nullable=False)
+
+    generation: Mapped[AiImageGeneration] = relationship()
+    user: Mapped[AppUser] = relationship()

@@ -126,7 +126,7 @@ OpenAI 官方口径：
 | `request_payload_json` | text/longtext | 脱敏后的请求摘要，不含鉴权头。 |
 | `response_summary_json` | text/longtext | 脱敏后的响应摘要，只记录返回类型、数量、错误结构。 |
 | `elapsed_ms` | float | 外部生成和下载总耗时。 |
-| `error_message` | varchar(512) | 失败摘要，不保存密钥、完整外链敏感参数。 |
+| `error_message` | varchar(512) | 用户侧失败摘要，不保存供应商详细错误、密钥或完整外链敏感参数。 |
 | `created_at` / `updated_at` | datetime | 通用时间字段。 |
 | `deleted_at` | datetime | 预留逻辑删除。 |
 
@@ -137,7 +137,28 @@ OpenAI 官方口径：
 - `idx_ai_image_generation_file_sha`：`file_sha256`
 - `idx_ai_image_generation_reference_sha`：`reference_file_sha256`
 
-### 5.2 `ai_image_user_quota`
+### 5.2 `ai_image_generation_error_log`
+
+保存后台任务和供应商调用失败详情，仅管理员可查，普通用户响应不返回该表内容。
+
+关键字段：
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `id` | int | 主键。 |
+| `generation_id` | int | 图片生成记录 ID。 |
+| `user_id` | int | 图片所属用户。 |
+| `provider` | varchar(64) | 供应商标识。 |
+| `model` | varchar(64) | 实际调用模型。 |
+| `phase` | varchar(64) | 失败阶段，例如 `generate`、`provider_reference`、`store_reference`。 |
+| `retry_count` | int | 本次供应商调用已重试次数。 |
+| `status_code` | int | 供应商 HTTP 状态码，可为空。 |
+| `error_type` | varchar(128) | 异常类型。 |
+| `user_message` | varchar(512) | 用户侧失败摘要。 |
+| `detail_message` | longtext | 管理员排查用详细错误，服务层截断后写入。 |
+| `created_at` / `updated_at` | datetime | 通用时间字段。 |
+
+### 5.3 `ai_image_user_quota`
 
 保存用户每日次数配置和当天已用次数，支持管理员维护或重置。
 
@@ -162,8 +183,8 @@ OpenAI 官方口径：
 
 - 生成前在事务中读取或创建用户 quota 行，并使用 `SELECT ... FOR UPDATE` 锁住该用户 quota。
 - 如果 `quota_date` 不是东八区今天，先将 `used_count` 重置为 0，再判断次数。
-- 检查通过后先把 `used_count + 1` 并提交，再发起外部调用，避免并发请求同时越过限制。
-- 外部调用失败时返还本次扣减的次数：服务层在标记 `FAILED` 后重新锁定 quota 行，将 `used_count` 减 1 且不低于 0；如果图片已成功落盘但前端响应中断，则不返还，避免真实消耗供应商额度后被重复生成。
+- 检查通过后先把 `used_count + 1` 并提交，创建 `GENERATING` 记录后立即返回前端，再由后台任务发起外部调用，避免并发请求同时越过限制，也避免用户关闭页面导致任务丢失。
+- 外部调用失败时返还本次扣减的次数：服务层在标记 `FAILED` 后重新锁定 quota 行，将 `used_count` 减 1 且不低于 0；如果图片已成功落盘，则不返还，避免真实消耗供应商额度后被重复生成。
 
 ## 6. 后端分层设计
 
@@ -188,17 +209,19 @@ backend/tests/test_image_generation_routes.py
 - `generate(prompt: str, size: str, model: str) -> ImageGenerationProviderResult`
 - `generate_with_reference(prompt: str, size: str, model: str, reference_image: StoredReferenceImage) -> ImageGenerationProviderResult`
 - 对 HTTP 超时、401、400、429、5xx 做清晰错误映射。
+- 对明确的 gpt-image rate limit 响应做最多 5 次短重试；若仍失败，详细错误写入 `ai_image_generation_error_log`，普通用户只看到友好失败摘要。
 - 兼容 URL 和 `b64_json` 两种返回；URL 由服务层继续下载，Base64 由服务层解码。
 - 开发时优先验证 86GameStore 是否兼容 OpenAI `POST /v1/images/edits`：若兼容，则参考图调用走 multipart `image + prompt + model + size`；若不兼容，再通过自定义页面抓包确认其内部上传和生成接口；若两者都不可用，后端返回“当前供应商暂未开放参考图 API”，但保留本地参考图记录和 UI 能力开关。
 - 日志只允许输出状态码、模型、尺寸、耗时和错误摘要，不输出 API Key、完整 Authorization 或原始大体积图片内容。
 
 ### 6.2 `ImageGenerationService`
 
-职责：处理业务规则、用户隔离、次数扣减、外部调用、本地落盘和状态更新。
+职责：处理业务规则、用户隔离、次数扣减、后台任务、本地落盘、状态更新和错误日志。
 
 核心方法：
 
-- `create_generation(user, payload, reference_file=None)`：校验 prompt、size、参考图、次数，创建记录并调用供应商。
+- `create_generation(user, payload, reference_file=None)`：校验 prompt、size、参考图和次数，创建 `GENERATING` 记录后立即返回。
+- `process_generation(generation_id)`：后台调用供应商、下载或解码输出图、落盘并更新为 `READY`/`FAILED`。
 - `list_generations(user, filters)`：普通用户只查自己，管理员可按用户、状态、日期、关键词筛选。
 - `get_generation(user, generation_id)`：按权限读取详情。
 - `open_image_file(user, generation_id)`：校验权限后返回本地文件响应。
@@ -215,12 +238,9 @@ PENDING -> GENERATING -> FAILED
 
 异常处理：
 
-- 401：返回“文生图服务密钥无效或未配置，请联系管理员”，后端日志记录 `error`。
-- 400：返回“提示词或尺寸参数不合法”，保留供应商错误摘要。
-- 429：返回“文生图额度或频率受限，请稍后重试或联系管理员”。
-- 5xx/超时：返回“文生图服务暂时不可用，请稍后重试”。
-- 本地写文件失败：记录 `FAILED`，错误摘要写入数据库；不返回本地路径。
-- 供应商不支持参考图：记录 `FAILED` 并返还次数；前端提示“当前文生图供应商暂未开放参考图 API，可移除参考图后重试”。
+- 供应商或落盘失败：记录 `FAILED` 并返还次数，`ai_image_generation.error_message` 只保存用户友好摘要。
+- 详细错误：写入 `ai_image_generation_error_log.detail_message`，仅管理员可查看。
+- 供应商不支持参考图：记录 `FAILED` 并返还次数；前端提示用户移除参考图后重试。
 
 ## 7. 后端 API 设计
 
@@ -230,7 +250,7 @@ PENDING -> GENERATING -> FAILED
 
 | 方法 | 路径 | 权限 | 说明 |
 | --- | --- | --- | --- |
-| `POST` | `/api/image-generation/generations` | `image_generation` | 创建文生图任务；使用 `multipart/form-data` 时可携带参考图，首期同步等待返回。 |
+| `POST` | `/api/image-generation/generations` | `image_generation` | 创建文生图任务；使用 `multipart/form-data` 时可携带参考图，接口立即返回 `GENERATING` 记录，后台继续生成。 |
 | `GET` | `/api/image-generation/generations` | `image_generation` | 查询图片列表；普通用户仅自己的记录，管理员可查全部。 |
 | `GET` | `/api/image-generation/generations/{id}` | `image_generation` | 查看详情。 |
 | `GET` | `/api/image-generation/generations/{id}/file` | `image_generation` | 读取本地图片文件，后端鉴权后返回 `FileResponse`。 |
@@ -243,6 +263,7 @@ PENDING -> GENERATING -> FAILED
 | `GET` | `/api/image-generation/admin/quotas` | `users` | 在用户管理页查询所有用户文生图次数配置。 |
 | `PATCH` | `/api/image-generation/admin/quotas/{user_id}` | `users` | 修改某用户每日上限。 |
 | `POST` | `/api/image-generation/admin/quotas/{user_id}/reset` | `users` | 重置某用户今日已用次数。 |
+| `GET` | `/api/image-generation/generations/{id}/error-logs` | `users` | 管理员查看单条图片生成的详细失败日志。 |
 
 纯文生图请求示例：
 
@@ -315,12 +336,12 @@ frontend/src/pages/ImageGenerationPage.tsx
 
 页面模块：
 
-- 顶部说明：展示今日剩余次数、默认尺寸和“图片会保存到本地服务器，可随时回来查看”。
-- 生成表单：提示词输入、多尺寸选择、提交按钮、生成中 loading。
-- 参考图上传：可选上传 1 张参考图，生成前先本地预览；如果后端返回供应商不支持，则提示用户移除参考图后生成。
+- 顶部说明：展示今日剩余次数、默认尺寸和可回看历史图片的产品说明，避免出现服务器、供应商接口等后台技术口径。
+- 生成表单：提示词输入、多尺寸选择、提交按钮；提交后提示“已开始生成”，用户离开页面后仍可回到历史图片查看进度。
+- 参考图上传：可选上传 1 张参考图，生成前先本地预览；如果后端返回不支持，则提示用户移除参考图后生成。
 - 图片预览：生成成功后立即展示图片、prompt、尺寸、生成时间、下载按钮。
 - 历史图库：卡片网格展示历史图片；普通用户只展示自己的，管理员可筛选用户、状态、日期和关键词。
-- 失败记录：展示失败原因摘要，并允许复制 prompt 重新生成。
+- 失败记录：普通用户展示友好失败摘要；管理员可打开错误详情查看日志表里的排查信息。
 - 管理员模式：在列表中展示用户列；用户管理页面另有次数维护区。
 
 移动端口径：
@@ -328,12 +349,12 @@ frontend/src/pages/ImageGenerationPage.tsx
 - 表单使用单列布局，提示词输入区域高度适中，提交按钮固定在表单底部。
 - 历史图库使用 2 列卡片；窄屏低于 420px 时退化为 1 列。
 - 图片预览使用 `object-fit: contain`，避免竖图或宽图溢出。
-- 生成中状态要明确提示“生成可能需要几十秒到数分钟”，避免用户误以为页面卡死。
+- 生成中状态要明确提示“生成可能需要几十秒到数分钟”，并通过历史列表轮询刷新状态。
 - 不使用前端 Base64 长串存储；图片统一走后端文件接口。
 
 参考图上传口径：
 
-- 首期页面开放“上传参考图”入口，但后端能力由供应商适配层决定；若 86GameStore 的公开接口不支持，页面给出明确失败提示并返还次数。
+- 页面开放“上传参考图”入口，但后端能力由供应商适配层决定；若 86GameStore 的公开接口不支持，页面给出可理解失败提示并返还次数。
 - 参考图保存到 `backend/storage/generated-images/references/`，数据库记录 `reference_file_relative_path`、`reference_mime_type`、`reference_file_sha256`，并在调用前校验文件大小、类型和用户归属。
 - 参考图必须走后端鉴权和本地落盘，不允许前端把图片直接传给第三方接口，也不把参考图公开成无需鉴权的静态 URL。
 - 参考图属于用户上传内容，普通用户只能查看和复用自己的参考图；管理员可以审计全部记录，但默认列表不直接展示大图，避免管理页加载过重。
@@ -381,7 +402,8 @@ frontend/src/pages/ImageGenerationPage.tsx
 - 管理员可查询所有图片，普通用户无法读取他人图片详情和文件。
 - URL 返回和 `b64_json` 返回都能保存成本地文件。
 - 上传参考图时，后端会先保存参考图、校验文件类型和大小，再调用供应商；供应商不支持时返还次数。
-- 外部 401、400、429、5xx、超时均能落库为 `FAILED` 并返回可读错误。
+- 外部 401、400、429、5xx、超时均能落库为 `FAILED`，普通用户只看到友好摘要，管理员可查看详细错误日志。
+- gpt-image rate limit 响应最多重试 5 次；重试后仍失败时记录 `retry_count`。
 - 管理员修改每日上限、重置今日次数生效。
 
 前端验证：
@@ -390,6 +412,7 @@ frontend/src/pages/ImageGenerationPage.tsx
 - 桌面端菜单、生成表单、历史图库和管理员筛选正常。
 - 移动端 390px 宽度下表单、图片卡片、底部导航不重叠、不横向溢出。
 - 刷新页面或关闭后重新进入，历史图片仍可查看。
+- 创建图片后立刻关闭页面，再重新进入时可以在历史列表看到 `GENERATING`、`READY` 或 `FAILED` 状态。
 - 普通用户不显示他人图片和管理员筛选项。
 - 参考图上传控件在移动端可正常预览、替换和移除，不造成横向溢出。
 
@@ -440,7 +463,7 @@ frontend/src/pages/ImageGenerationPage.tsx
 - 外部调用失败返还本次生成次数；图片已成功生成并落盘的场景不返还。
 - 默认尺寸使用 `1024x1024`，同时支持用户选择所有合法尺寸。
 - 首期不做提示词英文优化或自动翻译，避免用户输入和最终图片意图不一致。
-- 首期产品层支持参考图上传；供应商层优先验证 86GameStore 是否兼容 OpenAI `images/edits` 或存在未公开自定义接口，若不可用则给出失败提示并返还次数。
+- 产品层支持参考图上传；供应商层优先验证 86GameStore 是否兼容 OpenAI `images/edits` 或存在未公开自定义接口，若不可用则给出失败提示并返还次数。
 
 仍需部署前确认：
 

@@ -2,22 +2,34 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    UploadFile,
+)
 from fastapi.responses import FileResponse
 
 from app.api.deps_auth import DbSession, require_permission
 from app.db.models.auth import AppUser
 from app.schemas.image_generation import (
     ImageGenerationAdminQuotaResponse,
+    ImageGenerationErrorLogResponse,
     ImageGenerationListResponse,
     ImageGenerationQuotaResponse,
     ImageGenerationQuotaUpdateRequest,
     ImageGenerationResponse,
 )
 from app.services.image_generation_service import (
+    IMAGE_GENERATION_STATUS_GENERATING,
     ImageGenerationError,
     ImageGenerationService,
     UploadedReferenceImage,
+    process_image_generation_background,
 )
 
 router = APIRouter()
@@ -32,11 +44,12 @@ ReferenceImageFile = Annotated[UploadFile | None, File()]
 async def create_image_generation(
     db: DbSession,
     user: ImageGenerationUser,
+    background_tasks: BackgroundTasks,
     prompt: ImagePromptForm,
     size: ImageSizeForm = "1024x1024",
     reference_image: ReferenceImageFile = None,
 ) -> ImageGenerationResponse:
-    """创建图片生成任务，支持可选参考图上传。
+    """创建图片生成任务并交给后台继续处理，用户离开页面后仍可回看状态。
 
     创建日期：2026-05-27
     author: sunshengxian
@@ -51,9 +64,17 @@ async def create_image_generation(
             mime_type=reference_image.content_type,
         )
     try:
-        return ImageGenerationService(db).create_generation(user, prompt, size, uploaded_reference)
+        response = ImageGenerationService(db).create_generation(
+            user,
+            prompt,
+            size,
+            uploaded_reference,
+        )
     except ImageGenerationError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+    if response.status == IMAGE_GENERATION_STATUS_GENERATING:
+        background_tasks.add_task(process_image_generation_background, response.id)
+    return response
 
 
 @router.get("/image-generation/generations", response_model=ImageGenerationListResponse)
@@ -141,6 +162,27 @@ def get_image_generation_reference_file(
     except ImageGenerationError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
     return FileResponse(path, media_type=mime_type)
+
+
+@router.get(
+    "/image-generation/generations/{generation_id}/error-logs",
+    response_model=list[ImageGenerationErrorLogResponse],
+)
+def list_image_generation_error_logs(
+    generation_id: int,
+    db: DbSession,
+    admin_user: AdminUser,
+) -> list[ImageGenerationErrorLogResponse]:
+    """管理员查看图片生成失败详情，普通用户响应不暴露供应商原始错误。
+
+    创建日期：2026-06-05
+    author: sunshengxian
+    """
+
+    try:
+        return ImageGenerationService(db).list_error_logs(admin_user, generation_id)
+    except ImageGenerationError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
 
 
 @router.get("/image-generation/quota/me", response_model=ImageGenerationQuotaResponse)

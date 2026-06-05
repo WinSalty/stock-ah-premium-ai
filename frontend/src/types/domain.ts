@@ -123,6 +123,21 @@ export interface ImageGenerationAdminQuota {
   updated_at: string | null;
 }
 
+export interface ImageGenerationErrorLog {
+  id: number;
+  generation_id: number;
+  user_id: number;
+  provider: string;
+  model: string;
+  phase: string;
+  retry_count: number;
+  status_code: number | null;
+  error_type: string;
+  user_message: string;
+  detail_message: string;
+  created_at: string;
+}
+
 export interface ProfileUpdateRequest {
   display_name?: string | null;
   email?: string | null;

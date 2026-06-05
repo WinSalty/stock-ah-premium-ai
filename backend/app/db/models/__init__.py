@@ -1,6 +1,10 @@
 from app.db.models.auth import AppUser, InvitationCode
 from app.db.models.chat import LlmCallMetric, LlmChatMessage, LlmChatSession
-from app.db.models.image_generation import AiImageGeneration, AiImageUserQuota
+from app.db.models.image_generation import (
+    AiImageGeneration,
+    AiImageGenerationErrorLog,
+    AiImageUserQuota,
+)
 from app.db.models.market import (
     ABalanceSheet,
     ACashflowStatement,
@@ -56,6 +60,7 @@ __all__ = [
     "AForecast",
     "AFinancialIndicator",
     "AiImageGeneration",
+    "AiImageGenerationErrorLog",
     "AiImageUserQuota",
     "AlertEvent",
     "AppUser",

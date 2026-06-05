@@ -1,4 +1,4 @@
-import { Alert, Button, Card, Empty, Form, Input, Select, Space, Spin, Tag, Typography, Upload, message } from 'antd';
+import { Alert, Button, Card, Empty, Form, Input, Modal, Select, Space, Spin, Tag, Typography, Upload, message } from 'antd';
 import { Download, ImagePlus, RefreshCw, Sparkles, UploadCloud, X } from 'lucide-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useMemo, useState } from 'react';
@@ -6,11 +6,12 @@ import PageHeader from '../components/PageHeader';
 import {
   IMAGE_GENERATION_SIZE_OPTIONS,
   createImageGeneration,
+  fetchImageGenerationErrorLogs,
   fetchImageGenerations,
   fetchMyImageGenerationQuota,
   fetchProtectedImageBlobUrl
 } from '../api/imageGeneration';
-import type { ImageGenerationItem, UserInfo } from '../types/domain';
+import type { ImageGenerationErrorLog, ImageGenerationItem, UserInfo } from '../types/domain';
 import { formatEast8DateTime } from '../utils/datetime';
 
 interface ImageGenerationPageProps {
@@ -55,7 +56,11 @@ function ImageGenerationPage({ currentUser }: ImageGenerationPageProps) {
         page_size: 60,
         status: statusFilter || undefined,
         keyword: keyword || undefined
-      })
+      }),
+    refetchInterval: (query) => {
+      const data = query.state.data;
+      return data?.items.some((item) => item.status === 'GENERATING') ? 3000 : false;
+    }
   });
   const createMutation = useMutation({
     mutationFn: (values: ImageGenerationFormValues) =>
@@ -70,6 +75,8 @@ function ImageGenerationPage({ currentUser }: ImageGenerationPageProps) {
       queryClient.invalidateQueries({ queryKey: ['image-generations'] });
       if (record.status === 'READY') {
         message.success('图片已生成并保存');
+      } else if (record.status === 'GENERATING') {
+        message.success('已开始生成，离开页面后也可以在历史图片里查看进度');
       } else {
         message.warning(record.error_message || '图片生成失败，本次不会计入今日次数');
       }
@@ -86,6 +93,16 @@ function ImageGenerationPage({ currentUser }: ImageGenerationPageProps) {
     setReferencePreviewUrl(objectUrl);
     return () => URL.revokeObjectURL(objectUrl);
   }, [referenceFile]);
+
+  useEffect(() => {
+    if (!latestRecord || latestRecord.status !== 'GENERATING') {
+      return;
+    }
+    const refreshedRecord = generations.data?.items.find((item) => item.id === latestRecord.id);
+    if (refreshedRecord && refreshedRecord.status !== latestRecord.status) {
+      setLatestRecord(refreshedRecord);
+    }
+  }, [generations.data?.items, latestRecord]);
 
   const quotaText = useMemo(() => {
     if (!quota.data) {
@@ -211,7 +228,7 @@ function ImageGenerationPage({ currentUser }: ImageGenerationPageProps) {
         ) : generations.data?.items.length ? (
           <div className="image-gallery-grid">
             {generations.data.items.map((item) => (
-              <ImageGalleryCard key={item.id} item={item} showUser={isAdmin} />
+              <ImageGalleryCard key={item.id} item={item} showUser={isAdmin} showErrorDetails={isAdmin} />
             ))}
           </div>
         ) : (
@@ -249,13 +266,18 @@ function LatestImagePreview({ record, loading }: { record: ImageGenerationItem |
 function ImageGalleryCard({
   item,
   showUser = false,
-  compact = false
+  compact = false,
+  showErrorDetails = false
 }: {
   item: ImageGenerationItem;
   showUser?: boolean;
   compact?: boolean;
+  showErrorDetails?: boolean;
 }) {
   const [imageUrl, setImageUrl] = useState<string | null>(null);
+  const [errorLogs, setErrorLogs] = useState<ImageGenerationErrorLog[]>([]);
+  const [isErrorModalOpen, setIsErrorModalOpen] = useState(false);
+  const [isLoadingErrorLogs, setIsLoadingErrorLogs] = useState(false);
 
   useEffect(() => {
     let isMounted = true;
@@ -297,6 +319,19 @@ function ImageGalleryCard({
     URL.revokeObjectURL(blobUrl);
   };
 
+  const openErrorLogs = async () => {
+    setIsErrorModalOpen(true);
+    setIsLoadingErrorLogs(true);
+    try {
+      setErrorLogs(await fetchImageGenerationErrorLogs(item.id));
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '错误详情读取失败');
+      setErrorLogs([]);
+    } finally {
+      setIsLoadingErrorLogs(false);
+    }
+  };
+
   return (
     <Card className={`image-gallery-card${compact ? ' compact' : ''}`} bodyStyle={{ padding: 0 }}>
       <div className="image-gallery-media">
@@ -333,7 +368,44 @@ function ImageGalleryCard({
             下载
           </Button>
         ) : null}
+        {showErrorDetails && item.status === 'FAILED' ? (
+          <Button size="small" onClick={openErrorLogs}>
+            错误详情
+          </Button>
+        ) : null}
       </div>
+      <Modal
+        title={`图片 #${item.id} 错误详情`}
+        open={isErrorModalOpen}
+        onCancel={() => setIsErrorModalOpen(false)}
+        footer={null}
+        width={760}
+      >
+        {isLoadingErrorLogs ? (
+          <div className="image-generation-loading">
+            <Spin />
+          </div>
+        ) : errorLogs.length ? (
+          <Space direction="vertical" size={12} className="image-error-log-list">
+            {errorLogs.map((log) => (
+              <div key={log.id} className="image-error-log-item">
+                <Space size={[6, 6]} wrap>
+                  <Tag>{log.phase}</Tag>
+                  <Tag>{log.error_type}</Tag>
+                  {log.status_code ? <Tag color="orange">HTTP {log.status_code}</Tag> : null}
+                  {log.retry_count ? <Tag color="blue">重试 {log.retry_count} 次</Tag> : null}
+                </Space>
+                <Typography.Text type="secondary">{formatEast8DateTime(log.created_at)}</Typography.Text>
+                <Typography.Paragraph className="image-error-log-detail">
+                  {log.detail_message}
+                </Typography.Paragraph>
+              </div>
+            ))}
+          </Space>
+        ) : (
+          <Empty description="暂无错误详情" />
+        )}
+      </Modal>
     </Card>
   );
 }
