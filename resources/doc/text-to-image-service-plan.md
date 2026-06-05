@@ -209,7 +209,7 @@ backend/tests/test_image_generation_routes.py
 - `generate(prompt: str, size: str, model: str) -> ImageGenerationProviderResult`
 - `generate_with_reference(prompt: str, size: str, model: str, reference_image: StoredReferenceImage) -> ImageGenerationProviderResult`
 - 对 HTTP 超时、401、400、429、5xx 做清晰错误映射。
-- 对明确的 gpt-image rate limit 响应做最多 5 次短重试；若仍失败，详细错误写入 `ai_image_generation_error_log`，普通用户只看到友好失败摘要。
+- 对明确的 gpt-image rate limit 响应做最多 10 次短重试；若仍失败，详细错误写入 `ai_image_generation_error_log`，普通用户只看到友好失败摘要。
 - 兼容 URL 和 `b64_json` 两种返回；URL 由服务层继续下载，Base64 由服务层解码。
 - 开发时优先验证 86GameStore 是否兼容 OpenAI `POST /v1/images/edits`：若兼容，则参考图调用走 multipart `image + prompt + model + size`；若不兼容，再通过自定义页面抓包确认其内部上传和生成接口；若两者都不可用，后端返回“当前供应商暂未开放参考图 API”，但保留本地参考图记录和 UI 能力开关。
 - 日志只允许输出状态码、模型、尺寸、耗时和错误摘要，不输出 API Key、完整 Authorization 或原始大体积图片内容。
@@ -403,7 +403,7 @@ frontend/src/pages/ImageGenerationPage.tsx
 - URL 返回和 `b64_json` 返回都能保存成本地文件。
 - 上传参考图时，后端会先保存参考图、校验文件类型和大小，再调用供应商；供应商不支持时返还次数。
 - 外部 401、400、429、5xx、超时均能落库为 `FAILED`，普通用户只看到友好摘要，管理员可查看详细错误日志。
-- gpt-image rate limit 响应最多重试 5 次；重试后仍失败时记录 `retry_count`。
+- gpt-image rate limit 响应最多重试 10 次；重试后仍失败时记录 `retry_count`。
 - 管理员修改每日上限、重置今日次数生效。
 
 前端验证：

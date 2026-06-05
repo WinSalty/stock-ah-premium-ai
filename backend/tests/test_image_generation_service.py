@@ -268,8 +268,8 @@ def test_regular_user_cannot_read_other_user_image(tmp_path: Path) -> None:
     assert service.get_generation(admin, response.id).id == response.id
 
 
-def test_rate_limit_response_retries_five_times(tmp_path: Path) -> None:
-    """确认 gpt-image rate limit 会按约定最多重试 5 次。
+def test_rate_limit_response_retries_configured_attempts(tmp_path: Path) -> None:
+    """确认 gpt-image rate limit 会按配置次数重试。
 
     创建日期：2026-06-05
     author: sunshengxian
