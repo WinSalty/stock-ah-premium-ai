@@ -268,6 +268,30 @@ def test_regular_user_cannot_read_other_user_image(tmp_path: Path) -> None:
     assert service.get_generation(admin, response.id).id == response.id
 
 
+def test_list_generations_supports_multiple_statuses(tmp_path: Path) -> None:
+    """确认历史图库可一次查询已完成和生成中两类记录。
+
+    创建日期：2026-06-05
+    author: sunshengxian
+    """
+
+    db = make_db()
+    user = add_user(db, "status-user")
+    service = ImageGenerationService(db, make_settings(tmp_path), FakeImageClient())
+    ready_response = service.create_generation(user, "A ready image", "1024x1024")
+    service.process_generation(ready_response.id)
+    generating_response = service.create_generation(user, "A pending image", "1024x1024")
+
+    response = service.list_generations(
+        user,
+        status="READY,GENERATING",
+    )
+
+    returned_ids = {item.id for item in response.items}
+    assert ready_response.id in returned_ids
+    assert generating_response.id in returned_ids
+
+
 def test_rate_limit_response_retries_configured_attempts(tmp_path: Path) -> None:
     """确认 input-images per min 限流会按配置次数重试。
 

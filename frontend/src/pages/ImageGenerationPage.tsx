@@ -1,7 +1,7 @@
 import { Alert, Button, Card, Empty, Form, Input, Modal, Select, Space, Spin, Tag, Typography, Upload, message } from 'antd';
 import { Download, ImagePlus, RefreshCw, Sparkles, UploadCloud, X } from 'lucide-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import PageHeader from '../components/PageHeader';
 import {
   IMAGE_GENERATION_SIZE_OPTIONS,
@@ -23,7 +23,10 @@ interface ImageGenerationFormValues {
   size: string;
 }
 
+const DEFAULT_HISTORY_STATUS = 'READY,GENERATING';
+
 const statusOptions = [
+  { label: '已完成和生成中', value: DEFAULT_HISTORY_STATUS },
   { label: '全部状态', value: '' },
   { label: '已完成', value: 'READY' },
   { label: '失败', value: 'FAILED' },
@@ -38,7 +41,7 @@ const statusOptions = [
 function ImageGenerationPage({ currentUser }: ImageGenerationPageProps) {
   const [form] = Form.useForm<ImageGenerationFormValues>();
   const queryClient = useQueryClient();
-  const [statusFilter, setStatusFilter] = useState('');
+  const [statusFilter, setStatusFilter] = useState(DEFAULT_HISTORY_STATUS);
   const [keyword, setKeyword] = useState('');
   const [referenceFile, setReferenceFile] = useState<File | null>(null);
   const [referencePreviewUrl, setReferencePreviewUrl] = useState<string | null>(null);
@@ -274,14 +277,45 @@ function ImageGalleryCard({
   compact?: boolean;
   showErrorDetails?: boolean;
 }) {
+  const mediaRef = useRef<HTMLDivElement | null>(null);
   const [imageUrl, setImageUrl] = useState<string | null>(null);
+  const [shouldLoadImage, setShouldLoadImage] = useState(compact);
+  const [isImagePreviewOpen, setIsImagePreviewOpen] = useState(false);
   const [errorLogs, setErrorLogs] = useState<ImageGenerationErrorLog[]>([]);
   const [isErrorModalOpen, setIsErrorModalOpen] = useState(false);
   const [isLoadingErrorLogs, setIsLoadingErrorLogs] = useState(false);
 
   useEffect(() => {
+    if (compact || item.status !== 'READY' || !item.image_url) {
+      setShouldLoadImage(compact);
+      return;
+    }
+    const mediaElement = mediaRef.current;
+    if (!mediaElement) {
+      return;
+    }
+    if (!('IntersectionObserver' in window)) {
+      setShouldLoadImage(true);
+      return;
+    }
+    // 历史图库可能同时有几十张高清图；只在卡片接近视口时拉取 Blob，
+    // 避免用户刚进入页面就并发下载所有原图导致首屏迟迟不出图。
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) {
+          setShouldLoadImage(true);
+          observer.disconnect();
+        }
+      },
+      { rootMargin: '240px' }
+    );
+    observer.observe(mediaElement);
+    return () => observer.disconnect();
+  }, [compact, item.image_url, item.status]);
+
+  useEffect(() => {
     let isMounted = true;
-    if (!item.image_url) {
+    if (!item.image_url || !shouldLoadImage) {
       setImageUrl(null);
       return;
     }
@@ -297,7 +331,7 @@ function ImageGalleryCard({
     return () => {
       isMounted = false;
     };
-  }, [item.image_url]);
+  }, [item.image_url, shouldLoadImage]);
 
   useEffect(() => {
     return () => {
@@ -332,11 +366,23 @@ function ImageGalleryCard({
     }
   };
 
+  const openImagePreview = () => {
+    if (item.status === 'READY' && imageUrl) {
+      setIsImagePreviewOpen(true);
+    }
+  };
+
   return (
     <Card className={`image-gallery-card${compact ? ' compact' : ''}`} bodyStyle={{ padding: 0 }}>
-      <div className="image-gallery-media">
+      <div
+        ref={mediaRef}
+        className={`image-gallery-media${item.status === 'READY' ? ' clickable' : ''}`}
+        onClick={openImagePreview}
+      >
         {item.status === 'READY' && imageUrl ? (
           <img src={imageUrl} alt={item.prompt} />
+        ) : item.status === 'READY' ? (
+          <Spin />
         ) : item.status === 'FAILED' ? (
           <div className="image-gallery-failed">生成失败</div>
         ) : (
@@ -374,6 +420,30 @@ function ImageGalleryCard({
           </Button>
         ) : null}
       </div>
+      <Modal
+        title={`图片 #${item.id}`}
+        open={isImagePreviewOpen}
+        onCancel={() => setIsImagePreviewOpen(false)}
+        footer={
+          item.status === 'READY' ? (
+            <Button icon={<Download size={14} />} onClick={download}>
+              下载
+            </Button>
+          ) : null
+        }
+        width="min(96vw, 1200px)"
+        centered
+      >
+        {imageUrl ? (
+          <div className="image-preview-modal-body">
+            <img src={imageUrl} alt={item.prompt} />
+          </div>
+        ) : (
+          <div className="image-generation-loading">
+            <Spin />
+          </div>
+        )}
+      </Modal>
       <Modal
         title={`图片 #${item.id} 错误详情`}
         open={isErrorModalOpen}

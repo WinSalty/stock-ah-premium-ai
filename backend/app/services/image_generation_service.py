@@ -309,7 +309,15 @@ class ImageGenerationService:
         elif user_id:
             conditions.append(AiImageGeneration.user_id == user_id)
         if status:
-            conditions.append(AiImageGeneration.status == status.strip().upper())
+            # 历史图库默认只展示生成中和已完成记录；这里允许前端用逗号传多个状态，
+            # 管理员仍可选择单个 FAILED 状态查看失败任务和错误详情。
+            status_values = [
+                item.strip().upper()
+                for item in status.split(",")
+                if item.strip()
+            ]
+            if status_values:
+                conditions.append(AiImageGeneration.status.in_(status_values))
         if keyword:
             like_value = f"%{keyword.strip()}%"
             conditions.append(

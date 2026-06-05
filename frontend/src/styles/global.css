@@ -168,6 +168,10 @@
   object-fit: contain;
 }
 
+.image-gallery-media.clickable {
+  cursor: zoom-in;
+}
+
 .image-gallery-failed {
   display: grid;
   place-items: center;
@@ -218,6 +222,22 @@
   overflow: auto;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.image-preview-modal-body {
+  display: grid;
+  place-items: center;
+  max-height: 75vh;
+  overflow: auto;
+  background: #0f172a;
+}
+
+.image-preview-modal-body img {
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  max-height: 75vh;
+  object-fit: contain;
 }
 
 @media (max-width: 720px) {
