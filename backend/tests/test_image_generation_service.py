@@ -269,7 +269,7 @@ def test_regular_user_cannot_read_other_user_image(tmp_path: Path) -> None:
 
 
 def test_rate_limit_response_retries_configured_attempts(tmp_path: Path) -> None:
-    """确认 gpt-image rate limit 会按配置次数重试。
+    """确认 input-images per min 限流会按配置次数重试。
 
     创建日期：2026-06-05
     author: sunshengxian
@@ -281,7 +281,7 @@ def test_rate_limit_response_retries_configured_attempts(tmp_path: Path) -> None
         nonlocal request_count
         request_count += 1
         return httpx.Response(
-            429,
+            502,
             json={
                 "error": {
                     "message": (
@@ -301,6 +301,6 @@ def test_rate_limit_response_retries_configured_attempts(tmp_path: Path) -> None
             json={},
         )
 
-    assert response.status_code == 429
+    assert response.status_code == 502
     assert retry_count == IMAGE_GENERATION_RATE_LIMIT_RETRY_ATTEMPTS
     assert request_count == IMAGE_GENERATION_RATE_LIMIT_RETRY_ATTEMPTS + 1

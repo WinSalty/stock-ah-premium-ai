@@ -155,16 +155,14 @@ class ImageGenerationClient:
         return response, retry_count
 
     def _is_rate_limit_response(self, response: httpx.Response) -> bool:
-        """识别供应商返回的 gpt-image 图片输入频率限制错误。
+        """识别供应商返回的图片输入频率限制错误。
 
         创建日期：2026-06-05
         author: sunshengxian
         """
 
-        if response.status_code != 429:
-            return False
         message = self._error_message(response).lower()
-        return "rate limit reached" in message and "gpt-image" in message
+        return "rate limit reached" in message and "input-images per min" in message
 
     def _rate_limit_retry_seconds(self, response: httpx.Response) -> float:
         """按响应头读取重试间隔，缺省使用保守短等待。
