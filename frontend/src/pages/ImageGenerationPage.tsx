@@ -152,7 +152,7 @@ function ImageGenerationPage({ currentUser }: ImageGenerationPageProps) {
               rows={5}
               maxLength={4000}
               showCount
-              placeholder="例如：A clean financial dashboard hero illustration, warm sunlight, premium editorial style."
+              placeholder="例如：帮我生成一张90年小学生上课的真实照片"
             />
           </Form.Item>
           <div className="image-generation-form-grid">
