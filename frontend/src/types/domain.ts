@@ -829,6 +829,9 @@ export interface LimitUpReportDetail extends LimitUpReportListItem {
   content_markdown: string | null;
   context: Record<string, unknown> | null;
   data_quality: Array<Record<string, unknown>>;
+  stage_quality: Array<Record<string, unknown>>;
+  selected_chain_stocks: Array<Record<string, unknown>>;
+  selected_high_board_stocks: Array<Record<string, unknown>>;
 }
 
 export interface LimitUpShareCreateRequest {

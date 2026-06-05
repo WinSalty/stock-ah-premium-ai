@@ -86,6 +86,9 @@ class LimitUpReportDetail(LimitUpReportListItem):
     content_markdown: str | None = None
     context: dict[str, Any] | None = None
     data_quality: list[dict[str, Any]] = Field(default_factory=list)
+    stage_quality: list[dict[str, Any]] = Field(default_factory=list)
+    selected_chain_stocks: list[dict[str, Any]] = Field(default_factory=list)
+    selected_high_board_stocks: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class LimitUpShareCreateRequest(BaseModel):

@@ -91,7 +91,30 @@
 - `data_quality_json`：接口成功/失败/缺失情况。
 - `generated_at`、`error_message`。
 
-### 4.2 `limit_up_push_recipient`
+### 4.2 `limit_up_analysis_stage_cache`
+
+保存多阶段打板报告生成过程的中间结果。阶段缓存按交易日、阶段、模型、提示词版本和输入哈希去重，覆盖首板题材发酵、两连三连候选筛选、高连板候选筛选、重点分析和最终合成。重跑时优先复用成功阶段，避免单个阶段失败后整份报告重复消耗 LLM。
+
+关键字段：
+
+- `analysis_id`：关联最终报告缓存，允许为空以兼容阶段先生成后回填的异常恢复场景。
+- `stage_key`：阶段标识，例如 `FIRST_BOARD`、`CHAIN_SELECTION`、`HIGH_BOARD_SELECTION`、`CHAIN_FOCUS`、`HIGH_BOARD_FOCUS`、`FINAL_REPORT`。
+- `model`、`prompt_version`、`input_hash`：阶段级幂等键。
+- `request_json`、`response_json`、`summary_text`：阶段输入、结构化输出和用于页面核对的摘要。
+- `latency_ms`、`failed`、`error_message`：阶段耗时和失败诊断。
+
+### 4.3 `limit_up_stock_supplement_cache`
+
+保存 LLM 入选股票的筹码补数摘要。两连三连候选默认最多 20 只，高连板候选默认最多 10 只；只有被 LLM 选中的股票才按回看窗口调用 `cyq_perf` 与 `cyq_chips`，并把命中、部分缺失或失败状态缓存下来，便于后续阶段直接引用。
+
+关键字段：
+
+- `trade_date`、`ts_code`、`start_date`、`end_date`：交易日、股票和补数窗口，组成业务唯一口径。
+- `status`：`READY`、`PARTIAL`、`FAILED`。
+- `cyq_perf_json`、`cyq_chips_summary_json`、`data_quality_json`：筹码成本、筹码分布压缩摘要和单股补数质量记录。
+- `error_message`：Tushare 权限、空数据或调用异常时的诊断信息。
+
+### 4.4 `limit_up_push_recipient`
 
 管理员配置哪些系统用户接收打板报告。
 
@@ -102,7 +125,7 @@
 - `weekend_replay_enabled`：是否接收周六和周日晚间缓存报告复推。
 - `created_by_user_id`、`updated_by_user_id`：配置操作者。
 
-### 4.3 `limit_up_push_delivery`
+### 4.5 `limit_up_push_delivery`
 
 记录打板报告的业务推送计划和状态。实际 PushPlus 请求仍复用 `pushplus_message_log`。
 
@@ -304,6 +327,7 @@
 已完成内容：
 
 - 已执行 Alembic 迁移 `20260508_0031_add_limit_up_push.py`，本地 MySQL 已新增报告缓存、接收人配置、业务推送流水三张表。
+- 已新增并落地多阶段分析改造 `20260605_0046_add_limit_up_multi_stage_cache.py`：报告生成拆为首板题材发酵、两连三连候选筛选、高连板候选筛选、筹码补数、重点分析和最终合成；两连三连重点候选默认最多 20 只，高连板默认最多 10 只，入选股票按需调用 `cyq_perf` 与 `cyq_chips` 后再分析连板和下一个交易日溢价可能性。后台报告详情页新增“阶段”页签，可核对阶段质量、两连三连入选名单和高连板入选名单。
 - 已给管理员补齐 `limit_up_push` 菜单权限，并将 admin 配置为打板推送接收人。
 - 使用真实 Tushare 数据生成 `2026-05-07` 上下文：`kpl_list` 126 条，`limit_step` 34 条，二连 16 只，三连 5 只，最高 10 连。
 - 批量化技术指标后，真实上下文构建耗时约 4.45 秒；`daily` 本地命中 113 只关注股票，`daily_basic` 通过交易日批量调用补齐 113 只。

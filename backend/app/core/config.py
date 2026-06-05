@@ -122,6 +122,26 @@ class Settings(BaseSettings):
         default=LIMIT_UP_PUSH_DEFAULT_INDICATOR_STOCK_LIMIT,
         alias="LIMIT_UP_PUSH_INDICATOR_STOCK_LIMIT",
     )
+    limit_up_push_chain_focus_stock_limit: int = Field(
+        default=20,
+        alias="LIMIT_UP_PUSH_CHAIN_FOCUS_STOCK_LIMIT",
+    )
+    limit_up_push_high_board_focus_stock_limit: int = Field(
+        default=10,
+        alias="LIMIT_UP_PUSH_HIGH_BOARD_FOCUS_STOCK_LIMIT",
+    )
+    limit_up_push_cyq_lookback_days: int = Field(
+        default=20,
+        alias="LIMIT_UP_PUSH_CYQ_LOOKBACK_DAYS",
+    )
+    limit_up_push_stage_cache_enabled: bool = Field(
+        default=True,
+        alias="LIMIT_UP_PUSH_STAGE_CACHE_ENABLED",
+    )
+    limit_up_push_final_prompt_version: str = Field(
+        default="limit-up-multi-stage-v1",
+        alias="LIMIT_UP_PUSH_FINAL_PROMPT_VERSION",
+    )
     nine_turn_push_scheduler_enabled: bool = Field(
         default=False,
         alias="NINE_TURN_PUSH_SCHEDULER_ENABLED",

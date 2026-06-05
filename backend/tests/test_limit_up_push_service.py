@@ -790,3 +790,159 @@ def test_latest_analysis_push_is_idempotent_across_polling(monkeypatch) -> None:
     assert first_pushed == 1
     assert second_pushed == 0
     assert fake_notification.sent == [(user.id, "2026-05-08 A股涨停打板复盘", "<h2>报告</h2>")]
+
+
+def test_limit_up_chain_selection_is_limited_to_twenty() -> None:
+    """确认两连三连重点候选最多保留 20 只。
+
+    创建日期：2026-06-05
+    author: sunshengxian
+    """
+
+    db = make_db()
+    service = LimitUpPushService(
+        db,
+        settings=Settings(llm_api_key="key", llm_api_key_file=None, tushare_token="token", tushare_token_file=None),
+        tushare_client=FakeTushareClient({}),
+        notification_service=FakeNotificationService(),
+    )
+    source_rows = [
+        {
+            "ts_code": f"000{i:03d}.SZ",
+            "name": f"测试{i}",
+            "status": "2连板",
+            "theme": "人工智能",
+        }
+        for i in range(25)
+    ]
+    payload = {
+        "selected_stocks": [
+            {
+                "ts_code": row["ts_code"],
+                "name": row["name"],
+                "selection_reason": "测试入选",
+            }
+            for row in source_rows
+        ]
+    }
+
+    selected = service._select_stage_stocks(payload, source_rows, 20)
+
+    assert len(selected) == 20
+    assert selected[0]["ts_code"] == "000000.SZ"
+    assert selected[-1]["ts_code"] == "000019.SZ"
+
+
+def test_multi_stage_pipeline_supplements_only_selected_stocks(monkeypatch) -> None:
+    """确认多阶段报告只为 LLM 入选股票回调筹码接口。
+
+    创建日期：2026-06-05
+    author: sunshengxian
+    """
+
+    db = make_db()
+    fake_client = FakeTushareClient(
+        {
+            "cyq_perf": [
+                {
+                    "ts_code": "000001.SZ",
+                    "trade_date": "20260508",
+                    "winner_rate": 60,
+                    "weight_avg": 10,
+                    "cost_50pct": 9.8,
+                    "cost_85pct": 10.8,
+                    "cost_95pct": 11.2,
+                }
+            ],
+            "cyq_chips": [
+                {"ts_code": "000001.SZ", "trade_date": "20260508", "price": 10.5, "percent": 20},
+                {"ts_code": "000001.SZ", "trade_date": "20260508", "price": 11.5, "percent": 30},
+            ],
+        }
+    )
+    service = LimitUpPushService(
+        db,
+        settings=Settings(llm_api_key="key", llm_api_key_file=None, tushare_token="token", tushare_token_file=None),
+        tushare_client=fake_client,
+        notification_service=FakeNotificationService(),
+    )
+    context = {
+        "trade_date": "2026-05-08",
+        "data_quality": [],
+        "first_board_context": {"stocks": [], "themes": []},
+        "chain_board_context": {
+            "stocks": [
+                {
+                    "ts_code": "000001.SZ",
+                    "name": "入选二连",
+                    "status": "2连板",
+                    "theme": "人工智能",
+                    "technical": {"close": 10},
+                },
+                {
+                    "ts_code": "000002.SZ",
+                    "name": "未入选二连",
+                    "status": "2连板",
+                    "theme": "机器人",
+                    "technical": {"close": 20},
+                },
+            ]
+        },
+        "high_board_context": {
+            "stocks": [
+                {
+                    "ts_code": "000003.SZ",
+                    "name": "入选高连",
+                    "status": "5连板",
+                    "theme": "算力",
+                    "technical": {"close": 30},
+                }
+            ]
+        },
+        "market_context": {"market_emotion": {}, "themes": []},
+    }
+
+    def fake_json_stage(
+        stage_key: str,
+        stage_input: dict[str, object],
+        system_prompt: str,
+        user_prompt: str,
+        fallback_payload: dict[str, object],
+        stage_quality: list[dict[str, object]],
+    ) -> dict[str, object]:
+        stage_quality.append({"stage_key": stage_key, "status": "OK", "message": "测试阶段"})
+        if stage_key == "CHAIN_SELECTION":
+            return {"selected_stocks": [{"ts_code": "000001.SZ", "selection_reason": "二连前排"}]}
+        if stage_key == "HIGH_BOARD_SELECTION":
+            return {"selected_stocks": [{"ts_code": "000003.SZ", "selection_reason": "空间板"}]}
+        return {"html_fragment": "<h3>首板</h3>", "theme_candidates": []}
+
+    def fake_text_stage(
+        stage_key: str,
+        stage_input: dict[str, object],
+        system_prompt: str,
+        user_prompt: str,
+        stage_quality: list[dict[str, object]],
+    ) -> dict[str, object]:
+        stage_quality.append({"stage_key": stage_key, "status": "OK", "message": "测试文本阶段"})
+        return {"content": f"<h2>{stage_key}</h2>", "html_fragment": f"<h2>{stage_key}</h2>"}
+
+    monkeypatch.setattr(service, "_run_json_stage", fake_json_stage)
+    monkeypatch.setattr(service, "_run_text_stage", fake_text_stage)
+
+    html, raw = service._generate_multi_stage_llm_report(context)
+
+    called_codes = [
+        params["ts_code"]
+        for api_name, params in fake_client.calls
+        if api_name in {"cyq_perf", "cyq_chips"}
+    ]
+    assert html.startswith("<div")
+    assert "FINAL_REPORT" in raw
+    assert called_codes == ["000001.SZ", "000001.SZ", "000003.SZ", "000003.SZ"]
+    assert [row["ts_code"] for row in context["pipeline"]["selected_chain_stocks"]] == [
+        "000001.SZ"
+    ]
+    assert [row["ts_code"] for row in context["pipeline"]["selected_high_board_stocks"]] == [
+        "000003.SZ"
+    ]

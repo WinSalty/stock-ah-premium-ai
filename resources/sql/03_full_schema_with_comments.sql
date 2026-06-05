@@ -547,6 +547,48 @@ CREATE TABLE IF NOT EXISTS `limit_up_analysis_cache` (
   KEY `idx_limit_up_analysis_generated` (`generated_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='打板 LLM 分析报告缓存表';
 
+CREATE TABLE IF NOT EXISTS `limit_up_analysis_stage_cache` (
+  `id` INT NOT NULL AUTO_INCREMENT COMMENT '自增主键',
+  `analysis_id` INT DEFAULT NULL COMMENT '关联最终打板报告缓存 ID，报告创建前可为空',
+  `trade_date` DATE NOT NULL COMMENT '阶段分析对应 A 股交易日',
+  `stage_key` VARCHAR(64) NOT NULL COMMENT '阶段标识，FIRST_BOARD、CHAIN_SELECTION、HIGH_BOARD_SELECTION、CHAIN_FOCUS、HIGH_BOARD_FOCUS、FINAL_REPORT',
+  `model` VARCHAR(64) NOT NULL COMMENT '阶段调用 LLM 模型',
+  `prompt_version` VARCHAR(64) NOT NULL COMMENT '阶段提示词版本',
+  `input_hash` VARCHAR(64) NOT NULL COMMENT '阶段输入 JSON 哈希，用于同输入幂等复用',
+  `status` VARCHAR(16) NOT NULL DEFAULT 'PENDING' COMMENT '阶段状态，PENDING、GENERATING、READY、FAILED',
+  `output_json` LONGTEXT DEFAULT NULL COMMENT '阶段结构化输出 JSON',
+  `content_html` LONGTEXT DEFAULT NULL COMMENT '阶段 HTML 片段',
+  `error_message` TEXT DEFAULT NULL COMMENT '阶段失败摘要',
+  `generated_at` DATETIME DEFAULT NULL COMMENT '阶段生成完成时间',
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '记录创建时间',
+  `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '记录更新时间',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_limit_up_stage_once` (`trade_date`, `stage_key`, `model`, `prompt_version`, `input_hash`),
+  KEY `idx_limit_up_stage_trade_stage` (`trade_date`, `stage_key`, `status`),
+  KEY `idx_limit_up_stage_analysis` (`analysis_id`),
+  CONSTRAINT `fk_limit_up_stage_analysis`
+    FOREIGN KEY (`analysis_id`) REFERENCES `limit_up_analysis_cache` (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='打板报告多阶段 LLM 分析缓存表';
+
+CREATE TABLE IF NOT EXISTS `limit_up_stock_supplement_cache` (
+  `id` INT NOT NULL AUTO_INCREMENT COMMENT '自增主键',
+  `trade_date` DATE NOT NULL COMMENT '打板报告对应 A 股交易日',
+  `ts_code` VARCHAR(16) NOT NULL COMMENT '重点股票代码',
+  `start_date` DATE NOT NULL COMMENT '筹码补数窗口开始日期',
+  `end_date` DATE NOT NULL COMMENT '筹码补数窗口结束日期',
+  `cyq_perf_json` LONGTEXT DEFAULT NULL COMMENT 'cyq_perf 原始或精简数据 JSON',
+  `cyq_chips_summary_json` LONGTEXT DEFAULT NULL COMMENT 'cyq_chips 压缩摘要 JSON',
+  `data_quality_json` LONGTEXT DEFAULT NULL COMMENT '单股补数质量记录 JSON',
+  `status` VARCHAR(16) NOT NULL DEFAULT 'PENDING' COMMENT '补数状态，READY、PARTIAL、FAILED、PENDING',
+  `error_message` TEXT DEFAULT NULL COMMENT '补数失败摘要',
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '记录创建时间',
+  `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '记录更新时间',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_limit_up_stock_supplement_once` (`trade_date`, `ts_code`, `start_date`, `end_date`),
+  KEY `idx_limit_up_stock_supplement_trade` (`trade_date`, `status`),
+  KEY `idx_limit_up_stock_supplement_code` (`ts_code`, `trade_date`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='打板报告重点股票筹码补数缓存表';
+
 CREATE TABLE IF NOT EXISTS `nine_turn_analysis_cache` (
   `id` INT NOT NULL AUTO_INCREMENT COMMENT '自增主键',
   `trade_date` DATE NOT NULL COMMENT '神奇九转报告对应 A 股交易日',

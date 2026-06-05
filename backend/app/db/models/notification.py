@@ -145,6 +145,75 @@ class LimitUpAnalysisCache(TimestampMixin, Base):
     generated_at: Mapped[datetime | None] = mapped_column(DateTime)
 
 
+class LimitUpAnalysisStageCache(TimestampMixin, Base):
+    """打板报告多阶段 LLM 分析缓存表。
+
+    创建日期：2026-06-05
+    author: sunshengxian
+    """
+
+    __tablename__ = "limit_up_analysis_stage_cache"
+    __table_args__ = (
+        UniqueConstraint(
+            "trade_date",
+            "stage_key",
+            "model",
+            "prompt_version",
+            "input_hash",
+            name="uk_limit_up_stage_once",
+        ),
+        Index("idx_limit_up_stage_trade_stage", "trade_date", "stage_key", "status"),
+        Index("idx_limit_up_stage_analysis", "analysis_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    analysis_id: Mapped[int | None] = mapped_column(ForeignKey("limit_up_analysis_cache.id"))
+    trade_date: Mapped[date] = mapped_column(Date, nullable=False)
+    stage_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    model: Mapped[str] = mapped_column(String(64), nullable=False)
+    prompt_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    input_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="PENDING")
+    output_json: Mapped[str | None] = mapped_column(Text().with_variant(LONGTEXT, "mysql"))
+    content_html: Mapped[str | None] = mapped_column(Text().with_variant(LONGTEXT, "mysql"))
+    error_message: Mapped[str | None] = mapped_column(Text)
+    generated_at: Mapped[datetime | None] = mapped_column(DateTime)
+
+
+class LimitUpStockSupplementCache(TimestampMixin, Base):
+    """打板报告重点股票筹码补数缓存表。
+
+    创建日期：2026-06-05
+    author: sunshengxian
+    """
+
+    __tablename__ = "limit_up_stock_supplement_cache"
+    __table_args__ = (
+        UniqueConstraint(
+            "trade_date",
+            "ts_code",
+            "start_date",
+            "end_date",
+            name="uk_limit_up_stock_supplement_once",
+        ),
+        Index("idx_limit_up_stock_supplement_trade", "trade_date", "status"),
+        Index("idx_limit_up_stock_supplement_code", "ts_code", "trade_date"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    trade_date: Mapped[date] = mapped_column(Date, nullable=False)
+    ts_code: Mapped[str] = mapped_column(String(16), nullable=False)
+    start_date: Mapped[date] = mapped_column(Date, nullable=False)
+    end_date: Mapped[date] = mapped_column(Date, nullable=False)
+    cyq_perf_json: Mapped[str | None] = mapped_column(Text().with_variant(LONGTEXT, "mysql"))
+    cyq_chips_summary_json: Mapped[str | None] = mapped_column(
+        Text().with_variant(LONGTEXT, "mysql")
+    )
+    data_quality_json: Mapped[str | None] = mapped_column(Text().with_variant(LONGTEXT, "mysql"))
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="PENDING")
+    error_message: Mapped[str | None] = mapped_column(Text)
+
+
 class LimitUpPushRecipient(TimestampMixin, Base):
     """打板报告 PushPlus 接收人配置。
 

@@ -87,6 +87,8 @@ LLM 按需个股研究数据：
 - `alert_event`：提醒事件表，保存阈值提醒和股价提醒触发时的去重键、推送标题、推送内容和发送状态。
 - `pushplus_message_log`：PushPlus 推送消息流水表，记录测试推送、阈值提醒和股价提醒实际提交给 PushPlus 的时间、接收用户、接收对象、标题、内容、状态、消息流水号和错误信息，供管理员审计查看。
 - `limit_up_analysis_cache`：打板 LLM 报告缓存表，按交易日、模型、提示词版本和数据快照哈希去重，保存 HTML 报告、上下文、质量记录和生成状态。
+- `limit_up_analysis_stage_cache`：打板多阶段 LLM 缓存表，按交易日、阶段、模型、提示词版本和阶段输入哈希去重，保存首板、两连三连、高连板、重点分析和最终合成等阶段输出，便于重跑时复用稳定中间结果。
+- `limit_up_stock_supplement_cache`：打板重点股票筹码补数缓存表，按交易日、股票和回看窗口去重，保存 LLM 入选股票的 `cyq_perf`/`cyq_chips` 摘要、数据状态和错误信息，避免同一报告重跑时重复请求 Tushare。
 - `limit_up_push_recipient`：打板报告接收人配置表，保存系统用户是否启用接收，以及是否接收周六、周日晚间缓存报告复推；PushPlus 好友令牌仍只保存在绑定表。
 - `limit_up_push_delivery`：打板报告业务推送计划与结果表，按报告、计划类型、计划时间和接收用户做幂等，实际 PushPlus 请求流水关联到 `pushplus_message_log`。
 - `limit_up_report_share`：打板报告分享链接表，保存随机 token、过期时间、撤销时间和公开访问次数；`expires_at` 为空表示永久有效，公开查看只读取已生成报告，不授予后台权限。

@@ -25,9 +25,11 @@ from app.db.models.chat import LlmCallMetric
 from app.db.models.market import ADailyBasic, ADailyQuote, ATradeCalendar
 from app.db.models.notification import (
     LimitUpAnalysisCache,
+    LimitUpAnalysisStageCache,
     LimitUpPushDelivery,
     LimitUpPushRecipient,
     LimitUpReportShare,
+    LimitUpStockSupplementCache,
     PushplusBinding,
 )
 from app.schemas.limit_up_push import (
@@ -74,6 +76,15 @@ LIMIT_UP_CONTEXT_FOCUS_STOCK_LIMIT = 160
 LIMIT_UP_CONTEXT_THEME_LIMIT = 80
 LIMIT_UP_CONTEXT_CAPITAL_SIGNAL_LIMIT = 160
 LIMIT_UP_CONTEXT_BOARD_STATUS_LIMIT = 40
+LIMIT_UP_STAGE_FIRST_BOARD = "FIRST_BOARD"
+LIMIT_UP_STAGE_CHAIN_SELECTION = "CHAIN_SELECTION"
+LIMIT_UP_STAGE_HIGH_BOARD_SELECTION = "HIGH_BOARD_SELECTION"
+LIMIT_UP_STAGE_CHAIN_FOCUS = "CHAIN_FOCUS"
+LIMIT_UP_STAGE_HIGH_BOARD_FOCUS = "HIGH_BOARD_FOCUS"
+LIMIT_UP_STAGE_FINAL_REPORT = "FINAL_REPORT"
+LIMIT_UP_SUPPLEMENT_STATUS_READY = "READY"
+LIMIT_UP_SUPPLEMENT_STATUS_PARTIAL = "PARTIAL"
+LIMIT_UP_SUPPLEMENT_STATUS_FAILED = "FAILED"
 # LLM 失败响应会写入指标表辅助排查；
 # 截断上限只限制错误诊断文本，不影响正常报告正文入库。
 LLM_ERROR_RESPONSE_LOG_LIMIT = 4000
@@ -195,6 +206,20 @@ KPL_FIELDS = (
 )
 DAILY_FIELDS = ("ts_code", "trade_date", "open", "high", "low", "close", "pct_chg", "vol", "amount")
 DAILY_BASIC_FIELDS = ("ts_code", "trade_date", "turnover_rate", "volume_ratio", "total_mv", "circ_mv")
+CYQ_PERF_FIELDS = (
+    "ts_code",
+    "trade_date",
+    "his_low",
+    "his_high",
+    "cost_5pct",
+    "cost_15pct",
+    "cost_50pct",
+    "cost_85pct",
+    "cost_95pct",
+    "weight_avg",
+    "winner_rate",
+)
+CYQ_CHIPS_FIELDS = ("ts_code", "trade_date", "price", "percent")
 
 
 class LimitUpPushError(ValueError):
@@ -307,6 +332,7 @@ class LimitUpPushService:
                     return analysis
                 self._reset_analysis_for_retry(analysis, trade_date, context, data_quality)
         try:
+            self._active_limit_up_analysis_id = analysis.id
             content_html, content_markdown = self._generate_llm_report(context)
         except Exception as exc:
             analysis.status = ANALYSIS_STATUS_FAILED
@@ -314,8 +340,12 @@ class LimitUpPushService:
             self.db.commit()
             logger.error("打板 LLM 报告生成失败 trade_date=%s", trade_date, exc_info=True)
             raise
+        finally:
+            self._active_limit_up_analysis_id = None
         analysis.content_html = content_html
         analysis.content_markdown = content_markdown
+        analysis.context_json = self._json_dumps(context)
+        analysis.data_quality_json = self._json_dumps(context.get("data_quality") or data_quality)
         analysis.status = ANALYSIS_STATUS_READY
         analysis.generated_at = self._now_naive()
         analysis.error_message = None
@@ -445,12 +475,18 @@ class LimitUpPushService:
         report = self.db.get(LimitUpAnalysisCache, report_id)
         if report is None:
             raise LimitUpPushError("报告不存在")
+        context = self._json_loads_dict(report.context_json)
+        pipeline = context.get("pipeline") if isinstance(context, dict) else None
+        pipeline = pipeline if isinstance(pipeline, dict) else {}
         return LimitUpReportDetail(
             **self._report_list_item(report).model_dump(),
             content_html=report.content_html,
             content_markdown=report.content_markdown,
-            context=self._json_loads_dict(report.context_json),
+            context=context,
             data_quality=self._json_loads_list(report.data_quality_json),
+            stage_quality=self._json_loads_list(self._json_dumps(pipeline.get("stage_quality") or [])),
+            selected_chain_stocks=list(pipeline.get("selected_chain_stocks") or []),
+            selected_high_board_stocks=list(pipeline.get("selected_high_board_stocks") or []),
         )
 
     def list_recipients(self) -> list[LimitUpRecipientItem]:
@@ -946,7 +982,7 @@ class LimitUpPushService:
         raw_cpt_list = optional_payload.get("limit_cpt_list", [])[
             :LIMIT_UP_CONTEXT_RAW_CPT_LIST_LIMIT
         ]
-        return {
+        context = {
             "trade_date": trade_date.isoformat(),
             "data_sources": [item["api_name"] for item in quality if item.get("status") == "OK"],
             "market_emotion": market_emotion,
@@ -969,6 +1005,76 @@ class LimitUpPushService:
                 "freedom": "不要机械套模板，可以按你认为更有解释力的结构组织报告，但必须给出可跟踪的接力条件和失败信号。",
             },
         }
+        # 多阶段报告需要把大涨停池按首板、两三连、高连板拆开；
+        # 旧字段继续保留给现有页面和测试，新增分层上下文只服务新 pipeline。
+        context["first_board_context"] = {
+            "stocks": self._stocks_by_board_level(context["limit_up_stocks"], max_level=1),
+            "themes": themes,
+            "market_emotion": market_emotion,
+        }
+        context["chain_board_context"] = {
+            "stocks": self._stocks_by_board_level(context["limit_up_stocks"], levels={2, 3}),
+            "capital_signals": capital_signals,
+            "themes": themes,
+            "market_emotion": market_emotion,
+        }
+        context["high_board_context"] = {
+            "stocks": self._stocks_by_board_level(context["limit_up_stocks"], min_level=4),
+            "capital_signals": capital_signals,
+            "themes": themes,
+            "market_emotion": market_emotion,
+        }
+        context["market_context"] = {
+            "market_emotion": market_emotion,
+            "board_status": board_status,
+            "themes": themes[:20],
+            "data_quality": quality,
+        }
+        return context
+
+    def _stocks_by_board_level(
+        self,
+        rows: list[dict[str, Any]],
+        levels: set[int] | None = None,
+        min_level: int | None = None,
+        max_level: int | None = None,
+    ) -> list[dict[str, Any]]:
+        """按连板层级过滤股票行。
+
+        创建日期：2026-06-05
+        author: sunshengxian
+        """
+
+        selected: list[dict[str, Any]] = []
+        for row in rows:
+            level = self._board_level(row)
+            if levels is not None and level not in levels:
+                continue
+            if min_level is not None and level < min_level:
+                continue
+            if max_level is not None and level > max_level:
+                continue
+            selected.append(row)
+        return selected
+
+    def _board_level(self, row: dict[str, Any]) -> int:
+        """从 KPL 状态文本中识别首板、两连、三连和高连板层级。
+
+        创建日期：2026-06-05
+        author: sunshengxian
+        """
+
+        status = str(row.get("status") or row.get("tag") or row.get("board_status") or "")
+        if "首" in status or "1连" in status or "一连" in status:
+            return 1
+        match = re.search(r"(\d+)\s*连", status)
+        if match:
+            return int(match.group(1))
+        if "2" in status and "连" in status:
+            return 2
+        if "3" in status and "连" in status:
+            return 3
+        return 1
 
     def _focus_ts_codes(self, kpl_rows: list[dict[str, Any]], optional_payload: dict[str, list[dict[str, Any]]]) -> list[str]:
         seen: set[str] = set()
@@ -1109,11 +1215,781 @@ class LimitUpPushService:
         return normalized or None
 
     def _generate_llm_report(self, context: dict[str, Any]) -> tuple[str, str]:
-        system_prompt = self._limit_up_system_prompt()
-        prompt = self._limit_up_user_prompt(context)
-        markdown = self._chat_completion_with_reasoning(prompt, system_prompt)
-        html_content = self._normalize_report_html(markdown)
-        return html_content, markdown
+        """生成多阶段打板报告。
+
+        创建日期：2026-06-05
+        author: sunshengxian
+        """
+
+        # 报告生成拆成多个小上下文阶段，避免把首板、两连三连、高连板和补充原始数据一次性塞给 LLM；
+        # 各阶段输出会写回 context.pipeline，供后台详情页展示选股名单和阶段质量。
+        return self._generate_multi_stage_llm_report(context)
+
+    def _generate_multi_stage_llm_report(self, context: dict[str, Any]) -> tuple[str, str]:
+        """按首板、两三连、高连和最终汇总多轮生成报告。
+
+        创建日期：2026-06-05
+        author: sunshengxian
+        """
+
+        trade_date = self._context_trade_date(context)
+        stage_quality: list[dict[str, Any]] = []
+        first_board = self._run_json_stage(
+            LIMIT_UP_STAGE_FIRST_BOARD,
+            {
+                "trade_date": context.get("trade_date"),
+                "first_board_context": context.get("first_board_context") or {},
+                "market_context": context.get("market_context") or {},
+            },
+            self._stage_system_prompt("首板题材发酵分析师"),
+            self._first_board_prompt(context),
+            self._fallback_first_board_stage(context),
+            stage_quality,
+        )
+        selected_chain = self._select_stage_stocks(
+            self._run_json_stage(
+                LIMIT_UP_STAGE_CHAIN_SELECTION,
+                {
+                    "trade_date": context.get("trade_date"),
+                    "chain_board_context": context.get("chain_board_context") or {},
+                },
+                self._stage_system_prompt("两连三连候选筛选分析师"),
+                self._chain_selection_prompt(context),
+                self._fallback_selection_stage(
+                    context.get("chain_board_context") or {},
+                    self.settings.limit_up_push_chain_focus_stock_limit,
+                    "chain",
+                ),
+                stage_quality,
+            ),
+            list((context.get("chain_board_context") or {}).get("stocks") or []),
+            self.settings.limit_up_push_chain_focus_stock_limit,
+        )
+        selected_high = self._select_stage_stocks(
+            self._run_json_stage(
+                LIMIT_UP_STAGE_HIGH_BOARD_SELECTION,
+                {
+                    "trade_date": context.get("trade_date"),
+                    "high_board_context": context.get("high_board_context") or {},
+                },
+                self._stage_system_prompt("高连板与龙头筛选分析师"),
+                self._high_board_selection_prompt(context),
+                self._fallback_selection_stage(
+                    context.get("high_board_context") or {},
+                    self.settings.limit_up_push_high_board_focus_stock_limit,
+                    "high_board",
+                ),
+                stage_quality,
+            ),
+            list((context.get("high_board_context") or {}).get("stocks") or []),
+            self.settings.limit_up_push_high_board_focus_stock_limit,
+        )
+        supplement_map = self._build_selected_stock_supplements(
+            trade_date,
+            self._dedupe_selected_stocks([*selected_chain, *selected_high]),
+            stage_quality,
+        )
+        chain_focus = self._run_text_stage(
+            LIMIT_UP_STAGE_CHAIN_FOCUS,
+            {
+                "trade_date": context.get("trade_date"),
+                "selected_chain_stocks": selected_chain,
+                "supplements": supplement_map,
+                "market_context": context.get("market_context") or {},
+            },
+            self._stage_system_prompt("两连三连重点接力分析师"),
+            self._chain_focus_prompt(context, selected_chain, supplement_map),
+            stage_quality,
+        )
+        high_focus = self._run_text_stage(
+            LIMIT_UP_STAGE_HIGH_BOARD_FOCUS,
+            {
+                "trade_date": context.get("trade_date"),
+                "selected_high_board_stocks": selected_high,
+                "supplements": supplement_map,
+                "market_context": context.get("market_context") or {},
+            },
+            self._stage_system_prompt("高连板龙头周期分析师"),
+            self._high_board_focus_prompt(context, selected_high, supplement_map),
+            stage_quality,
+        )
+        final_input = {
+            "trade_date": context.get("trade_date"),
+            "market_context": context.get("market_context") or {},
+            "first_board": first_board,
+            "selected_chain_stocks": selected_chain,
+            "selected_high_board_stocks": selected_high,
+            "chain_focus_html": chain_focus.get("html_fragment"),
+            "high_board_focus_html": high_focus.get("html_fragment"),
+            "supplements": supplement_map,
+            "stage_quality": stage_quality,
+        }
+        final_stage = self._run_text_stage(
+            LIMIT_UP_STAGE_FINAL_REPORT,
+            final_input,
+            self._limit_up_system_prompt(),
+            self._final_report_prompt(final_input),
+            stage_quality,
+        )
+        context["pipeline"] = {
+            "version": self.settings.limit_up_push_final_prompt_version,
+            "selected_chain_stocks": selected_chain,
+            "selected_high_board_stocks": selected_high,
+            "stage_quality": stage_quality,
+            "first_board": first_board,
+            "chain_focus_html": chain_focus.get("html_fragment"),
+            "high_board_focus_html": high_focus.get("html_fragment"),
+            "stock_supplements": supplement_map,
+        }
+        context["data_quality"] = [*(context.get("data_quality") or []), *stage_quality]
+        raw_report = str(final_stage.get("content") or final_stage.get("html_fragment") or "")
+        return self._normalize_report_html(raw_report), raw_report
+
+    def _run_json_stage(
+        self,
+        stage_key: str,
+        stage_input: dict[str, Any],
+        system_prompt: str,
+        user_prompt: str,
+        fallback_payload: dict[str, Any],
+        stage_quality: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """执行要求 JSON 输出的阶段，失败时使用确定性兜底。
+
+        创建日期：2026-06-05
+        author: sunshengxian
+        """
+
+        cached = self._stage_cache_payload(stage_key, stage_input)
+        if cached is not None:
+            stage_quality.append(self._stage_quality_item(stage_key, "CACHE_HIT", "复用阶段缓存"))
+            return cached
+        try:
+            content = self._chat_completion_with_reasoning(user_prompt, system_prompt)
+            payload = self._extract_json_payload(content)
+            if payload is None:
+                payload = fallback_payload
+                payload["parse_fallback"] = True
+                stage_quality.append(self._stage_quality_item(stage_key, "PARSE_FALLBACK", "LLM JSON 解析失败，使用确定性兜底"))
+            else:
+                stage_quality.append(self._stage_quality_item(stage_key, "OK", "阶段 LLM 输出已解析"))
+            payload.setdefault("raw_content", content)
+            self._save_stage_cache(stage_key, stage_input, payload, payload.get("html_fragment"))
+            return payload
+        except Exception as exc:
+            fallback_payload["error_fallback"] = True
+            fallback_payload["error_message"] = str(exc)[:300]
+            stage_quality.append(self._stage_quality_item(stage_key, "FAILED_FALLBACK", str(exc)[:300]))
+            self._save_stage_cache(stage_key, stage_input, fallback_payload, fallback_payload.get("html_fragment"), failed=True)
+            return fallback_payload
+
+    def _run_text_stage(
+        self,
+        stage_key: str,
+        stage_input: dict[str, Any],
+        system_prompt: str,
+        user_prompt: str,
+        stage_quality: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """执行 HTML 或自然语言输出阶段。
+
+        创建日期：2026-06-05
+        author: sunshengxian
+        """
+
+        cached = self._stage_cache_payload(stage_key, stage_input)
+        if cached is not None:
+            stage_quality.append(self._stage_quality_item(stage_key, "CACHE_HIT", "复用阶段缓存"))
+            return cached
+        content = self._chat_completion_with_reasoning(user_prompt, system_prompt)
+        payload = {"content": content, "html_fragment": self._html_fragment(content)}
+        stage_quality.append(self._stage_quality_item(stage_key, "OK", "阶段 HTML 已生成"))
+        self._save_stage_cache(stage_key, stage_input, payload, payload["html_fragment"])
+        return payload
+
+    def _stage_cache_payload(self, stage_key: str, stage_input: dict[str, Any]) -> dict[str, Any] | None:
+        """按阶段输入哈希读取 READY 缓存。
+
+        创建日期：2026-06-05
+        author: sunshengxian
+        """
+
+        if not self.settings.limit_up_push_stage_cache_enabled:
+            return None
+        row = self.db.scalar(
+            select(LimitUpAnalysisStageCache)
+            .where(
+                LimitUpAnalysisStageCache.trade_date == self._context_trade_date(stage_input),
+                LimitUpAnalysisStageCache.stage_key == stage_key,
+                LimitUpAnalysisStageCache.model == self.settings.limit_up_push_model,
+                LimitUpAnalysisStageCache.prompt_version == self._stage_prompt_version(stage_key),
+                LimitUpAnalysisStageCache.input_hash == self._snapshot_hash(stage_input),
+                LimitUpAnalysisStageCache.status == ANALYSIS_STATUS_READY,
+            )
+            .order_by(desc(LimitUpAnalysisStageCache.id))
+            .limit(1)
+        )
+        if row is None:
+            return None
+        payload = self._json_loads_dict(row.output_json)
+        return payload if isinstance(payload, dict) else None
+
+    def _save_stage_cache(
+        self,
+        stage_key: str,
+        stage_input: dict[str, Any],
+        payload: dict[str, Any],
+        content_html: str | None,
+        failed: bool = False,
+    ) -> None:
+        """写入阶段缓存并保持同输入幂等。
+
+        创建日期：2026-06-05
+        author: sunshengxian
+        """
+
+        if not self.settings.limit_up_push_stage_cache_enabled:
+            return
+        input_hash = self._snapshot_hash(stage_input)
+        cache = self.db.scalar(
+            select(LimitUpAnalysisStageCache)
+            .where(
+                LimitUpAnalysisStageCache.trade_date == self._context_trade_date(stage_input),
+                LimitUpAnalysisStageCache.stage_key == stage_key,
+                LimitUpAnalysisStageCache.model == self.settings.limit_up_push_model,
+                LimitUpAnalysisStageCache.prompt_version == self._stage_prompt_version(stage_key),
+                LimitUpAnalysisStageCache.input_hash == input_hash,
+            )
+            .limit(1)
+        )
+        if cache is None:
+            cache = LimitUpAnalysisStageCache(
+                analysis_id=getattr(self, "_active_limit_up_analysis_id", None),
+                trade_date=self._context_trade_date(stage_input),
+                stage_key=stage_key,
+                model=self.settings.limit_up_push_model,
+                prompt_version=self._stage_prompt_version(stage_key),
+                input_hash=input_hash,
+            )
+            self.db.add(cache)
+        cache.status = ANALYSIS_STATUS_FAILED if failed else ANALYSIS_STATUS_READY
+        cache.output_json = self._json_dumps(payload)
+        cache.content_html = content_html
+        cache.error_message = str(payload.get("error_message") or "")[:1000] if failed else None
+        cache.generated_at = self._now_naive()
+        try:
+            self.db.commit()
+        except IntegrityError:
+            self.db.rollback()
+
+    def _stage_system_prompt(self, role_name: str) -> str:
+        """生成多阶段分析的系统提示词。
+
+        创建日期：2026-06-05
+        author: sunshengxian
+        """
+
+        return (
+            f"你是专注 A 股短线生态的{role_name}。"
+            "只能基于输入数据分析，不编造精确数值；数据缺失时说明不确定性。"
+            "涉及推荐或观察名单时必须提示高波动、断板、回撤和流动性风险。"
+        )
+
+    def _first_board_prompt(self, context: dict[str, Any]) -> str:
+        """生成首板题材发酵阶段提示词。
+
+        创建日期：2026-06-05
+        author: sunshengxian
+        """
+
+        return (
+            "请只分析首板题材发酵价值，不要逐股长篇展开。输出严格 JSON："
+            "{\"html_fragment\":\"HTML片段\",\"theme_candidates\":[{\"theme\":\"题材\","
+            "\"representative_stocks\":[\"股票\"],\"fermentation_value\":\"强/中/弱\","
+            "\"reason\":\"理由\"}],\"risk_flags\":[\"风险\"]}。\n\n"
+            f"输入数据：\n{self._json_dumps({'first_board_context': context.get('first_board_context'), 'market_context': context.get('market_context')})}"
+        )
+
+    def _chain_selection_prompt(self, context: dict[str, Any]) -> str:
+        """生成两连三连候选筛选提示词。
+
+        创建日期：2026-06-05
+        author: sunshengxian
+        """
+
+        limit = self.settings.limit_up_push_chain_focus_stock_limit
+        return (
+            f"请从两连、三连股票中挑选最多 {limit} 只进入筹码补数和重点分析。"
+            "如果总数不超过上限，可以全部入选，也可以剔除明显弱票；如果超过上限，"
+            "按板块龙头、题材前排、连板状态、封板质量、资金信号和辨识度筛选。"
+            "输出严格 JSON：{\"selected_stocks\":[{\"ts_code\":\"代码\",\"name\":\"名称\","
+            "\"board_status\":\"2连板/3连板\",\"theme\":\"题材\",\"theme_role\":\"板块前排/龙头/跟风\","
+            "\"selection_reason\":\"入选理由\",\"priority\":1}],\"excluded_summary\":\"剔除摘要\"}。\n\n"
+            f"输入数据：\n{self._json_dumps(context.get('chain_board_context') or {})}"
+        )
+
+    def _high_board_selection_prompt(self, context: dict[str, Any]) -> str:
+        """生成高连板候选筛选提示词。
+
+        创建日期：2026-06-05
+        author: sunshengxian
+        """
+
+        limit = self.settings.limit_up_push_high_board_focus_stock_limit
+        return (
+            f"请从四连及以上、空间板、题材龙头和高辨识度股票中挑选最多 {limit} 只高连板重点标的。"
+            "必须同时判断空间地位、题材带动性和高位风险。输出严格 JSON："
+            "{\"selected_stocks\":[{\"ts_code\":\"代码\",\"name\":\"名称\",\"board_status\":\"5连板\","
+            "\"theme\":\"题材\",\"leader_role\":\"空间板/题材龙头/高辨识度\","
+            "\"selection_reason\":\"入选理由\",\"risk_level\":\"高/中/低\"}],"
+            "\"high_board_cycle_view\":\"高连板周期判断\"}。\n\n"
+            f"输入数据：\n{self._json_dumps(context.get('high_board_context') or {})}"
+        )
+
+    def _chain_focus_prompt(
+        self,
+        context: dict[str, Any],
+        selected_chain: list[dict[str, Any]],
+        supplements: dict[str, Any],
+    ) -> str:
+        """生成两连三连重点分析提示词。
+
+        创建日期：2026-06-05
+        author: sunshengxian
+        """
+
+        return (
+            "请重点分析入选的两连、三连股票，分别覆盖晋级三板/四板可能性、"
+            "下一个交易日溢价可能性、触发条件、失败条件、筹码压力和风险提示。"
+            "输出 HTML 片段，使用 h3、p、ul、table、strong，不要输出 html/body。\n\n"
+            f"输入数据：\n{self._json_dumps({'selected_chain_stocks': selected_chain, 'supplements': supplements, 'market_context': context.get('market_context')})}"
+        )
+
+    def _high_board_focus_prompt(
+        self,
+        context: dict[str, Any],
+        selected_high: list[dict[str, Any]],
+        supplements: dict[str, Any],
+    ) -> str:
+        """生成高连板与龙头重点分析提示词。
+
+        创建日期：2026-06-05
+        author: sunshengxian
+        """
+
+        return (
+            "请分析入选高连板和龙头标的，允许给出重点观察、谨慎观察、放弃观察分层，"
+            "但必须显著提示高位接力、断板、回撤和流动性风险。重点判断空间板地位、"
+            "题材带动性、分歧承接和下一个交易日溢价/冲高可能性。输出 HTML 片段，"
+            "不要输出 html/body。\n\n"
+            f"输入数据：\n{self._json_dumps({'selected_high_board_stocks': selected_high, 'supplements': supplements, 'market_context': context.get('market_context')})}"
+        )
+
+    def _final_report_prompt(self, final_input: dict[str, Any]) -> str:
+        """生成最终报告合成提示词。
+
+        创建日期：2026-06-05
+        author: sunshengxian
+        """
+
+        return (
+            "请把以下阶段结果合成为一份完整中文打板复盘 HTML 报告。必须包含："
+            "市场情绪概览、首板题材发酵、两连三连重点观察与次日溢价判断、"
+            "高连板与龙头接力观察、反证信号和风险提示、最后总结。"
+            "只输出纯 HTML 片段，使用 h2/h3、p、ul、ol、table、strong，"
+            "不要 Markdown 代码块，不要 html/body。\n\n"
+            f"阶段结果：\n{self._json_dumps(final_input)}"
+        )
+
+    def _fallback_first_board_stage(self, context: dict[str, Any]) -> dict[str, Any]:
+        """构造首板分析兜底输出。
+
+        创建日期：2026-06-05
+        author: sunshengxian
+        """
+
+        themes = list((context.get("first_board_context") or {}).get("themes") or [])[:10]
+        rows = [
+            {
+                "theme": item.get("theme"),
+                "representative_stocks": item.get("stocks") or [],
+                "fermentation_value": "待观察",
+                "reason": "LLM 阶段不可用，按题材涨停数量保留观察线索。",
+            }
+            for item in themes
+            if isinstance(item, dict)
+        ]
+        return {
+            "html_fragment": "<h3>首板题材发酵</h3><p>首板阶段使用题材聚合兜底，重点观察涨停数量靠前的题材是否继续扩散。</p>",
+            "theme_candidates": rows,
+            "risk_flags": ["首板题材仅代表当日发酵线索，不代表次日延续。"],
+        }
+
+    def _fallback_selection_stage(
+        self,
+        board_context: dict[str, Any],
+        limit: int,
+        selection_type: str,
+    ) -> dict[str, Any]:
+        """构造候选筛选兜底输出。
+
+        创建日期：2026-06-05
+        author: sunshengxian
+        """
+
+        rows = self._fallback_rank_stocks(list(board_context.get("stocks") or []), limit)
+        selected = [
+            {
+                "ts_code": row.get("ts_code"),
+                "name": row.get("name"),
+                "board_status": row.get("status"),
+                "theme": row.get("theme"),
+                "selection_reason": "LLM 筛选不可用，按连板高度、封单和短线技术强度兜底入选。",
+                "priority": index + 1,
+            }
+            for index, row in enumerate(rows)
+        ]
+        return {
+            "selected_stocks": selected,
+            "excluded_summary": f"{selection_type} 使用确定性排序兜底筛选。",
+        }
+
+    def _select_stage_stocks(
+        self,
+        payload: dict[str, Any],
+        source_rows: list[dict[str, Any]],
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        """把 LLM 候选结果映射回原始股票行并强制数量上限。
+
+        创建日期：2026-06-05
+        author: sunshengxian
+        """
+
+        by_code = {str(row.get("ts_code") or ""): row for row in source_rows}
+        selected: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for item in payload.get("selected_stocks") or []:
+            if not isinstance(item, dict):
+                continue
+            code = str(item.get("ts_code") or "").strip()
+            if not code or code in seen or code not in by_code:
+                continue
+            row = {**by_code[code], "selection": item}
+            seen.add(code)
+            selected.append(row)
+            if len(selected) >= max(limit, 1):
+                break
+        if selected:
+            return selected
+        return self._fallback_rank_stocks(source_rows, limit)
+
+    def _fallback_rank_stocks(self, rows: list[dict[str, Any]], limit: int) -> list[dict[str, Any]]:
+        """按确定性规则兜底排序重点股票。
+
+        创建日期：2026-06-05
+        author: sunshengxian
+        """
+
+        def score(row: dict[str, Any]) -> tuple[int, float, float, float]:
+            technical = row.get("technical") if isinstance(row.get("technical"), dict) else {}
+            return (
+                self._board_level(row),
+                float(row.get("limit_order") or row.get("max_limit_order") or 0),
+                float(technical.get("amount_ratio_5d") or 0),
+                float(row.get("turnover_rate") or 0),
+            )
+
+        # 兜底排序偏向更高连板、更强封单和更活跃量能，保证 LLM JSON 失败时仍能产出可解释候选池。
+        return sorted(rows, key=score, reverse=True)[: max(limit, 1)]
+
+    def _dedupe_selected_stocks(self, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """候选股票去重，避免重复调用筹码接口。
+
+        创建日期：2026-06-05
+        author: sunshengxian
+        """
+
+        seen: set[str] = set()
+        result: list[dict[str, Any]] = []
+        for row in rows:
+            code = str(row.get("ts_code") or "").strip()
+            if not code or code in seen:
+                continue
+            seen.add(code)
+            result.append(row)
+        return result
+
+    def _build_selected_stock_supplements(
+        self,
+        trade_date: date,
+        rows: list[dict[str, Any]],
+        stage_quality: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """为入选股票按需补充筹码摘要。
+
+        创建日期：2026-06-05
+        author: sunshengxian
+        """
+
+        supplements: dict[str, Any] = {}
+        for row in rows:
+            code = str(row.get("ts_code") or "").strip()
+            if not code:
+                continue
+            supplements[code] = self._stock_supplement(trade_date, row)
+        stage_quality.append(
+            self._stage_quality_item(
+                "CYQ_SUPPLEMENT",
+                "OK" if supplements else "EMPTY",
+                f"入选股票补数数量={len(supplements)}",
+            )
+        )
+        return supplements
+
+    def _stock_supplement(self, trade_date: date, row: dict[str, Any]) -> dict[str, Any]:
+        """读取或生成单股筹码补数摘要。
+
+        创建日期：2026-06-05
+        author: sunshengxian
+        """
+
+        code = str(row.get("ts_code") or "")
+        start_date = trade_date - timedelta(days=max(self.settings.limit_up_push_cyq_lookback_days, 1))
+        cached = self.db.scalar(
+            select(LimitUpStockSupplementCache)
+            .where(
+                LimitUpStockSupplementCache.trade_date == trade_date,
+                LimitUpStockSupplementCache.ts_code == code,
+                LimitUpStockSupplementCache.start_date == start_date,
+                LimitUpStockSupplementCache.end_date == trade_date,
+            )
+            .limit(1)
+        )
+        if cached is not None and cached.status in {LIMIT_UP_SUPPLEMENT_STATUS_READY, LIMIT_UP_SUPPLEMENT_STATUS_PARTIAL}:
+            return {
+                "status": cached.status,
+                "cyq_perf": self._json_loads_list(cached.cyq_perf_json),
+                "cyq_summary": self._json_loads_dict(cached.cyq_chips_summary_json),
+                "data_quality": self._json_loads_list(cached.data_quality_json),
+            }
+        quality: list[dict[str, Any]] = []
+        perf_rows = self._query_cyq_api("cyq_perf", code, start_date, trade_date, CYQ_PERF_FIELDS, quality)
+        chips_rows = self._query_cyq_api("cyq_chips", code, start_date, trade_date, CYQ_CHIPS_FIELDS, quality)
+        summary = self._cyq_summary(row, perf_rows, chips_rows)
+        status = LIMIT_UP_SUPPLEMENT_STATUS_READY if perf_rows and chips_rows else (
+            LIMIT_UP_SUPPLEMENT_STATUS_PARTIAL if perf_rows or chips_rows else LIMIT_UP_SUPPLEMENT_STATUS_FAILED
+        )
+        cache = cached or LimitUpStockSupplementCache(
+            trade_date=trade_date,
+            ts_code=code,
+            start_date=start_date,
+            end_date=trade_date,
+        )
+        if cached is None:
+            self.db.add(cache)
+        cache.cyq_perf_json = self._json_dumps(perf_rows)
+        cache.cyq_chips_summary_json = self._json_dumps(summary)
+        cache.data_quality_json = self._json_dumps(quality)
+        cache.status = status
+        cache.error_message = None if status != LIMIT_UP_SUPPLEMENT_STATUS_FAILED else "cyq_perf 与 cyq_chips 均无可用数据"
+        self.db.commit()
+        return {
+            "status": status,
+            "cyq_perf": perf_rows,
+            "cyq_summary": summary,
+            "data_quality": quality,
+        }
+
+    def _query_cyq_api(
+        self,
+        api_name: str,
+        ts_code: str,
+        start_date: date,
+        end_date: date,
+        fields: tuple[str, ...],
+        quality: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """调用筹码接口并记录单股质量。
+
+        创建日期：2026-06-05
+        author: sunshengxian
+        """
+
+        try:
+            result = self.tushare_client.query(
+                api_name,
+                params={
+                    "ts_code": ts_code,
+                    "start_date": format_tushare_date(start_date),
+                    "end_date": format_tushare_date(end_date),
+                },
+                fields=list(fields),
+            )
+        except Exception as exc:
+            quality.append(DataQualityItem(api_name, "FAILED", 0, str(exc)[:300]).to_dict())
+            return []
+        rows = [self._normalize_api_row(item) for item in result.rows]
+        quality.append(DataQualityItem(api_name, "OK" if rows else "EMPTY", len(rows)).to_dict())
+        return rows
+
+    def _cyq_summary(
+        self,
+        stock_row: dict[str, Any],
+        perf_rows: list[dict[str, Any]],
+        chips_rows: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """把筹码分布压缩为 LLM 可消费摘要。
+
+        创建日期：2026-06-05
+        author: sunshengxian
+        """
+
+        sorted_perf = sorted(perf_rows, key=lambda item: str(item.get("trade_date") or ""))
+        latest_perf = sorted_perf[-1] if sorted_perf else {}
+        first_perf = sorted_perf[0] if sorted_perf else {}
+        technical = stock_row.get("technical") if isinstance(stock_row.get("technical"), dict) else {}
+        close = to_decimal(technical.get("close") or stock_row.get("close"))
+        weight_avg = to_decimal(latest_perf.get("weight_avg"))
+        winner_latest = to_decimal(latest_perf.get("winner_rate"))
+        winner_first = to_decimal(first_perf.get("winner_rate"))
+        latest_chip_date = max((str(row.get("trade_date") or "") for row in chips_rows), default="")
+        latest_chips = [row for row in chips_rows if str(row.get("trade_date") or "") == latest_chip_date]
+        upper_pressure = self._chip_percent_sum(latest_chips, close, above=True)
+        top3_percent = sorted(
+            [to_decimal(row.get("percent")) or Decimal("0") for row in latest_chips],
+            reverse=True,
+        )[:3]
+        close_to_weight_avg = None
+        if close and weight_avg:
+            close_to_weight_avg = (close / weight_avg - Decimal("1")) * Decimal("100")
+        if winner_latest is not None and winner_first is not None:
+            winner_trend = "上升" if winner_latest > winner_first else "下降" if winner_latest < winner_first else "稳定"
+        else:
+            winner_trend = "缺失"
+        concentration_total = sum(top3_percent, Decimal("0"))
+        concentration = "集中" if concentration_total >= Decimal("50") else "分散" if latest_chips else "缺失"
+        if upper_pressure is None:
+            premium_bias = "缺失"
+        elif upper_pressure <= Decimal("25"):
+            premium_bias = "偏友好"
+        elif upper_pressure <= Decimal("45"):
+            premium_bias = "中性"
+        else:
+            premium_bias = "压力较大"
+        return {
+            "cyq_perf_latest": latest_perf,
+            "winner_rate_trend": winner_trend,
+            "close_to_weight_avg_pct": self._decimal_to_float(close_to_weight_avg),
+            "upper_chip_pressure_pct": self._decimal_to_float(upper_pressure),
+            "chip_concentration": concentration,
+            "next_day_premium_bias": premium_bias,
+            "summary": "筹码摘要基于 cyq_perf 最新胜率和 cyq_chips 最新价格分布压缩生成。",
+        }
+
+    def _chip_percent_sum(
+        self,
+        rows: list[dict[str, Any]],
+        close: Decimal | None,
+        above: bool,
+    ) -> Decimal | None:
+        """计算现价上方或下方筹码占比。
+
+        创建日期：2026-06-05
+        author: sunshengxian
+        """
+
+        if close is None or not rows:
+            return None
+        total = Decimal("0")
+        for row in rows:
+            price = to_decimal(row.get("price"))
+            percent = to_decimal(row.get("percent")) or Decimal("0")
+            if price is None:
+                continue
+            if above and price > close:
+                total += percent
+            elif not above and price <= close:
+                total += percent
+        return total
+
+    def _extract_json_payload(self, content: str) -> dict[str, Any] | None:
+        """从 LLM 响应中提取 JSON 对象。
+
+        创建日期：2026-06-05
+        author: sunshengxian
+        """
+
+        stripped = content.strip()
+        stripped = re.sub(r"^```(?:json)?\s*", "", stripped)
+        stripped = re.sub(r"\s*```$", "", stripped)
+        start = stripped.find("{")
+        end = stripped.rfind("}")
+        if start < 0 or end <= start:
+            return None
+        try:
+            payload = json.loads(stripped[start : end + 1])
+        except json.JSONDecodeError:
+            return None
+        return payload if isinstance(payload, dict) else None
+
+    def _html_fragment(self, content: str) -> str:
+        """把阶段文本整理为可嵌入最终报告的 HTML 片段。
+
+        创建日期：2026-06-05
+        author: sunshengxian
+        """
+
+        stripped = content.strip()
+        stripped = re.sub(r"^```(?:html)?\s*", "", stripped)
+        stripped = re.sub(r"\s*```$", "", stripped)
+        if "<" in stripped and ">" in stripped:
+            return stripped
+        return "<p>" + html.escape(stripped).replace("\n\n", "</p><p>").replace("\n", "<br>") + "</p>"
+
+    def _stage_quality_item(self, stage_key: str, status: str, message: str) -> dict[str, Any]:
+        """生成阶段质量记录。
+
+        创建日期：2026-06-05
+        author: sunshengxian
+        """
+
+        return {"stage_key": stage_key, "status": status, "message": message}
+
+    def _stage_prompt_version(self, stage_key: str) -> str:
+        """生成阶段提示词版本。
+
+        创建日期：2026-06-05
+        author: sunshengxian
+        """
+
+        return f"{self.settings.limit_up_push_final_prompt_version}:{stage_key.lower()}:v1"
+
+    def _context_trade_date(self, context: dict[str, Any]) -> date:
+        """从任意阶段输入中解析报告交易日。
+
+        创建日期：2026-06-05
+        author: sunshengxian
+        """
+
+        raw_trade_date = context.get("trade_date")
+        if isinstance(raw_trade_date, date):
+            return raw_trade_date
+        # 上下文交易日可能来自 Tushare 原始字段（YYYYMMDD），也可能来自接口序列化后的 ISO 日期；
+        # 这里仅做格式兼容，不做时区偏移，避免把东八区交易日误修正成相邻自然日。
+        if isinstance(raw_trade_date, str) and raw_trade_date:
+            try:
+                parsed = parse_tushare_date(raw_trade_date)
+            except ValueError:
+                parsed = None
+            if parsed:
+                return parsed
+            try:
+                return date.fromisoformat(raw_trade_date)
+            except ValueError:
+                return self._today_local()
+        return self._today_local()
+
 
     def _chat_completion_with_reasoning(self, prompt: str, system_prompt: str) -> str:
         # 打板报告使用独立配置模型，不影响项目当前默认问答模型；
@@ -1208,17 +2084,20 @@ class LimitUpPushService:
 你会阅读系统提供的结构化数据，输出适合 PushPlus 长 HTML 展示的完整中文报告。
 
 要求：
-1. 重点分析涨停质量、题材强度、市场情绪周期、个股地位、二连三连晋级可能性、资金接力和失败信号。
-2. 必须分别列出“两连板”“三连板”表格，
+1. 你正在合成多轮分析结果：首板题材发酵、两连三连候选、筹码补数、高连板候选和最终重点分析。
+2. 重点分析涨停质量、题材强度、市场情绪周期、个股地位、二连三连晋级可能性、高连板龙头地位、资金接力、筹码压力、下一个交易日溢价可能性和失败信号。
+3. 必须分别列出“两连板”“三连板”表格，
    表格至少包含股票、题材/原因、封板或连板状态、强弱观察字段；
    若某类数据为空，也要保留小节并说明缺失原因或不确定性。
-3. 两连板、三连板都必须在表格后做重点分析：
+4. 两连板、三连板都必须在表格后做重点分析：
    两连板关注晋级三板条件，三连板关注空间板地位、分歧承接和断板风险。
    首板可根据题材发酵价值简述，不强制输出表格。
-4. 可以自由组织报告结构，不需要机械打分；但必须给出清晰的后续观察条件、反证条件和风险点。
-5. 不编造材料中没有的精确数值；数据缺失时说明不确定性，不要假装已经看到。
-6. 输出纯 HTML 片段，不要 Markdown 代码块，不要包裹 html/body 标签。
-7. HTML 需要适合微信阅读：使用 h2/h3、p、ul、ol、table、strong，避免脚本和外链样式。
+5. 高连板部分允许给出重点观察、谨慎观察和放弃观察分层，但必须显著提示高位接力、断板、回撤和流动性风险。
+6. 如果输入包含 cyq_perf 或 cyq_chips 筹码摘要，要把获利盘、成本中枢、上方筹码压力和次日溢价阻力纳入判断。
+7. 可以自由组织报告结构，不需要机械打分；但必须给出清晰的后续观察条件、反证条件和风险点。
+8. 不编造材料中没有的精确数值；数据缺失时说明不确定性，不要假装已经看到。
+9. 输出纯 HTML 片段，不要 Markdown 代码块，不要包裹 html/body 标签。
+10. HTML 需要适合微信阅读：使用 h2/h3、p、ul、ol、table、strong，避免脚本和外链样式。
 """.strip()
 
     def _limit_up_user_prompt(self, context: dict[str, Any]) -> str:

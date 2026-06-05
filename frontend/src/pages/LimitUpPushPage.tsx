@@ -28,6 +28,7 @@ import type {
   LimitUpDeliveryItem,
   LimitUpPushRequest,
   LimitUpRecipientItem,
+  LimitUpReportDetail,
   LimitUpReportListItem,
   LimitUpShareItem,
   NineTurnDeliveryItem,
@@ -38,6 +39,92 @@ import { formatEast8DateTime } from '../utils/datetime';
 
 const NINE_TURN_FEATURE_DISABLED = true;
 const NINE_TURN_DISABLED_TEXT = 'Tushare stk_nineturn 权限尚未开通，神奇九转同步和推送入口暂时关闭';
+
+function recordText(record: Record<string, unknown>, key: string) {
+  const value = record[key];
+  if (value === null || value === undefined || value === '') {
+    return '-';
+  }
+  return String(value);
+}
+
+function nestedRecordText(record: Record<string, unknown>, objectKey: string, key: string) {
+  const nested = record[objectKey];
+  if (!nested || typeof nested !== 'object' || Array.isArray(nested)) {
+    return '-';
+  }
+  return recordText(nested as Record<string, unknown>, key);
+}
+
+function renderStagePanel(report: LimitUpReportDetail) {
+  const stageRows = report.stage_quality.map((item, index) => ({ ...item, row_key: `${recordText(item, 'stage_key')}-${index}` }));
+  const chainRows = report.selected_chain_stocks.map((item, index) => ({ ...item, row_key: `${recordText(item, 'ts_code')}-${index}` }));
+  const highRows = report.selected_high_board_stocks.map((item, index) => ({ ...item, row_key: `${recordText(item, 'ts_code')}-${index}` }));
+
+  return (
+    <div className="limit-up-report-modal-body">
+      <Space direction="vertical" size={18} style={{ width: '100%' }}>
+        <div>
+          <Typography.Title level={5}>阶段质量</Typography.Title>
+          <Table<Record<string, unknown>>
+            rowKey="row_key"
+            size="small"
+            pagination={false}
+            dataSource={stageRows}
+            locale={{ emptyText: '暂无阶段质量记录' }}
+            columns={[
+              { title: '阶段', dataIndex: 'stage_key', width: 180 },
+              {
+                title: '状态',
+                dataIndex: 'status',
+                width: 130,
+                render: (value) => <Tag color={String(value).includes('FAILED') ? 'red' : String(value).includes('FALLBACK') ? 'orange' : 'green'}>{String(value || '-')}</Tag>
+              },
+              { title: '说明', dataIndex: 'message' }
+            ]}
+          />
+        </div>
+        <div>
+          <Typography.Title level={5}>两连三连入选名单</Typography.Title>
+          <Table<Record<string, unknown>>
+            rowKey="row_key"
+            size="small"
+            pagination={false}
+            dataSource={chainRows}
+            locale={{ emptyText: '暂无两连三连入选记录' }}
+            columns={[
+              { title: '股票', dataIndex: 'name', width: 130 },
+              { title: '代码', dataIndex: 'ts_code', width: 120 },
+              { title: '状态', dataIndex: 'status', width: 100 },
+              { title: '题材', dataIndex: 'theme', width: 160 },
+              { title: 'LLM 角色', render: (_, record) => nestedRecordText(record, 'selection', 'theme_role') },
+              { title: '入选理由', render: (_, record) => nestedRecordText(record, 'selection', 'selection_reason') }
+            ]}
+          />
+        </div>
+        <div>
+          <Typography.Title level={5}>高连板入选名单</Typography.Title>
+          <Table<Record<string, unknown>>
+            rowKey="row_key"
+            size="small"
+            pagination={false}
+            dataSource={highRows}
+            locale={{ emptyText: '暂无高连板入选记录' }}
+            columns={[
+              { title: '股票', dataIndex: 'name', width: 130 },
+              { title: '代码', dataIndex: 'ts_code', width: 120 },
+              { title: '状态', dataIndex: 'status', width: 100 },
+              { title: '题材', dataIndex: 'theme', width: 160 },
+              { title: '龙头角色', render: (_, record) => nestedRecordText(record, 'selection', 'leader_role') },
+              { title: '风险', render: (_, record) => nestedRecordText(record, 'selection', 'risk_level') },
+              { title: '入选理由', render: (_, record) => nestedRecordText(record, 'selection', 'selection_reason') }
+            ]}
+          />
+        </div>
+      </Space>
+    </div>
+  );
+}
 
 interface LimitUpReportSearchForm {
   keyword?: string;
@@ -417,6 +504,11 @@ function LimitUpPushPage({ currentUser }: LimitUpPushPageProps) {
                                 <code>{selectedReport.data.content_html}</code>
                               </pre>
                             )
+                          },
+                          {
+                            key: 'stages',
+                            label: '阶段',
+                            children: renderStagePanel(selectedReport.data)
                           }
                         ]}
                       />
