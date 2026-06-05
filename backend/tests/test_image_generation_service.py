@@ -356,7 +356,7 @@ def test_list_generations_supports_multiple_statuses(tmp_path: Path) -> None:
     assert generating_response.id in returned_ids
 
 
-def test_rate_limit_response_retries_configured_attempts(tmp_path: Path) -> None:
+def test_rate_limit_response_retries_configured_attempts(tmp_path: Path, monkeypatch) -> None:
     """确认 input-images per min 限流会按配置次数重试。
 
     创建日期：2026-06-05
@@ -364,6 +364,7 @@ def test_rate_limit_response_retries_configured_attempts(tmp_path: Path) -> None
     """
 
     request_count = 0
+    monkeypatch.setattr("app.services.image_generation_client.time.sleep", lambda _: None)
 
     def handler(request: httpx.Request) -> httpx.Response:
         nonlocal request_count
