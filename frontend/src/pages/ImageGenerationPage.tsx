@@ -1,5 +1,5 @@
 import { Alert, Button, Card, Empty, Form, Input, Modal, Select, Space, Spin, Tag, Typography, Upload, message } from 'antd';
-import { Download, ImagePlus, RefreshCw, Sparkles, UploadCloud, X } from 'lucide-react';
+import { Download, Eye, ImagePlus, RefreshCw, Sparkles, UploadCloud, X } from 'lucide-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import PageHeader from '../components/PageHeader';
@@ -306,8 +306,11 @@ function ImageGalleryCard({
 }) {
   const mediaRef = useRef<HTMLDivElement | null>(null);
   const [imageUrl, setImageUrl] = useState<string | null>(null);
+  const [referenceUrl, setReferenceUrl] = useState<string | null>(null);
   const [shouldLoadImage, setShouldLoadImage] = useState(compact);
   const [isImagePreviewOpen, setIsImagePreviewOpen] = useState(false);
+  const [isReferencePreviewOpen, setIsReferencePreviewOpen] = useState(false);
+  const [isPromptModalOpen, setIsPromptModalOpen] = useState(false);
   const [errorLogs, setErrorLogs] = useState<ImageGenerationErrorLog[]>([]);
   const [isErrorModalOpen, setIsErrorModalOpen] = useState(false);
   const [isLoadingErrorLogs, setIsLoadingErrorLogs] = useState(false);
@@ -361,12 +364,42 @@ function ImageGalleryCard({
   }, [item.image_url, shouldLoadImage]);
 
   useEffect(() => {
+    let isMounted = true;
+    if (!item.reference_image_url || !shouldLoadImage) {
+      setReferenceUrl(null);
+      return;
+    }
+    // 历史记录里的参考图同样走鉴权接口读取；记录卡片接近视口后再加载，
+    // 避免一屏几十条记录同时请求原始参考图。
+    fetchProtectedImageBlobUrl(item.reference_image_url)
+      .then((url) => {
+        if (isMounted) {
+          setReferenceUrl(url);
+        } else {
+          URL.revokeObjectURL(url);
+        }
+      })
+      .catch(() => setReferenceUrl(null));
+    return () => {
+      isMounted = false;
+    };
+  }, [item.reference_image_url, shouldLoadImage]);
+
+  useEffect(() => {
     return () => {
       if (imageUrl) {
         URL.revokeObjectURL(imageUrl);
       }
     };
   }, [imageUrl]);
+
+  useEffect(() => {
+    return () => {
+      if (referenceUrl) {
+        URL.revokeObjectURL(referenceUrl);
+      }
+    };
+  }, [referenceUrl]);
 
   const download = async () => {
     if (!item.image_url) {
@@ -427,6 +460,35 @@ function ImageGalleryCard({
         <Typography.Paragraph ellipsis={{ rows: 2 }} className="image-gallery-prompt">
           {item.prompt}
         </Typography.Paragraph>
+        <Button
+          size="small"
+          icon={<Eye size={14} />}
+          className="image-gallery-text-button"
+          onClick={() => setIsPromptModalOpen(true)}
+        >
+          完整描述
+        </Button>
+        {item.reference_image_url ? (
+          <button
+            type="button"
+            className="image-gallery-reference"
+            onClick={() => {
+              if (referenceUrl) {
+                setIsReferencePreviewOpen(true);
+              }
+            }}
+          >
+            <span className="image-gallery-reference-thumb">
+              {referenceUrl ? <img src={referenceUrl} alt={`图片 #${item.id} 的参考图`} /> : <Spin size="small" />}
+            </span>
+            <span>
+              <Typography.Text strong>原始参考图</Typography.Text>
+              <Typography.Text type="secondary">
+                {formatFileSize(item.reference_file_size_bytes)}
+              </Typography.Text>
+            </span>
+          </button>
+        ) : null}
         {item.error_message ? (
           <Typography.Text type="danger" className="image-gallery-error">
             {item.error_message}
@@ -482,6 +544,33 @@ function ImageGalleryCard({
         )}
       </Modal>
       <Modal
+        title={`图片 #${item.id} 完整描述`}
+        open={isPromptModalOpen}
+        onCancel={() => setIsPromptModalOpen(false)}
+        footer={null}
+        width={760}
+      >
+        <Typography.Paragraph className="image-prompt-modal-text">{item.prompt}</Typography.Paragraph>
+      </Modal>
+      <Modal
+        title={`图片 #${item.id} 原始参考图`}
+        open={isReferencePreviewOpen}
+        onCancel={() => setIsReferencePreviewOpen(false)}
+        footer={null}
+        width="min(96vw, 1200px)"
+        centered
+      >
+        {referenceUrl ? (
+          <div className="image-preview-modal-body">
+            <img src={referenceUrl} alt={`图片 #${item.id} 的原始参考图`} />
+          </div>
+        ) : (
+          <div className="image-generation-loading">
+            <Spin />
+          </div>
+        )}
+      </Modal>
+      <Modal
         title={`图片 #${item.id} 错误详情`}
         open={isErrorModalOpen}
         onCancel={() => setIsErrorModalOpen(false)}
@@ -526,6 +615,16 @@ function formatStatus(status: string) {
     GENERATING: '生成中'
   };
   return statusMap[status] || status;
+}
+
+function formatFileSize(sizeBytes: number | null) {
+  if (!sizeBytes || sizeBytes <= 0) {
+    return '点击查看';
+  }
+  if (sizeBytes < 1024 * 1024) {
+    return `${Math.round(sizeBytes / 1024)} KB`;
+  }
+  return `${(sizeBytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
 export default ImageGenerationPage;
