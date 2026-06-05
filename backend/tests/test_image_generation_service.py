@@ -240,6 +240,38 @@ def test_reference_generation_uses_reference_payload(tmp_path: Path) -> None:
     assert fake_client.reference_calls[0].mime_type == "image/png"
 
 
+def test_oversized_reference_returns_user_message(tmp_path: Path) -> None:
+    """确认参考图过大时直接返回中文校验提示并返还次数。
+
+    创建日期：2026-06-05
+    author: sunshengxian
+    """
+
+    db = make_db()
+    user = add_user(db, "oversized-reference-user")
+    service = ImageGenerationService(db, make_settings(tmp_path), FakeImageClient())
+
+    response = service.create_generation(
+        user,
+        "Use an oversized reference",
+        "1024x1024",
+        UploadedReferenceImage(
+            "huge.png",
+            PNG_BYTES + (b"0" * (10 * 1024 * 1024)),
+            "image/png",
+        ),
+    )
+
+    assert response.status == "FAILED"
+    assert response.error_message == "参考图不能超过 10MB"
+    assert response.quota is not None
+    assert response.quota.used_count == 0
+    logs = db.query(AiImageGenerationErrorLog).filter_by(generation_id=response.id).all()
+    assert logs
+    assert logs[0].user_message == "参考图不能超过 10MB"
+    assert logs[0].detail_message == "参考图不能超过 10MB"
+
+
 def test_unsupported_reference_refunds_quota(tmp_path: Path) -> None:
     """确认供应商不支持参考图时失败可读且返还次数。
 

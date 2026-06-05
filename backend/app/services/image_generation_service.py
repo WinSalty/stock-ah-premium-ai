@@ -174,10 +174,17 @@ class ImageGenerationService:
             self.db.refresh(record)
             return self.record_response(record, user, quota)
         except (OSError, ValueError) as exc:
+            # 参考图大小、格式、空文件属于用户可自行修正的上传校验问题；
+            # 服务器文件系统异常仍只给通用文案，详细原因保留在管理员日志中。
+            user_message = (
+                str(exc)
+                if isinstance(exc, ValueError)
+                else IMAGE_GENERATION_USER_FAILED_MESSAGE
+            )
             return self._mark_failed_and_refund(
                 record,
                 user,
-                IMAGE_GENERATION_USER_FAILED_MESSAGE,
+                user_message,
                 perf_counter(),
                 detail_message=str(exc),
                 phase="store_reference",
