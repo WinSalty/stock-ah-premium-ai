@@ -379,7 +379,7 @@ class XueqiuPublishService:
         # 把非 T-1 窗口的报告误保存到雪球。
         if not self._scheduler_publish_day(today):
             return None
-        if not self._scheduler_time_matches(setting, now):
+        if not self._scheduler_time_reached(setting, now):
             return None
         limit_service = LimitUpPushService(self.db, self.settings)
         target_trade_date = limit_service.latest_a_trade_date(today=today)
@@ -392,6 +392,12 @@ class XueqiuPublishService:
         ):
             # 定时发布只认当前东八区日期推导出的最新 T-1 交易日报告；
             # 任何空报告、未生成完成或交易日错配都跳过，等待下一分钟/下次调度重试。
+            return None
+        mode = XUEQIU_MODE_PUBLISH if setting.auto_publish else XUEQIU_MODE_DRAFT
+        existing = self._latest_record_for_mode(analysis.id, mode)
+        if existing is not None and existing.status in {XUEQIU_STATUS_DRAFTED, XUEQIU_STATUS_PUBLISHED}:
+            # 到点后补发会让调度器每分钟继续检查；若当天目标报告已经成功保存或发布，
+            # 这里直接静默跳过，避免重复记录“任务完成”日志或再次请求雪球接口。
             return None
         return self.save_or_publish_report(
             analysis.id,
@@ -1353,6 +1359,29 @@ class XueqiuPublishService:
             setting.poll_minutes,
             now.minute,
         )
+
+    def _scheduler_time_reached(
+        self,
+        setting: XueqiuPublishSetting,
+        now: datetime | None = None,
+    ) -> bool:
+        """判断东八区当天是否已经到过页面配置的调度时点。
+
+        创建日期：2026-06-06
+        author: sunshengxian
+        """
+
+        now = now or self._now_local()
+        # 打板报告可能在设定分钟之后才 READY；只要当天已经经过任意一个配置时点，
+        # 定时任务就继续等待报告生成并补发一次，避免 08:35 命中时报告仍在生成而漏发。
+        for hour in range(0, now.hour + 1):
+            if not self._cron_field_matches(setting.poll_hours, hour):
+                continue
+            minute_end = now.minute if hour == now.hour else 59
+            for minute in range(0, minute_end + 1):
+                if self._cron_field_matches(setting.poll_minutes, minute):
+                    return True
+        return False
 
     def _cron_field_matches(self, expression: str, value: int) -> bool:
         """匹配简化 cron 字段，支持星号、逗号、范围和步长。

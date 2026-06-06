@@ -700,6 +700,70 @@ def test_scheduler_publishes_current_t_minus_one_report_on_tuesday(monkeypatch) 
     assert record.status == XUEQIU_STATUS_DRAFTED
 
 
+def test_scheduler_backfills_after_configured_time_when_report_becomes_ready(monkeypatch) -> None:
+    """确认报告晚于配置分钟 READY 时，雪球定时任务会在当天补发且不重复调用接口。
+
+    创建日期：2026-06-06
+    author: sunshengxian
+    """
+
+    db = make_db()
+    admin = AppUser(username="admin", password_hash="hash", role="ADMIN", is_active=True)
+    db.add_all(
+        [
+            admin,
+            ATradeCalendar(exchange="SSE", cal_date=date(2026, 6, 5), is_open=1),
+        ]
+    )
+    db.commit()
+    db.refresh(admin)
+    expected_report = add_ready_report_for_date(db, date(2026, 6, 5))
+    service = XueqiuPublishService(db, Settings(xueqiu_publish_scheduler_enabled=True))
+    save_test_credential(service, admin)
+    service.save_publish_setting(
+        XueqiuPublishSettingRequest(
+            scheduler_enabled=True,
+            auto_publish=False,
+            poll_hours="8",
+            poll_minutes="35",
+            default_cover_pic="",
+        ),
+        admin,
+    )
+    requested_trade_dates: list[date] = []
+    save_draft_calls: list[int] = []
+
+    def fake_ensure_analysis(self, trade_date: date) -> LimitUpAnalysisCache | None:
+        # 本用例模拟打板报告已在 08:35 之后生成完成，只验证补发窗口是否继续认当天 T-1 报告。
+        requested_trade_dates.append(trade_date)
+        return self.db.scalar(
+            select(LimitUpAnalysisCache).where(LimitUpAnalysisCache.trade_date == trade_date)
+        )
+
+    def fake_save_draft(_credential, record: XueqiuPublishRecord) -> dict[str, str]:
+        # 记录实际触达雪球草稿接口的次数，确保成功后后续每分钟调度不会重复提交。
+        save_draft_calls.append(record.analysis_id or 0)
+        return {"id": "draft-id"}
+
+    monkeypatch.setattr(LimitUpPushService, "ensure_analysis_for_trade_date", fake_ensure_analysis)
+    monkeypatch.setattr(
+        service,
+        "_now_local",
+        lambda: datetime(2026, 6, 6, 8, 44, tzinfo=EAST8_TZ),
+    )
+    monkeypatch.setattr(service, "_save_draft", fake_save_draft)
+
+    record = service.save_or_publish_latest_by_scheduler()
+    repeat = service.save_or_publish_latest_by_scheduler()
+
+    assert record is not None
+    assert record.analysis_id == expected_report.id
+    assert record.status == XUEQIU_STATUS_DRAFTED
+    assert repeat is None
+    assert requested_trade_dates == [date(2026, 6, 5), date(2026, 6, 5)]
+    assert save_draft_calls == [expected_report.id]
+
+
 def test_scheduler_skips_monday_even_when_report_exists(monkeypatch) -> None:
     """确认周一不自动写入雪球，避免把周末窗口外的报告误当 T-1 发布。
 
