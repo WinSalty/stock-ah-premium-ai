@@ -818,6 +818,30 @@ class ImageGenerationService:
         mime_type = self._detect_mime_type(reference_image.content, reference_image.mime_type)
         if mime_type not in SUPPORTED_REFERENCE_MIME_TYPES:
             raise ValueError("参考图只支持 PNG、JPG 或 WebP")
+        # 按“同一用户 + 文件内容哈希 + MIME 类型”查找历史参考图，
+        # 避免同用户反复上传同一张图时重复写入 OSS。
+        # 创建日期：2026-06-06；author: sunshengxian
+        sha256 = hashlib.sha256(reference_image.content).hexdigest()
+        existing_reference = self.db.scalar(
+            select(AiImageGeneration)
+            .where(
+                AiImageGeneration.user_id == user.id,
+                AiImageGeneration.reference_file_sha256 == sha256,
+                AiImageGeneration.reference_mime_type == mime_type,
+                AiImageGeneration.reference_file_relative_path.is_not(None),
+            )
+            .order_by(AiImageGeneration.id.desc())
+            .limit(1)
+        )
+        if existing_reference and existing_reference.reference_file_relative_path:
+            # 同一用户重复上传完全一致的参考图时复用已有 OSS 对象键；
+            # 逻辑删除只隐藏历史记录但不删除对象，因此这里允许复用已删除记录里的对象。
+            return StoredImageFile(
+                relative_path=existing_reference.reference_file_relative_path,
+                mime_type=mime_type,
+                size_bytes=len(reference_image.content),
+                sha256=sha256,
+            )
         return self._store_bytes(
             record,
             user,

@@ -334,9 +334,12 @@ function ImageGalleryCard({
   const [errorLogs, setErrorLogs] = useState<ImageGenerationErrorLog[]>([]);
   const [isErrorModalOpen, setIsErrorModalOpen] = useState(false);
   const [isLoadingErrorLogs, setIsLoadingErrorLogs] = useState(false);
+  // 历史失败记录也可能只有参考图可预览，懒加载判断必须覆盖参考图，避免卡片进入视口后仍停留在加载态。
+  // 创建日期：2026-06-06；author: sunshengxian
+  const hasLoadableMedia = Boolean((item.status === 'READY' && item.image_url) || item.reference_image_url);
 
   useEffect(() => {
-    if (compact || item.status !== 'READY' || !item.image_url) {
+    if (compact || !hasLoadableMedia) {
       setShouldLoadImage(compact);
       return;
     }
@@ -361,7 +364,7 @@ function ImageGalleryCard({
     );
     observer.observe(mediaElement);
     return () => observer.disconnect();
-  }, [compact, item.image_url, item.status]);
+  }, [compact, hasLoadableMedia, item.image_url, item.reference_image_url, item.status]);
 
   useEffect(() => {
     let isMounted = true;

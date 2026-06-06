@@ -308,6 +308,45 @@ def test_reference_generation_uses_reference_payload(tmp_path: Path) -> None:
     assert fake_client.reference_calls[0].mime_type == "image/png"
 
 
+def test_same_user_duplicate_reference_reuses_storage_object(tmp_path: Path) -> None:
+    """确认同一用户重复上传相同参考图时只保存一份存储对象。
+
+    创建日期：2026-06-06
+    author: sunshengxian
+    """
+
+    db = make_db()
+    user = add_user(db, "duplicate-reference-user")
+    storage = FakeSignedUrlStorage()
+    service = ImageGenerationService(
+        db,
+        make_settings(tmp_path),
+        FakeImageClient(),
+        storage=storage,
+    )
+
+    first_response = service.create_generation(
+        user,
+        "First use of the same reference",
+        "1024x1024",
+        UploadedReferenceImage("same.png", PNG_BYTES, "image/png"),
+    )
+    second_response = service.create_generation(
+        user,
+        "Second use of the same reference",
+        "1024x1024",
+        UploadedReferenceImage("same-again.png", PNG_BYTES, "image/png"),
+    )
+    first_record = db.get(AiImageGeneration, first_response.id)
+    second_record = db.get(AiImageGeneration, second_response.id)
+
+    assert first_record is not None
+    assert second_record is not None
+    assert first_record.reference_file_relative_path is not None
+    assert first_record.reference_file_relative_path == second_record.reference_file_relative_path
+    assert len(storage.objects) == 1
+
+
 def test_oversized_reference_returns_user_message(tmp_path: Path) -> None:
     """确认参考图过大时直接返回中文校验提示并返还次数。
 
