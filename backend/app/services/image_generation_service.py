@@ -402,6 +402,19 @@ class ImageGenerationService:
             raise ImageGenerationError("没有访问该图片的权限", 403)
         return record
 
+    def delete_generation(self, user: AppUser, generation_id: int) -> None:
+        """逻辑删除图片记录，不物理删除 OSS 对象和错误日志。
+
+        创建日期：2026-06-06
+        author: sunshengxian
+        """
+
+        record = self.get_generation(user, generation_id)
+        # deleted_at 按东八区 naive 写入，和项目内会话逻辑删除口径保持一致；
+        # 删除只影响历史展示和后续访问鉴权，不回收已消耗的生成次数，也不删除 OSS 对象。
+        record.deleted_at = datetime.now(IMAGE_GENERATION_TIMEZONE).replace(tzinfo=None)
+        self.db.commit()
+
     def image_file_path(
         self,
         user: AppUser,

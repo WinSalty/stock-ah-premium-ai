@@ -8,7 +8,7 @@
 
 ## 已完成
 
-- 图片生成功能已从本地文件存储迁移到阿里 OSS 存储口径：后端新增图片存储适配层，生产环境通过 `IMAGE_GEN_STORAGE_BACKEND=oss` 上传生成图和参考图到私有 Bucket，数据库继续保存对象键、MIME、大小和 SHA256；列表、详情和旧文件接口都在完成系统用户鉴权后返回 1 天有效 OSS 签名 URL，前端直接使用签名 URL 预览和下载，避免对 OSS URL 追加业务 Authorization。`local` 存储仅保留给单测和旧环境兜底，配置示例、部署文档、启动文档和全量 schema 注释已同步更新。
+- 图片生成功能已从本地文件存储迁移到阿里 OSS 存储口径：后端新增图片存储适配层，生产环境通过 `IMAGE_GEN_STORAGE_BACKEND=oss` 上传生成图和参考图到私有 Bucket，数据库继续保存对象键、MIME、大小和 SHA256；列表、详情和旧文件接口都在完成系统用户鉴权后返回 1 天有效 OSS 签名 URL，前端直接使用签名 URL 预览和下载，避免对 OSS URL 追加业务 Authorization。历史图库已支持逻辑删除，删除只写 `deleted_at` 并隐藏记录，不物理删除 OSS 对象和错误日志。`local` 存储仅保留给单测和旧环境兜底，配置示例、部署文档、启动文档和全量 schema 注释已同步更新。
 - 新增 `resources/doc/limit-up-multi-stage-analysis-refactor-plan.md`，沉淀打板报告多轮分析与筹码补数改造计划：保留现有 KPL 数据就绪、报告缓存和 PushPlus 推送链路，将报告生成拆为首板题材发酵、两连三连候选选择、高连板候选选择、`cyq_perf`/`cyq_chips` 筹码补数、重点分析和最终报告合成多个节点；两连三连重点候选上限定为 20 只，高连板允许由 LLM 挑选并给出观察分层，最终报告同时覆盖连板可能性、下一个交易日溢价可能性、反证条件和风险提示。
 - 打板报告多轮分析完成代码落地：后端新增阶段缓存与重点股票筹码补数缓存模型、Alembic 迁移和配置项，`LimitUpPushService` 内部改为首板、两连三连筛选、高连筛选、筹码补数、重点分析和最终合成的多阶段 pipeline；两连三连重点候选默认放宽到 20 只，高连板也允许 LLM 挑选分析和推荐；前端报告详情新增“阶段”页签，展示阶段质量、两连三连入选名单和高连板入选名单，便于核对 LLM 筛选依据。本轮已通过 `backend/.venv/bin/python -m compileall backend/app backend/tests/test_limit_up_push_service.py`、`backend/.venv/bin/python -m pytest backend/tests/test_limit_up_push_service.py -q`、`backend/.venv/bin/ruff check backend/alembic/versions/20260605_0047_add_limit_up_multi_stage_cache.py backend/app/db/models/notification.py` 和 `npm --prefix frontend run build`。
 - 智能问答分红再投路由线上热修：服务器历史回测批次状态为 `SUCCESS`，而新版提示词要求 `COMPLETED`，导致“招商银行十年平均年化收益率是多少”等问题生成 SQL 后被状态条件过滤为 0 行。后端已将分红再投最新完成批次口径调整为兼容 `COMPLETED/SUCCESS`，并对 LLM 生成或修复后的分红再投 SQL 做状态归一化；服务器复测可返回招商银行近十年平均年化约 19.04%。目标后端测试和 Ruff 已通过。

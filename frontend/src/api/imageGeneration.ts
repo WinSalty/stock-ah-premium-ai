@@ -108,6 +108,25 @@ export function retryImageGeneration(generationId: number) {
   );
 }
 
+/**
+ * 逻辑删除图片历史记录，后端只写 deleted_at，不物理删除 OSS 对象。
+ * 创建日期：2026-06-06
+ * author: sunshengxian
+ */
+export async function deleteImageGeneration(generationId: number) {
+  const token = getAuthToken();
+  const response = await fetch(`${API_BASE_URL}/api/image-generation/generations/${generationId}`, {
+    method: 'DELETE',
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {})
+    }
+  });
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    throw new ApiError(response.status, body.detail || response.statusText);
+  }
+}
+
 function isAbsoluteHttpUrl(path: string) {
   return /^https?:\/\//i.test(path);
 }

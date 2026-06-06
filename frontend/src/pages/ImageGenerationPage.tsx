@@ -1,11 +1,12 @@
-import { Alert, Button, Card, Empty, Form, Input, Modal, Select, Space, Spin, Tag, Typography, Upload, message } from 'antd';
-import { Download, Eye, ImagePlus, RefreshCw, Sparkles, UploadCloud, X } from 'lucide-react';
+import { Alert, Button, Card, Empty, Form, Input, Modal, Popconfirm, Select, Space, Spin, Tag, Typography, Upload, message } from 'antd';
+import { Download, Eye, ImagePlus, RefreshCw, Sparkles, Trash2, UploadCloud, X } from 'lucide-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import PageHeader from '../components/PageHeader';
 import {
   IMAGE_GENERATION_SIZE_OPTIONS,
   createImageGeneration,
+  deleteImageGeneration,
   fetchImageGenerationErrorLogs,
   fetchImageGenerations,
   fetchMyImageGenerationQuota,
@@ -102,6 +103,18 @@ function ImageGenerationPage({ currentUser }: ImageGenerationPageProps) {
       }
     },
     onError: (error) => message.error(error instanceof Error ? error.message : '图片重试失败')
+  });
+  // 删除历史图片只做逻辑删除；成功后刷新历史列表，并清理可能还停留在右侧预览里的同一条记录。
+  const deleteMutation = useMutation({
+    mutationFn: deleteImageGeneration,
+    onSuccess: (_, generationId) => {
+      if (latestRecord?.id === generationId) {
+        setLatestRecord(null);
+      }
+      queryClient.invalidateQueries({ queryKey: ['image-generations'] });
+      message.success('图片记录已删除');
+    },
+    onError: (error) => message.error(error instanceof Error ? error.message : '图片删除失败')
   });
 
   useEffect(() => {
@@ -254,7 +267,9 @@ function ImageGenerationPage({ currentUser }: ImageGenerationPageProps) {
                 showUser={isAdmin}
                 showErrorDetails={isAdmin}
                 retrying={retryMutation.isPending && retryMutation.variables === item.id}
+                deleting={deleteMutation.isPending && deleteMutation.variables === item.id}
                 onRetry={(record) => retryMutation.mutate(record.id)}
+                onDelete={(record) => deleteMutation.mutate(record.id)}
               />
             ))}
           </div>
@@ -296,14 +311,18 @@ function ImageGalleryCard({
   compact = false,
   showErrorDetails = false,
   retrying = false,
-  onRetry
+  deleting = false,
+  onRetry,
+  onDelete
 }: {
   item: ImageGenerationItem;
   showUser?: boolean;
   compact?: boolean;
   showErrorDetails?: boolean;
   retrying?: boolean;
+  deleting?: boolean;
   onRetry?: (item: ImageGenerationItem) => void;
+  onDelete?: (item: ImageGenerationItem) => void;
 }) {
   const mediaRef = useRef<HTMLDivElement | null>(null);
   const [imageUrl, setImageUrl] = useState<string | null>(null);
@@ -524,6 +543,19 @@ function ImageGalleryCard({
           <Button size="small" onClick={openErrorLogs}>
             错误详情
           </Button>
+        ) : null}
+        {onDelete ? (
+          <Popconfirm
+            title="删除图片记录"
+            description="删除后历史图片中将不再显示该记录"
+            okText="删除"
+            cancelText="取消"
+            onConfirm={() => onDelete(item)}
+          >
+            <Button size="small" danger icon={<Trash2 size={14} />} loading={deleting}>
+              删除
+            </Button>
+          </Popconfirm>
         ) : null}
       </div>
       <Modal

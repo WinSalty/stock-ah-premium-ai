@@ -147,6 +147,25 @@ def retry_image_generation(
     return response
 
 
+@router.delete("/image-generation/generations/{generation_id}", status_code=204)
+def delete_image_generation(
+    generation_id: int,
+    db: DbSession,
+    user: ImageGenerationUser,
+) -> Response:
+    """逻辑删除图片历史记录，保留 OSS 对象和审计日志。
+
+    创建日期：2026-06-06
+    author: sunshengxian
+    """
+
+    try:
+        ImageGenerationService(db).delete_generation(user, generation_id)
+    except ImageGenerationError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+    return Response(status_code=204)
+
+
 @router.get("/image-generation/generations/{generation_id}/file")
 def get_image_generation_file(
     generation_id: int,

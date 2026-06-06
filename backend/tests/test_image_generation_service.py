@@ -400,6 +400,39 @@ def test_regular_user_cannot_read_other_user_image(tmp_path: Path) -> None:
     assert service.get_generation(admin, response.id).id == response.id
 
 
+def test_delete_generation_hides_record_and_keeps_permission_boundary(tmp_path: Path) -> None:
+    """确认图片逻辑删除后不再出现在历史列表，且他人不能删除。
+
+    创建日期：2026-06-06
+    author: sunshengxian
+    """
+
+    db = make_db()
+    owner = add_user(db, "delete-owner")
+    other = add_user(db, "delete-other")
+    service = ImageGenerationService(db, make_settings(tmp_path), FakeImageClient())
+    response = service.create_generation(owner, "A deletable image", "1024x1024")
+
+    try:
+        service.delete_generation(other, response.id)
+    except ImageGenerationError as exc:
+        assert "没有访问" in str(exc)
+    else:
+        raise AssertionError("普通用户不应删除他人图片")
+
+    service.delete_generation(owner, response.id)
+    record = db.get(AiImageGeneration, response.id)
+    assert record is not None
+    assert record.deleted_at is not None
+    assert service.list_generations(owner).total == 0
+    try:
+        service.get_generation(owner, response.id)
+    except ImageGenerationError as exc:
+        assert "不存在" in str(exc)
+    else:
+        raise AssertionError("已删除图片不应继续被读取")
+
+
 def test_list_generations_supports_multiple_statuses(tmp_path: Path) -> None:
     """确认历史图库可一次查询已完成和生成中两类记录。
 

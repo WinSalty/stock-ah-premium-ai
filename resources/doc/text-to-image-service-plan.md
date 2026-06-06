@@ -108,7 +108,7 @@ stock-ah-premium-ai/generated-images/
 - 普通用户访问图片 URL 前必须校验记录归属；管理员可以访问全部记录。
 - 前端拿到的 URL 是 1 天有效的签名 URL，过期后刷新列表或详情即可重新获取。
 - `local` 模式仅用于单测或旧环境兜底，继续使用临时文件加原子替换，避免中断时留下半张图片。
-- 删除能力首期不做物理删除，只预留 `deleted_at` 字段和后续接口位置。
+- 删除能力采用逻辑删除，只写 `deleted_at` 并从历史列表隐藏记录，不物理删除 OSS 对象和错误日志。
 
 ## 5. 数据模型与迁移
 
@@ -269,6 +269,7 @@ PENDING -> GENERATING -> FAILED
 | `POST` | `/api/image-generation/generations` | `image_generation` | 创建文生图任务；使用 `multipart/form-data` 时可携带参考图，接口立即返回 `GENERATING` 记录，后台继续生成。 |
 | `GET` | `/api/image-generation/generations` | `image_generation` | 查询图片列表；普通用户仅自己的记录，管理员可查全部。 |
 | `GET` | `/api/image-generation/generations/{id}` | `image_generation` | 查看详情。 |
+| `DELETE` | `/api/image-generation/generations/{id}` | `image_generation` | 逻辑删除图片历史记录；普通用户只能删除自己的记录，管理员可删除全部。 |
 | `GET` | `/api/image-generation/generations/{id}/file` | `image_generation` | 兼容旧入口；OSS 模式后端鉴权后 307 跳转到 1 天有效签名 URL。 |
 | `GET` | `/api/image-generation/quota/me` | `image_generation` | 查看当前用户今日次数、每日上限和剩余次数。 |
 
@@ -416,6 +417,7 @@ frontend/src/pages/ImageGenerationPage.tsx
 - 当日次数达到上限后拒绝生成。
 - 东八区跨日后自动重置 `used_count`。
 - 管理员可查询所有图片，普通用户无法读取他人图片详情和文件。
+- 用户删除图片后历史列表不再展示该记录，详情和文件接口也不再可访问；OSS 对象和错误日志保留用于审计。
 - URL 返回和 `b64_json` 返回都能保存到 OSS。
 - 上传参考图时，后端会先保存参考图、校验文件类型和大小，再调用供应商；供应商不支持时返还次数。
 - 外部 401、400、429、5xx、超时均能落库为 `FAILED`，普通用户只看到友好摘要，管理员可查看详细错误日志。
@@ -439,6 +441,7 @@ frontend/src/pages/ImageGenerationPage.tsx
 - 连续生成到第 10 次后，第 11 次被拒绝。
 - 管理员进入用户管理页把该用户次数重置后，可再次生成。
 - 管理员账号能看到所有用户图片；普通用户只能看到自己的图片。
+- 普通用户可以删除自己的历史图片，不能删除他人图片；删除后刷新页面仍不再显示。
 
 ## 13. 分阶段落地清单
 
