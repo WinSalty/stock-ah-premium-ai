@@ -25,7 +25,7 @@ cd /Users/salty/codeProject/ai/coding/stock-ah-premium-ai
 - MySQL：本机 MySQL 5.7，连接说明见 `/Users/salty/codeProject/ai/doc/mysqluse.md`。
 - Tushare：使用 Python `tushare` SDK，默认中转地址 `https://tt.xiaodefa.cn`，同步接口运行时优先读取本机文件 `/Users/salty/codeProject/ai/doc/tushare-token.txt`，环境变量 `TUSHARE_TOKEN` 作为兜底。
 - LLM：运行智能问答时默认接入 DeepSeek OpenAI-compatible API，优先读取本机文件 `/Users/salty/codeProject/ai/doc/deepseek-apikey.txt`，环境变量 `LLM_API_KEY` 作为兜底，默认 API 模型 `deepseek-v4-flash`；页面可切换 DeepSeek Pro `deepseek-v4-pro` 或阿里 Qwen `qwen3.6-flash`，Qwen Key 优先读取 `/Users/salty/codeProject/ai/doc/qwen-apikey.txt`；项目级外部模型调用默认日限额为 `LLM_DAILY_CALL_LIMIT=100`。
-- 文生图：默认接入 86GameStore OpenAI Images 兼容接口，优先读取本机文件 `/Users/salty/codeProject/ai/doc/86gamestore-image-apikey.txt`，环境变量 `IMAGE_GEN_API_KEY` 作为兜底；图片默认保存到 `/opt/stock-ah-premium-ai/data/generated-images`，用于和代码目录分离，部署时需确保后端运行用户可写。
+- 文生图：默认接入 86GameStore OpenAI Images 兼容接口，优先读取本机文件 `/Users/salty/codeProject/ai/doc/86gamestore-image-apikey.txt`，环境变量 `IMAGE_GEN_API_KEY` 作为兜底；图片生产环境保存到阿里 OSS 私有 Bucket，后端鉴权后返回 1 天有效签名 URL。
 
 启动 MySQL：
 
@@ -95,7 +95,14 @@ IMAGE_GEN_API_KEY=
 IMAGE_GEN_MODEL=gpt-image-2
 IMAGE_GEN_TIMEOUT_SECONDS=300
 IMAGE_GEN_DAILY_LIMIT_DEFAULT=10
+IMAGE_GEN_STORAGE_BACKEND=oss
 IMAGE_GEN_STORAGE_DIR=/opt/stock-ah-premium-ai/data/generated-images
+IMAGE_GEN_OSS_ENDPOINT=
+IMAGE_GEN_OSS_BUCKET=
+IMAGE_GEN_OSS_PREFIX=stock-ah-premium-ai/generated-images
+IMAGE_GEN_OSS_ACCESS_KEY_ID_FILE=
+IMAGE_GEN_OSS_ACCESS_KEY_SECRET_FILE=
+IMAGE_GEN_OSS_SIGNED_URL_EXPIRES_SECONDS=86400
 APP_CORS_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
 ```
 

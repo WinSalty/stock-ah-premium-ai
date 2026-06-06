@@ -75,7 +75,14 @@ IMAGE_GEN_API_KEY_FILE=/home/ubuntu/stock-ah-premium-ai/secrets/86gamestore-imag
 IMAGE_GEN_MODEL=gpt-image-2
 IMAGE_GEN_TIMEOUT_SECONDS=300
 IMAGE_GEN_DAILY_LIMIT_DEFAULT=10
+IMAGE_GEN_STORAGE_BACKEND=oss
 IMAGE_GEN_STORAGE_DIR=/opt/stock-ah-premium-ai/data/generated-images
+IMAGE_GEN_OSS_ENDPOINT=<oss-endpoint>
+IMAGE_GEN_OSS_BUCKET=<oss-bucket>
+IMAGE_GEN_OSS_PREFIX=stock-ah-premium-ai/generated-images
+IMAGE_GEN_OSS_ACCESS_KEY_ID_FILE=/home/ubuntu/stock-ah-premium-ai/secrets/image-oss-access-key-id.txt
+IMAGE_GEN_OSS_ACCESS_KEY_SECRET_FILE=/home/ubuntu/stock-ah-premium-ai/secrets/image-oss-access-key-secret.txt
+IMAGE_GEN_OSS_SIGNED_URL_EXPIRES_SECONDS=86400
 PUSHPLUS_TOKEN_FILE=/home/ubuntu/stock-ah-premium-ai/secrets/pushplus.txt
 PUSHPLUS_SECRET_KEY_FILE=/home/ubuntu/stock-ah-premium-ai/secrets/pushplus.txt
 APP_CORS_ORIGINS=["http://<server-ip>:5173","http://<server-ip>:8000","http://localhost:5173","http://127.0.0.1:5173"]
@@ -87,14 +94,12 @@ DEFAULT_ADMIN_PASSWORD=<admin-password>
 
 - 数据库密码如果包含 `@`、`#`、`:` 等特殊字符，必须在 URL 中编码，例如 `@` 写成 `%40`。
 - 密钥文件建议统一放在服务器项目目录的 `secrets/` 下，目录权限设置为 `700`，文件权限设置为 `600`，属主应与后端 systemd 运行用户一致。
-- 文生图输出目录建议单独挂载数据盘或至少放在代码目录外，避免发布覆盖图片；创建目录后应把属主授予后端 systemd 运行用户。
+- 文生图生产环境使用阿里 OSS 私有 Bucket，后端完成系统用户鉴权后返回 1 天有效签名 URL；`IMAGE_GEN_STORAGE_DIR` 只作为 `local` 兜底模式使用。
 - 首次部署或服务器提示 `llmConfigured=false`、`tushareConfigured=false`、`qwenConfigured=false`、`pushplusConfigured=false` 时，优先确认 `secrets/` 目录和凭据文件是否已经从本机未入库文档同步到服务器：
 
 ```bash
 mkdir -p /home/ubuntu/stock-ah-premium-ai/secrets
 chmod 700 /home/ubuntu/stock-ah-premium-ai/secrets
-sudo mkdir -p /opt/stock-ah-premium-ai/data/generated-images
-sudo chown -R ubuntu:ubuntu /opt/stock-ah-premium-ai/data
 scp /Users/salty/codeProject/ai/doc/tushare-token.txt ubuntu@<server-ip>:/home/ubuntu/stock-ah-premium-ai/secrets/tushare-token.txt
 scp /Users/salty/codeProject/ai/doc/deepseek-apikey.txt ubuntu@<server-ip>:/home/ubuntu/stock-ah-premium-ai/secrets/deepseek-apikey.txt
 scp /Users/salty/codeProject/ai/doc/qwen-apikey.txt ubuntu@<server-ip>:/home/ubuntu/stock-ah-premium-ai/secrets/qwen-apikey.txt

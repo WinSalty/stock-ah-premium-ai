@@ -24,6 +24,7 @@ from app.services.image_generation_service import (
     ImageGenerationService,
     UploadedReferenceImage,
 )
+from app.services.image_generation_storage_service import ImageGenerationStorageError
 
 PNG_BYTES = b"\x89PNG\r\n\x1a\n" + b"\x00" * 32
 
@@ -61,6 +62,42 @@ class FakeImageClient:
             raise ImageGenerationUnsupportedError("当前文生图供应商暂未开放参考图 API")
         self.reference_calls.append(reference_image)
         return self.generate(prompt, size, model)
+
+
+class FakeSignedUrlStorage:
+    """图片生成测试用 OSS 签名 URL 存储。
+
+    创建日期：2026-06-06
+    author: sunshengxian
+    """
+
+    def __init__(self) -> None:
+        self.objects: dict[str, bytes] = {}
+        self.mime_types: dict[str, str] = {}
+        self.signed_keys: list[str] = []
+
+    @property
+    def is_local(self) -> bool:
+        return False
+
+    def build_storage_key(self, relative_path: str) -> str:
+        return f"stock-ah-premium-ai/generated-images/{relative_path}"
+
+    def save_bytes(self, storage_key: str, content: bytes, mime_type: str) -> None:
+        self.objects[storage_key] = content
+        self.mime_types[storage_key] = mime_type
+
+    def read_bytes(self, storage_key: str) -> bytes:
+        if storage_key not in self.objects:
+            raise ImageGenerationStorageError("图片文件不存在")
+        return self.objects[storage_key]
+
+    def signed_url(self, storage_key: str) -> str:
+        self.signed_keys.append(storage_key)
+        return f"https://bucket.oss-cn-hangzhou.aliyuncs.com/{storage_key}?Expires=86400"
+
+    def local_file_path(self, storage_key: str) -> Path:
+        raise ImageGenerationStorageError("OSS 存储不支持本地路径")
 
 
 def make_db() -> Session:
@@ -101,6 +138,7 @@ def make_settings(tmp_path: Path) -> Settings:
     """
 
     return Settings(
+        image_gen_storage_backend="local",
         image_gen_storage_dir=tmp_path,
         image_gen_api_key="unit-test-key",
         image_gen_api_key_file=None,
@@ -113,7 +151,7 @@ def make_settings(tmp_path: Path) -> Settings:
 
 
 def test_image_generation_saves_file_and_consumes_quota(tmp_path: Path) -> None:
-    """确认成功生成图片会落盘并扣减一次额度。
+    """确认 local 兜底模式成功生成图片会保存文件并扣减一次额度。
 
     创建日期：2026-05-27
     author: sunshengxian
@@ -142,6 +180,36 @@ def test_image_generation_saves_file_and_consumes_quota(tmp_path: Path) -> None:
     assert stored_record is not None
     assert stored_record.file_relative_path is not None
     assert tmp_path.joinpath(stored_record.file_relative_path).exists()
+
+
+def test_image_generation_returns_signed_oss_url(tmp_path: Path) -> None:
+    """确认 OSS 模式生成完成后向前端返回一天有效的签名 URL。
+
+    创建日期：2026-06-06
+    author: sunshengxian
+    """
+
+    db = make_db()
+    user = add_user(db, "oss-url-user")
+    storage = FakeSignedUrlStorage()
+    service = ImageGenerationService(
+        db,
+        make_settings(tmp_path),
+        FakeImageClient(),
+        storage=storage,
+    )
+
+    response = service.create_generation(user, "A signed OSS image", "1024x1024")
+    service.process_generation(response.id)
+    response = service.record_response(service.get_generation(user, response.id), user)
+
+    assert response.status == "READY"
+    assert response.image_url is not None
+    assert response.image_url.startswith("https://bucket.oss-cn-hangzhou.aliyuncs.com/")
+    assert "Expires=86400" in response.image_url
+    stored_record = db.get(AiImageGeneration, response.id)
+    assert stored_record is not None
+    assert stored_record.file_relative_path in storage.objects
 
 
 def test_failed_generation_refunds_quota(tmp_path: Path) -> None:
@@ -209,7 +277,7 @@ def test_retry_failed_generation_creates_new_task(tmp_path: Path) -> None:
 
 
 def test_reference_generation_uses_reference_payload(tmp_path: Path) -> None:
-    """确认参考图会先本地落盘，再传给供应商适配层。
+    """确认参考图会先保存到存储后端，再传给供应商适配层。
 
     创建日期：2026-05-27
     author: sunshengxian

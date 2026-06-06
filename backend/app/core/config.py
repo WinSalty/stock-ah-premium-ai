@@ -57,9 +57,44 @@ class Settings(BaseSettings):
     image_gen_model: str = Field(default="gpt-image-2", alias="IMAGE_GEN_MODEL")
     image_gen_timeout_seconds: float = Field(default=300.0, alias="IMAGE_GEN_TIMEOUT_SECONDS")
     image_gen_daily_limit_default: int = Field(default=10, alias="IMAGE_GEN_DAILY_LIMIT_DEFAULT")
+    image_gen_storage_backend: str = Field(default="oss", alias="IMAGE_GEN_STORAGE_BACKEND")
     image_gen_storage_dir: Path = Field(
         default=Path("/opt/stock-ah-premium-ai/data/generated-images"),
         alias="IMAGE_GEN_STORAGE_DIR",
+    )
+    image_gen_oss_endpoint: str | None = Field(default=None, alias="IMAGE_GEN_OSS_ENDPOINT")
+    image_gen_oss_bucket: str | None = Field(default=None, alias="IMAGE_GEN_OSS_BUCKET")
+    image_gen_oss_prefix: str = Field(
+        default="stock-ah-premium-ai/generated-images",
+        alias="IMAGE_GEN_OSS_PREFIX",
+    )
+    image_gen_oss_access_key_id: str | None = Field(
+        default=None,
+        alias="IMAGE_GEN_OSS_ACCESS_KEY_ID",
+    )
+    image_gen_oss_access_key_id_file: Path | None = Field(
+        default=None,
+        alias="IMAGE_GEN_OSS_ACCESS_KEY_ID_FILE",
+    )
+    image_gen_oss_access_key_secret: str | None = Field(
+        default=None,
+        alias="IMAGE_GEN_OSS_ACCESS_KEY_SECRET",
+    )
+    image_gen_oss_access_key_secret_file: Path | None = Field(
+        default=None,
+        alias="IMAGE_GEN_OSS_ACCESS_KEY_SECRET_FILE",
+    )
+    image_gen_oss_security_token: str | None = Field(
+        default=None,
+        alias="IMAGE_GEN_OSS_SECURITY_TOKEN",
+    )
+    image_gen_oss_security_token_file: Path | None = Field(
+        default=None,
+        alias="IMAGE_GEN_OSS_SECURITY_TOKEN_FILE",
+    )
+    image_gen_oss_signed_url_expires_seconds: int = Field(
+        default=86400,
+        alias="IMAGE_GEN_OSS_SIGNED_URL_EXPIRES_SECONDS",
     )
     qwen_base_url: str = Field(
         default="https://dashscope.aliyuncs.com/compatible-mode/v1",
@@ -281,6 +316,57 @@ class Settings(BaseSettings):
                 return api_key
         if self.image_gen_api_key:
             return self.image_gen_api_key.strip()
+        return None
+
+    def resolve_image_gen_oss_access_key_id(self) -> str | None:
+        """按文件优先、环境变量兜底读取图片 OSS AccessKey ID。
+
+        创建日期：2026-06-06
+        author: sunshengxian
+        """
+
+        return self._read_optional_secret(
+            self.image_gen_oss_access_key_id_file,
+            self.image_gen_oss_access_key_id,
+        )
+
+    def resolve_image_gen_oss_access_key_secret(self) -> str | None:
+        """按文件优先、环境变量兜底读取图片 OSS AccessKey Secret。
+
+        创建日期：2026-06-06
+        author: sunshengxian
+        """
+
+        return self._read_optional_secret(
+            self.image_gen_oss_access_key_secret_file,
+            self.image_gen_oss_access_key_secret,
+        )
+
+    def resolve_image_gen_oss_security_token(self) -> str | None:
+        """按文件优先、环境变量兜底读取图片 OSS STS 临时令牌。
+
+        创建日期：2026-06-06
+        author: sunshengxian
+        """
+
+        return self._read_optional_secret(
+            self.image_gen_oss_security_token_file,
+            self.image_gen_oss_security_token,
+        )
+
+    def _read_optional_secret(self, path: Path | None, value: str | None) -> str | None:
+        """读取可选密钥，避免 OSS 和各类外部服务凭据写入代码仓库。
+
+        创建日期：2026-06-06
+        author: sunshengxian
+        """
+
+        if path and path.is_file():
+            secret = path.read_text(encoding="utf-8").strip()
+            if secret:
+                return secret
+        if value:
+            return value.strip()
         return None
 
     def resolve_question_router_model(self) -> str | None:

@@ -34,6 +34,12 @@ from app.services.image_generation_client import (
     ImageGenerationUnsupportedError,
     ReferenceImagePayload,
 )
+from app.services.image_generation_storage_service import (
+    ImageGenerationStorage,
+    ImageGenerationStorageError,
+    ImageGenerationStorageService,
+    StoredImageFile,
+)
 
 IMAGE_GENERATION_TIMEZONE = ZoneInfo("Asia/Shanghai")
 IMAGE_GENERATION_PROVIDER = "86gamestore"
@@ -86,22 +92,8 @@ class UploadedReferenceImage:
     mime_type: str | None
 
 
-@dataclass(frozen=True)
-class StoredImageFile:
-    """已落盘图片文件信息。
-
-    创建日期：2026-05-27
-    author: sunshengxian
-    """
-
-    relative_path: str
-    mime_type: str
-    size_bytes: int
-    sha256: str
-
-
 class ImageGenerationService:
-    """图片生成、用户隔离、本地存储和次数控制服务。
+    """图片生成、用户隔离、OSS 存储和次数控制服务。
 
     创建日期：2026-05-27
     author: sunshengxian
@@ -112,10 +104,12 @@ class ImageGenerationService:
         db: Session,
         settings: Settings | None = None,
         client: ImageGenerationClient | None = None,
+        storage: ImageGenerationStorage | None = None,
     ) -> None:
         self.db = db
         self.settings = settings or get_settings()
         self.client = client or ImageGenerationClient(self.settings)
+        self.storage = storage or ImageGenerationStorageService(self.settings)
 
     def create_generation(
         self,
@@ -206,12 +200,14 @@ class ImageGenerationService:
             raise ImageGenerationError("图片所属用户不存在", 404)
         reference_image = None
         if original_record.reference_file_relative_path:
-            # 重试带参考图的任务时先读取原参考图，再进入 create_generation 扣次数；
-            # 这样参考图文件缺失不会误消耗用户今日生成次数。
-            reference_path, reference_mime_type = self._reference_payload_file(original_record)
+            # 重试带参考图的任务时先从存储读取原参考图，再进入 create_generation 扣次数；
+            # 这样参考图对象缺失不会误消耗用户今日生成次数。
+            reference_filename, reference_content, reference_mime_type = (
+                self._reference_payload(original_record)
+            )
             reference_image = UploadedReferenceImage(
-                filename=Path(original_record.reference_file_relative_path).name,
-                content=reference_path.read_bytes(),
+                filename=reference_filename,
+                content=reference_content,
                 mime_type=reference_mime_type,
             )
         return self.create_generation(
@@ -249,14 +245,16 @@ class ImageGenerationService:
         started_at = perf_counter()
         try:
             if record.reference_file_relative_path:
-                reference_path, reference_mime_type = self._reference_payload_file(record)
+                reference_filename, reference_content, reference_mime_type = (
+                    self._reference_payload(record)
+                )
                 provider_result = self.client.generate_with_reference(
                     record.prompt,
                     record.size,
                     record.model,
                     ReferenceImagePayload(
-                        filename=Path(record.reference_file_relative_path).name,
-                        content=reference_path.read_bytes(),
+                        filename=reference_filename,
+                        content=reference_content,
                         mime_type=reference_mime_type,
                     ),
                 )
@@ -298,7 +296,13 @@ class ImageGenerationService:
                 error_type=exc.__class__.__name__,
                 status_code=exc.status_code,
             )
-        except (ImageGenerationClientError, httpx.HTTPError, OSError, ValueError) as exc:
+        except (
+            ImageGenerationClientError,
+            ImageGenerationStorageError,
+            httpx.HTTPError,
+            OSError,
+            ValueError,
+        ) as exc:
             self._mark_failed_and_refund(
                 record,
                 user,
@@ -417,11 +421,32 @@ class ImageGenerationService:
         mime_type = record.reference_mime_type if reference else record.mime_type
         if not relative_path or not mime_type:
             raise ImageGenerationError("图片文件不存在", 404)
-        path = self._storage_root().joinpath(relative_path).resolve()
-        storage_root = self._storage_root().resolve()
-        if not path.is_relative_to(storage_root) or not path.exists():
+        if not self.storage.is_local:
+            raise ImageGenerationError("当前图片已切换为 OSS 签名 URL 访问", 410)
+        path = self.storage.local_file_path(relative_path)
+        if not path.exists():
             raise ImageGenerationError("图片文件不存在", 404)
         return path, mime_type
+
+    def image_file_signed_url(
+        self,
+        user: AppUser,
+        generation_id: int,
+        reference: bool = False,
+    ) -> str:
+        """鉴权后生成一天有效的图片 OSS 签名 URL。
+
+        创建日期：2026-06-06
+        author: sunshengxian
+        """
+
+        record = self.get_generation(user, generation_id)
+        relative_path = (
+            record.reference_file_relative_path if reference else record.file_relative_path
+        )
+        if not relative_path:
+            raise ImageGenerationError("图片文件不存在", 404)
+        return self.storage.signed_url(relative_path)
 
     def get_user_quota(self, user_id: int) -> ImageGenerationQuotaResponse:
         """读取用户今日图片生成次数，跨日时懒重置。
@@ -527,7 +552,7 @@ class ImageGenerationService:
         owner: AppUser | None = None,
         quota: ImageGenerationQuotaResponse | None = None,
     ) -> ImageGenerationResponse:
-        """转换图片记录为前端响应，不暴露本地绝对路径。
+        """转换图片记录为前端响应，不暴露本地绝对路径或未鉴权永久对象地址。
 
         创建日期：2026-05-27
         author: sunshengxian
@@ -546,12 +571,12 @@ class ImageGenerationService:
             provider=record.provider,
             generation_mode=record.generation_mode,
             image_url=(
-                f"/api/image-generation/generations/{record.id}/file"
+                self._image_access_url(record, reference=False)
                 if record.file_relative_path
                 else None
             ),
             reference_image_url=(
-                f"/api/image-generation/generations/{record.id}/reference-file"
+                self._image_access_url(record, reference=True)
                 if record.reference_file_relative_path
                 else None
             ),
@@ -656,7 +681,7 @@ class ImageGenerationService:
         return self.quota_response(quota)
 
     def _refund_quota(self, user_id: int) -> None:
-        """供应商或落盘失败时返还本次扣减次数，最低不会小于 0。
+        """供应商或存储失败时返还本次扣减次数，最低不会小于 0。
 
         创建日期：2026-05-27
         author: sunshengxian
@@ -802,13 +827,13 @@ class ImageGenerationService:
         """
 
         if len(image_bytes) > MAX_OUTPUT_IMAGE_BYTES:
-            raise ValueError("生成图片超过本地保存上限")
+            raise ValueError("生成图片超过保存上限")
         detected_mime_type = self._detect_mime_type(image_bytes, mime_type)
         if detected_mime_type not in SUPPORTED_REFERENCE_MIME_TYPES:
             raise ValueError("生成结果不是可识别的图片文件")
         return self._store_bytes(record, user, image_bytes, detected_mime_type, category="outputs")
 
-    def _reference_payload_file(self, record: AiImageGeneration) -> tuple[Path, str]:
+    def _reference_payload(self, record: AiImageGeneration) -> tuple[str, bytes, str]:
         """读取已保存参考图，后台任务用它重新组装供应商请求。
 
         创建日期：2026-06-05
@@ -817,15 +842,11 @@ class ImageGenerationService:
 
         if not record.reference_file_relative_path or not record.reference_mime_type:
             raise ValueError("参考图文件不存在")
-        reference_path = (
-            self._storage_root()
-            .joinpath(record.reference_file_relative_path)
-            .resolve()
+        return (
+            Path(record.reference_file_relative_path).name,
+            self.storage.read_bytes(record.reference_file_relative_path),
+            record.reference_mime_type,
         )
-        storage_root = self._storage_root().resolve()
-        if not reference_path.is_relative_to(storage_root) or not reference_path.exists():
-            raise ValueError("参考图文件不存在")
-        return reference_path, record.reference_mime_type
 
     def _store_bytes(
         self,
@@ -835,7 +856,7 @@ class ImageGenerationService:
         mime_type: str,
         category: str,
     ) -> StoredImageFile:
-        """按日期和用户分目录原子写入图片文件。
+        """按日期、用户和短 hash 生成对象键，并写入当前存储后端。
 
         创建日期：2026-05-27
         author: sunshengxian
@@ -856,13 +877,10 @@ class ImageGenerationService:
             f"{record.id}-{sha256[:12]}{extension}"
         )
         relative_path = relative_dir / filename
-        target_path = self._storage_root() / relative_path
-        target_path.parent.mkdir(parents=True, exist_ok=True)
-        tmp_path = target_path.with_suffix(f"{target_path.suffix}.tmp")
-        tmp_path.write_bytes(content)
-        tmp_path.replace(target_path)
+        storage_key = self.storage.build_storage_key(relative_path.as_posix())
+        self.storage.save_bytes(storage_key, content, mime_type)
         return StoredImageFile(
-            relative_path=relative_path.as_posix(),
+            relative_path=storage_key,
             mime_type=mime_type,
             size_bytes=len(content),
             sha256=sha256,
@@ -880,7 +898,7 @@ class ImageGenerationService:
             response.raise_for_status()
         content = response.content
         if len(content) > MAX_OUTPUT_IMAGE_BYTES:
-            raise ValueError("生成图片超过本地保存上限")
+            raise ValueError("生成图片超过保存上限")
         return content, response.headers.get("content-type", "image/png").split(";")[0].strip()
 
     def _validate_prompt(self, prompt: str) -> str:
@@ -942,14 +960,22 @@ class ImageGenerationService:
 
         return (message or "图片生成失败").strip()[:4000]
 
-    def _storage_root(self) -> Path:
-        """返回独立数据盘图片存储根目录。
+    def _image_access_url(self, record: AiImageGeneration, reference: bool = False) -> str:
+        """按当前存储后端返回前端可访问 URL。
 
-        创建日期：2026-05-27
+        创建日期：2026-06-06
         author: sunshengxian
         """
 
-        return self.settings.image_gen_storage_dir
+        if self.storage.is_local:
+            suffix = "reference-file" if reference else "file"
+            return f"/api/image-generation/generations/{record.id}/{suffix}"
+        relative_path = (
+            record.reference_file_relative_path if reference else record.file_relative_path
+        )
+        if not relative_path:
+            raise ImageGenerationError("图片文件不存在", 404)
+        return self.storage.signed_url(relative_path)
 
     def _today(self) -> date:
         """按东八区计算用户每日次数日期。

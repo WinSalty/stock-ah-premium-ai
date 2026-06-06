@@ -10,7 +10,8 @@ import {
   fetchImageGenerations,
   fetchMyImageGenerationQuota,
   fetchProtectedImageBlobUrl,
-  retryImageGeneration
+  retryImageGeneration,
+  revokeProtectedImageUrl
 } from '../api/imageGeneration';
 import type { ImageGenerationErrorLog, ImageGenerationItem, UserInfo } from '../types/domain';
 import { formatEast8DateTime } from '../utils/datetime';
@@ -354,7 +355,7 @@ function ImageGalleryCard({
         if (isMounted) {
           setImageUrl(url);
         } else {
-          URL.revokeObjectURL(url);
+          revokeProtectedImageUrl(url);
         }
       })
       .catch(() => setImageUrl(null));
@@ -376,7 +377,7 @@ function ImageGalleryCard({
         if (isMounted) {
           setReferenceUrl(url);
         } else {
-          URL.revokeObjectURL(url);
+          revokeProtectedImageUrl(url);
         }
       })
       .catch(() => setReferenceUrl(null));
@@ -388,7 +389,7 @@ function ImageGalleryCard({
   useEffect(() => {
     return () => {
       if (imageUrl) {
-        URL.revokeObjectURL(imageUrl);
+        revokeProtectedImageUrl(imageUrl);
       }
     };
   }, [imageUrl]);
@@ -396,7 +397,7 @@ function ImageGalleryCard({
   useEffect(() => {
     return () => {
       if (referenceUrl) {
-        URL.revokeObjectURL(referenceUrl);
+        revokeProtectedImageUrl(referenceUrl);
       }
     };
   }, [referenceUrl]);
@@ -409,8 +410,14 @@ function ImageGalleryCard({
     const link = document.createElement('a');
     link.href = blobUrl;
     link.download = `ai-image-${item.id}.png`;
+    // OSS 签名 URL 已由后端鉴权后生成，跨域下载时浏览器可能忽略 download，
+    // 但仍能通过新窗口打开或保存；后端文件接口则继续使用 Blob URL 下载。
+    if (!blobUrl.startsWith('blob:')) {
+      link.target = '_blank';
+      link.rel = 'noreferrer';
+    }
     link.click();
-    URL.revokeObjectURL(blobUrl);
+    revokeProtectedImageUrl(blobUrl);
   };
 
   const openErrorLogs = async () => {

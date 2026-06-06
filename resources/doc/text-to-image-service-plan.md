@@ -9,7 +9,7 @@
 首期目标如下：
 
 - 后端封装统一文生图服务，不让前端直接接触 API Key。
-- 图片生成结果保存到本地服务器专用目录，页面关闭后仍可继续查看历史图片。
+- 图片生成结果保存到阿里 OSS 私有 Bucket，页面关闭后仍可继续查看历史图片。
 - 图片记录按系统用户隔离；普通用户只看自己的图片，管理员可查看全部图片。
 - 每人默认每天最多生成 10 次；管理员可在用户管理菜单维护单个用户每日次数或重置当日已用次数。
 - 前端新增“图片生成”菜单，兼顾桌面端和移动端展示。
@@ -62,7 +62,15 @@ OpenAI 官方口径：
 | `IMAGE_GEN_MODEL` | `gpt-image-2` | 默认文生图模型。 |
 | `IMAGE_GEN_TIMEOUT_SECONDS` | `300` | 生图最长等待时间，文档示例也使用 300 秒。 |
 | `IMAGE_GEN_DAILY_LIMIT_DEFAULT` | `10` | 新用户默认每日生成次数。 |
-| `IMAGE_GEN_STORAGE_DIR` | `/opt/stock-ah-premium-ai/data/generated-images` | 本地图片保存根目录，默认与代码目录分离，部署时建议挂载独立数据盘。 |
+| `IMAGE_GEN_STORAGE_BACKEND` | `oss` | 图片存储后端，生产环境使用阿里 OSS；`local` 仅用于单测或旧环境兜底。 |
+| `IMAGE_GEN_STORAGE_DIR` | `/opt/stock-ah-premium-ai/data/generated-images` | 本地兜底存储根目录，仅 `IMAGE_GEN_STORAGE_BACKEND=local` 时使用。 |
+| `IMAGE_GEN_OSS_ENDPOINT` | 空 | 阿里 OSS Bucket 所在地域 Endpoint。 |
+| `IMAGE_GEN_OSS_BUCKET` | 空 | 保存生成图和参考图的私有 Bucket。 |
+| `IMAGE_GEN_OSS_PREFIX` | `stock-ah-premium-ai/generated-images` | OSS 对象统一业务前缀。 |
+| `IMAGE_GEN_OSS_ACCESS_KEY_ID(_FILE)` | 空 | OSS AccessKey ID，文件读取优先。 |
+| `IMAGE_GEN_OSS_ACCESS_KEY_SECRET(_FILE)` | 空 | OSS AccessKey Secret，文件读取优先。 |
+| `IMAGE_GEN_OSS_SECURITY_TOKEN(_FILE)` | 空 | 可选 STS 临时令牌，文件读取优先。 |
+| `IMAGE_GEN_OSS_SIGNED_URL_EXPIRES_SECONDS` | `86400` | 鉴权后返回给前端的 OSS 签名 URL 有效期，默认 1 天。 |
 
 密钥读取规则：
 
@@ -70,28 +78,36 @@ OpenAI 官方口径：
 - 日志、指标、数据库和前端响应中均不得保存或返回完整 API Key。
 - `request_payload_json` 如需审计，只保存 `model`、`prompt`、`size`、`n`，不保存请求头。
 
-## 4. 本地文件存储方案
+## 4. OSS 文件存储方案
 
-首期使用本地文件系统，不引入对象存储依赖。
+生产环境使用阿里 OSS 私有 Bucket 保存生成图和参考图；后端所有列表、详情和旧文件接口都先完成系统用户鉴权，再返回 1 天有效的 OSS 签名 URL。
 
-目录结构：
+对象键结构：
 
 ```text
-/opt/stock-ah-premium-ai/data/generated-images/
-  2026/
-    05/
-      27/
-        user-1/
-          20260527-153012-<record_id>-<short_hash>.png
+stock-ah-premium-ai/generated-images/
+  outputs/
+    2026/
+      05/
+        27/
+          user-1/
+            20260527-153012-<record_id>-<short_hash>.png
+  references/
+    2026/
+      05/
+        27/
+          user-1/
+            20260527-153012-<record_id>-<short_hash>.png
 ```
 
 保存规则：
 
-- 后端收到外部 API 返回后立即下载 URL 图片或解码 `b64_json`，写入本地服务器文件。
-- 数据库只保存相对路径，例如 `2026/05/27/user-1/xxx.png`，不保存绝对路径到前端。
+- 后端收到外部 API 返回后立即下载 URL 图片或解码 `b64_json`，上传到 OSS 私有 Bucket。
+- 数据库保存 OSS object key，例如 `stock-ah-premium-ai/generated-images/outputs/2026/05/27/user-1/xxx.png`，不保存签名 URL。
 - 文件名包含记录 ID 和内容 hash 短码，避免用户 prompt 泄露到文件名。
-- 文件写入采用临时文件加原子替换：先写 `.tmp`，成功后 `replace` 成正式文件，避免中断时留下半张图片。
-- 普通用户访问图片文件时必须校验记录归属；管理员可以访问全部记录。
+- 普通用户访问图片 URL 前必须校验记录归属；管理员可以访问全部记录。
+- 前端拿到的 URL 是 1 天有效的签名 URL，过期后刷新列表或详情即可重新获取。
+- `local` 模式仅用于单测或旧环境兜底，继续使用临时文件加原子替换，避免中断时留下半张图片。
 - 删除能力首期不做物理删除，只预留 `deleted_at` 字段和后续接口位置。
 
 ## 5. 数据模型与迁移
@@ -113,12 +129,12 @@ OpenAI 官方口径：
 | `size` | varchar(32) | 实际请求尺寸。 |
 | `status` | varchar(32) | `PENDING`、`GENERATING`、`READY`、`FAILED`。 |
 | `provider` | varchar(64) | 固定 `86gamestore`，便于未来切换供应商。 |
-| `mime_type` | varchar(64) | 本地文件 MIME 类型，例如 `image/png`。 |
-| `file_relative_path` | varchar(512) | 相对 `IMAGE_GEN_STORAGE_DIR` 的文件路径。 |
+| `mime_type` | varchar(64) | 图片 MIME 类型，例如 `image/png`。 |
+| `file_relative_path` | varchar(512) | 输出图片存储对象键，OSS 模式为 Bucket 内 object key。 |
 | `file_size_bytes` | int | 文件大小。 |
 | `file_sha256` | varchar(64) | 文件内容 hash，便于排查重复文件和损坏。 |
 | `external_url_expires_unknown` | bool | URL 返回时标记外链不作为长期存储依据。 |
-| `reference_file_relative_path` | varchar(512) | 用户上传参考图的本地相对路径，纯文生图为空。 |
+| `reference_file_relative_path` | varchar(512) | 用户上传参考图的存储对象键，纯文生图为空。 |
 | `reference_mime_type` | varchar(64) | 参考图 MIME 类型。 |
 | `reference_file_size_bytes` | int | 参考图文件大小。 |
 | `reference_file_sha256` | varchar(64) | 参考图内容 hash，用于审计、去重和排查。 |
@@ -184,7 +200,7 @@ OpenAI 官方口径：
 - 生成前在事务中读取或创建用户 quota 行，并使用 `SELECT ... FOR UPDATE` 锁住该用户 quota。
 - 如果 `quota_date` 不是东八区今天，先将 `used_count` 重置为 0，再判断次数。
 - 检查通过后先把 `used_count + 1` 并提交，创建 `GENERATING` 记录后立即返回前端，再由后台任务发起外部调用，避免并发请求同时越过限制，也避免用户关闭页面导致任务丢失。
-- 外部调用失败时返还本次扣减的次数：服务层在标记 `FAILED` 后重新锁定 quota 行，将 `used_count` 减 1 且不低于 0；如果图片已成功落盘，则不返还，避免真实消耗供应商额度后被重复生成。
+- 外部调用失败时返还本次扣减的次数：服务层在标记 `FAILED` 后重新锁定 quota 行，将 `used_count` 减 1 且不低于 0；如果图片已成功保存到 OSS，则不返还，避免真实消耗供应商额度后被重复生成。
 
 ## 6. 后端分层设计
 
@@ -211,20 +227,20 @@ backend/tests/test_image_generation_routes.py
 - 对 HTTP 超时、401、400、429、5xx 做清晰错误映射。
 - 对明确包含 `input-images per min` 的图片输入限流响应做最多 30 次短重试；若仍失败，详细错误写入 `ai_image_generation_error_log`，普通用户只看到友好失败摘要。
 - 兼容 URL 和 `b64_json` 两种返回；URL 由服务层继续下载，Base64 由服务层解码。
-- 开发时优先验证 86GameStore 是否兼容 OpenAI `POST /v1/images/edits`：若兼容，则参考图调用走 multipart `image + prompt + model + size`；若不兼容，再通过自定义页面抓包确认其内部上传和生成接口；若两者都不可用，后端返回“当前供应商暂未开放参考图 API”，但保留本地参考图记录和 UI 能力开关。
+- 开发时优先验证 86GameStore 是否兼容 OpenAI `POST /v1/images/edits`：若兼容，则参考图调用走 multipart `image + prompt + model + size`；若不兼容，再通过自定义页面抓包确认其内部上传和生成接口；若两者都不可用，后端返回“当前供应商暂未开放参考图 API”，但保留 OSS 参考图记录和 UI 能力开关。
 - 日志只允许输出状态码、模型、尺寸、耗时和错误摘要，不输出 API Key、完整 Authorization 或原始大体积图片内容。
 
 ### 6.2 `ImageGenerationService`
 
-职责：处理业务规则、用户隔离、次数扣减、后台任务、本地落盘、状态更新和错误日志。
+职责：处理业务规则、用户隔离、次数扣减、后台任务、OSS 存储、状态更新和错误日志。
 
 核心方法：
 
 - `create_generation(user, payload, reference_file=None)`：校验 prompt、size、参考图和次数，创建 `GENERATING` 记录后立即返回。
-- `process_generation(generation_id)`：后台调用供应商、下载或解码输出图、落盘并更新为 `READY`/`FAILED`。
+- `process_generation(generation_id)`：后台调用供应商、下载或解码输出图、保存到 OSS 并更新为 `READY`/`FAILED`。
 - `list_generations(user, filters)`：普通用户只查自己，管理员可按用户、状态、日期、关键词筛选。
 - `get_generation(user, generation_id)`：按权限读取详情。
-- `open_image_file(user, generation_id)`：校验权限后返回本地文件响应。
+- `image_file_signed_url(user, generation_id)`：校验权限后返回 1 天有效的 OSS 签名 URL。
 - `get_or_create_quota(user_id)`：读取用户每日限制。
 - `update_user_quota(admin_user, user_id, payload)`：管理员维护每日次数。
 - `reset_user_quota(admin_user, user_id)`：管理员把今日已用次数归零。
@@ -238,7 +254,7 @@ PENDING -> GENERATING -> FAILED
 
 异常处理：
 
-- 供应商或落盘失败：记录 `FAILED` 并返还次数，`ai_image_generation.error_message` 只保存用户友好摘要。
+- 供应商或 OSS 保存失败：记录 `FAILED` 并返还次数，`ai_image_generation.error_message` 只保存用户友好摘要。
 - 详细错误：写入 `ai_image_generation_error_log.detail_message`，仅管理员可查看。
 - 供应商不支持参考图：记录 `FAILED` 并返还次数；前端提示用户移除参考图后重试。
 
@@ -253,7 +269,7 @@ PENDING -> GENERATING -> FAILED
 | `POST` | `/api/image-generation/generations` | `image_generation` | 创建文生图任务；使用 `multipart/form-data` 时可携带参考图，接口立即返回 `GENERATING` 记录，后台继续生成。 |
 | `GET` | `/api/image-generation/generations` | `image_generation` | 查询图片列表；普通用户仅自己的记录，管理员可查全部。 |
 | `GET` | `/api/image-generation/generations/{id}` | `image_generation` | 查看详情。 |
-| `GET` | `/api/image-generation/generations/{id}/file` | `image_generation` | 读取本地图片文件，后端鉴权后返回 `FileResponse`。 |
+| `GET` | `/api/image-generation/generations/{id}/file` | `image_generation` | 兼容旧入口；OSS 模式后端鉴权后 307 跳转到 1 天有效签名 URL。 |
 | `GET` | `/api/image-generation/quota/me` | `image_generation` | 查看当前用户今日次数、每日上限和剩余次数。 |
 
 管理员接口：
@@ -289,7 +305,7 @@ PENDING -> GENERATING -> FAILED
   "prompt": "A clean financial dashboard hero illustration, warm sunlight, premium editorial style.",
   "model": "gpt-image-2",
   "size": "1024x1024",
-  "image_url": "/api/image-generation/generations/12/file",
+  "image_url": "https://<bucket>.<endpoint>/stock-ah-premium-ai/generated-images/outputs/2026/05/27/user-1/xxx.png?...",
   "quota": {
     "daily_limit": 10,
     "used_count": 3,
@@ -350,13 +366,13 @@ frontend/src/pages/ImageGenerationPage.tsx
 - 历史图库使用 2 列卡片；窄屏低于 420px 时退化为 1 列。
 - 图片预览使用 `object-fit: contain`，避免竖图或宽图溢出。
 - 生成中状态要明确提示“生成可能需要几十秒到数分钟”，并通过历史列表轮询刷新状态。
-- 不使用前端 Base64 长串存储；图片统一走后端文件接口。
+- 不使用前端 Base64 长串存储；图片 URL 统一由后端鉴权后返回 OSS 短期签名 URL。
 
 参考图上传口径：
 
 - 页面开放“上传参考图”入口，但后端能力由供应商适配层决定；若 86GameStore 的公开接口不支持，页面给出可理解失败提示并返还次数。
-- 参考图保存到 `backend/storage/generated-images/references/`，数据库记录 `reference_file_relative_path`、`reference_mime_type`、`reference_file_sha256`，并在调用前校验文件大小、类型和用户归属。
-- 参考图必须走后端鉴权和本地落盘，不允许前端把图片直接传给第三方接口，也不把参考图公开成无需鉴权的静态 URL。
+- 参考图保存到 OSS `references/` 对象键下，数据库记录 `reference_file_relative_path`、`reference_mime_type`、`reference_file_sha256`，并在调用前校验文件大小、类型和用户归属。
+- 参考图必须走后端鉴权和 OSS 私有存储，不允许前端把图片直接传给第三方接口，也不把参考图公开成无需鉴权的永久 URL。
 - 参考图属于用户上传内容，普通用户只能查看和复用自己的参考图；管理员可以审计全部记录，但默认列表不直接展示大图，避免管理页加载过重。
 
 ## 10. 用户管理页次数维护
@@ -400,7 +416,7 @@ frontend/src/pages/ImageGenerationPage.tsx
 - 当日次数达到上限后拒绝生成。
 - 东八区跨日后自动重置 `used_count`。
 - 管理员可查询所有图片，普通用户无法读取他人图片详情和文件。
-- URL 返回和 `b64_json` 返回都能保存成本地文件。
+- URL 返回和 `b64_json` 返回都能保存到 OSS。
 - 上传参考图时，后端会先保存参考图、校验文件类型和大小，再调用供应商；供应商不支持时返还次数。
 - 外部 401、400、429、5xx、超时均能落库为 `FAILED`，普通用户只看到友好摘要，管理员可查看详细错误日志。
 - `input-images per min` 图片输入限流响应最多重试 30 次；重试后仍失败时记录 `retry_count`。
@@ -418,7 +434,7 @@ frontend/src/pages/ImageGenerationPage.tsx
 
 端到端人工验收：
 
-- 用普通用户生成 1 张 `1024x1024` 图片，确认本地目录出现图片文件，数据库有 `READY` 记录。
+- 用普通用户生成 1 张 `1024x1024` 图片，确认 OSS 出现图片对象，数据库有 `READY` 记录且接口返回 1 天有效签名 URL。
 - 用普通用户上传 1 张参考图并生成；如果供应商接口支持，确认生成记录关联参考图和输出图；如果供应商接口不支持，确认失败提示清晰且次数已返还。
 - 连续生成到第 10 次后，第 11 次被拒绝。
 - 管理员进入用户管理页把该用户次数重置后，可再次生成。
@@ -460,11 +476,11 @@ frontend/src/pages/ImageGenerationPage.tsx
 已确认口径：
 
 - 普通用户默认开放“图片生成”菜单，每人每天默认 10 次。
-- 外部调用失败返还本次生成次数；图片已成功生成并落盘的场景不返还。
+- 外部调用失败返还本次生成次数；图片已成功生成并保存到 OSS 的场景不返还。
 - 默认尺寸使用 `1024x1024`，同时支持用户选择所有合法尺寸。
 - 首期不做提示词英文优化或自动翻译，避免用户输入和最终图片意图不一致。
 - 产品层支持参考图上传；供应商层优先验证 86GameStore 是否兼容 OpenAI `images/edits` 或存在未公开自定义接口，若不可用则给出失败提示并返还次数。
 
 仍需部署前确认：
 
-- 本地服务器正式部署目录建议使用独立数据盘；当前默认 `IMAGE_GEN_STORAGE_DIR=/opt/stock-ah-premium-ai/data/generated-images`，上线前需确认后端运行用户对该目录有写入权限。
+- 生产环境正式部署需配置阿里 OSS 私有 Bucket、Endpoint、对象前缀和 AccessKey；前端只使用后端鉴权后下发的 1 天有效签名 URL。

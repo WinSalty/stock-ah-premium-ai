@@ -1,6 +1,6 @@
 # 开发进度记录
 
-更新日期：2026-06-05
+更新日期：2026-06-06
 
 ## 当前状态
 
@@ -8,6 +8,7 @@
 
 ## 已完成
 
+- 图片生成功能已从本地文件存储迁移到阿里 OSS 存储口径：后端新增图片存储适配层，生产环境通过 `IMAGE_GEN_STORAGE_BACKEND=oss` 上传生成图和参考图到私有 Bucket，数据库继续保存对象键、MIME、大小和 SHA256；列表、详情和旧文件接口都在完成系统用户鉴权后返回 1 天有效 OSS 签名 URL，前端直接使用签名 URL 预览和下载，避免对 OSS URL 追加业务 Authorization。`local` 存储仅保留给单测和旧环境兜底，配置示例、部署文档、启动文档和全量 schema 注释已同步更新。
 - 新增 `resources/doc/limit-up-multi-stage-analysis-refactor-plan.md`，沉淀打板报告多轮分析与筹码补数改造计划：保留现有 KPL 数据就绪、报告缓存和 PushPlus 推送链路，将报告生成拆为首板题材发酵、两连三连候选选择、高连板候选选择、`cyq_perf`/`cyq_chips` 筹码补数、重点分析和最终报告合成多个节点；两连三连重点候选上限定为 20 只，高连板允许由 LLM 挑选并给出观察分层，最终报告同时覆盖连板可能性、下一个交易日溢价可能性、反证条件和风险提示。
 - 打板报告多轮分析完成代码落地：后端新增阶段缓存与重点股票筹码补数缓存模型、Alembic 迁移和配置项，`LimitUpPushService` 内部改为首板、两连三连筛选、高连筛选、筹码补数、重点分析和最终合成的多阶段 pipeline；两连三连重点候选默认放宽到 20 只，高连板也允许 LLM 挑选分析和推荐；前端报告详情新增“阶段”页签，展示阶段质量、两连三连入选名单和高连板入选名单，便于核对 LLM 筛选依据。本轮已通过 `backend/.venv/bin/python -m compileall backend/app backend/tests/test_limit_up_push_service.py`、`backend/.venv/bin/python -m pytest backend/tests/test_limit_up_push_service.py -q`、`backend/.venv/bin/ruff check backend/alembic/versions/20260605_0047_add_limit_up_multi_stage_cache.py backend/app/db/models/notification.py` 和 `npm --prefix frontend run build`。
 - 智能问答分红再投路由线上热修：服务器历史回测批次状态为 `SUCCESS`，而新版提示词要求 `COMPLETED`，导致“招商银行十年平均年化收益率是多少”等问题生成 SQL 后被状态条件过滤为 0 行。后端已将分红再投最新完成批次口径调整为兼容 `COMPLETED/SUCCESS`，并对 LLM 生成或修复后的分红再投 SQL 做状态归一化；服务器复测可返回招商银行近十年平均年化约 19.04%。目标后端测试和 Ruff 已通过。
@@ -18,7 +19,7 @@
 - 分红再投筛选页已按实测反馈继续收敛：批次下拉只显示成功批次，筛选区移除“数据质量”，顶部数据量统计卡片移除；测算口径移到筛选区下方并支持弹窗查看公式；列表支持年化收益率、累计收益率、累计分红、最新股息率升降序排序，排序和分页都会读取当前筛选框条件，默认改为累计分红降序；单股年度入口改为固定右侧主按钮；年度抽屉新增市值/收益率图表并对大额市值轴按万/亿缩写，避免标签裁切。用户管理菜单权限已补充分红再投筛选项；同步页新增“逐股补齐更早分红”开关，按需启用 `supplement_dividend_by_stock`。
 - 国投电力 `600886.SH` 与截图 Excel 复核结论：此前本地分红只覆盖 2020-2025 年，缺 2016-2019 年分红；按 Tushare `dividend(ts_code=...)` 单股补数后已落到 2016-2025 年 10 条分红，截图里的每股分红值均能对上。剩余收益差异主要来自口径：截图按初始 `100000` 股推演，页面按初始 `100000` 元买入并允许小数股再投入；页面价格取本地 Tushare 日线收盘价和除息日或之后首个交易日收盘价。
 - 新增 `resources/doc/dividend-reinvestment-data-landing-plan.md` 和 `resources/doc/dividend-reinvestment-required-data-landing-plan.md`，沉淀分红再投入筛选的数据落地方案和所需数据清单：明确 2016 年以来 A 股日线、分红、交易日历和最新每日指标的落地范围，按 Tushare 120 次/分钟限制采用 0.6 秒保守限流和全局互斥，设计断点续跑、原始数据复用、回测批次表、摘要表和年度明细表，并补充接口字段、请求节奏、数据质量校验、只读视图和第一版不做事项。
-- 已按 `resources/doc/text-to-image-service-plan.md` 落地文生图基础服务：后端新增 86GameStore/OpenAI Images 兼容 client、图片生成 service、受鉴权文件读取接口、用户级历史隔离、管理员全量审计、每日次数表和 Alembic 迁移；图片统一保存到 `IMAGE_GEN_STORAGE_DIR` 指向的本地独立目录，支持 URL/Base64 返回落盘和参考图本地保存。前端新增“图片生成”菜单、移动端适配图库、尺寸选择、参考图上传、历史回看和管理员每日次数维护/重置；普通用户默认开放，每人每天默认 10 次，外部供应商调用失败会返还次数。API Key 仍只通过环境变量或本机未入库文件读取，不写入项目代码、SQL、文档或前端产物。
+- 已按 `resources/doc/text-to-image-service-plan.md` 落地文生图基础服务：后端新增 86GameStore/OpenAI Images 兼容 client、图片生成 service、受鉴权文件读取接口、用户级历史隔离、管理员全量审计、每日次数表和 Alembic 迁移；图片原首版保存到 `IMAGE_GEN_STORAGE_DIR` 指向的本地独立目录，后续已迁移为 OSS 私有 Bucket 和 1 天有效签名 URL 访问。前端新增“图片生成”菜单、移动端适配图库、尺寸选择、参考图上传、历史回看和管理员每日次数维护/重置；普通用户默认开放，每人每天默认 10 次，外部供应商调用失败会返还次数。API Key 仍只通过环境变量或本机未入库文件读取，不写入项目代码、SQL、文档或前端产物。
 - 图片生成失败记录已支持一键重试：后端复用原描述、尺寸和参考图创建新的异步生成任务，参考图文件会先读取成功再扣减用户今日次数；前端在失败图片卡片展示“重试”按钮，历史筛选默认恢复为“全部状态”。本轮已通过 `backend/.venv/bin/python -m pytest tests/test_image_generation_service.py`、目标 Ruff 检查和 `npm --prefix frontend run build`。
 - 图片生成历史卡片已补充“完整描述”和“原始参考图”查看能力：长提示词通过弹窗完整展示，参考图继续通过受鉴权文件接口按需加载缩略图并支持原图弹窗查看；本轮 `npm --prefix frontend run build` 通过。
 - 图片生成参考图上传校验提示已优化：参考图为空、超过 10MB 或格式不支持时，用户侧直接看到对应中文提示，服务器文件异常和供应商异常仍保留通用失败文案并写入管理员错误日志；本轮图片生成服务测试 9 个用例和目标 Ruff 检查通过。

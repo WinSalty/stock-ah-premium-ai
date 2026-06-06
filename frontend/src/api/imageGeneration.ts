@@ -108,12 +108,19 @@ export function retryImageGeneration(generationId: number) {
   );
 }
 
+function isAbsoluteHttpUrl(path: string) {
+  return /^https?:\/\//i.test(path);
+}
+
 /**
- * 带鉴权读取图片 Blob，避免把图片文件接口暴露成公开静态资源。
- * 创建日期：2026-05-27
+ * 解析图片展示 URL；OSS 签名 URL 已由后端鉴权后下发，前端直接使用，避免跨域 Blob 拉取失败。
+ * 创建日期：2026-06-06
  * author: sunshengxian
  */
 export async function fetchProtectedImageBlobUrl(path: string) {
+  if (isAbsoluteHttpUrl(path)) {
+    return path;
+  }
   const token = getAuthToken();
   const response = await fetch(`${API_BASE_URL}${path}`, {
     headers: {
@@ -124,4 +131,15 @@ export async function fetchProtectedImageBlobUrl(path: string) {
     throw new ApiError(response.status, response.statusText);
   }
   return URL.createObjectURL(await response.blob());
+}
+
+/**
+ * 仅释放前端临时创建的 Blob URL，OSS 签名 URL 不需要也不能 revoke。
+ * 创建日期：2026-06-06
+ * author: sunshengxian
+ */
+export function revokeProtectedImageUrl(url: string | null) {
+  if (url?.startsWith('blob:')) {
+    URL.revokeObjectURL(url);
+  }
 }

@@ -12,7 +12,7 @@ from fastapi import (
     Query,
     UploadFile,
 )
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, RedirectResponse, Response
 
 from app.api.deps_auth import DbSession, require_permission
 from app.db.models.auth import AppUser
@@ -152,18 +152,21 @@ def get_image_generation_file(
     generation_id: int,
     db: DbSession,
     user: ImageGenerationUser,
-) -> FileResponse:
-    """读取生成图片文件，必须先通过记录归属校验。
+) -> Response:
+    """鉴权后读取生成图片；OSS 模式返回一天有效签名 URL 跳转。
 
-    创建日期：2026-05-27
+    创建日期：2026-06-06
     author: sunshengxian
     """
 
+    service = ImageGenerationService(db)
     try:
-        path, mime_type = ImageGenerationService(db).image_file_path(user, generation_id)
+        if service.storage.is_local:
+            path, mime_type = service.image_file_path(user, generation_id)
+            return FileResponse(path, media_type=mime_type)
+        return RedirectResponse(service.image_file_signed_url(user, generation_id), status_code=307)
     except ImageGenerationError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
-    return FileResponse(path, media_type=mime_type)
 
 
 @router.get("/image-generation/generations/{generation_id}/reference-file")
@@ -171,22 +174,24 @@ def get_image_generation_reference_file(
     generation_id: int,
     db: DbSession,
     user: ImageGenerationUser,
-) -> FileResponse:
-    """读取参考图文件，仍按图片记录权限控制。
+) -> Response:
+    """鉴权后读取参考图；OSS 模式返回一天有效签名 URL 跳转。
 
-    创建日期：2026-05-27
+    创建日期：2026-06-06
     author: sunshengxian
     """
 
+    service = ImageGenerationService(db)
     try:
-        path, mime_type = ImageGenerationService(db).image_file_path(
-            user,
-            generation_id,
-            reference=True,
+        if service.storage.is_local:
+            path, mime_type = service.image_file_path(user, generation_id, reference=True)
+            return FileResponse(path, media_type=mime_type)
+        return RedirectResponse(
+            service.image_file_signed_url(user, generation_id, reference=True),
+            status_code=307,
         )
     except ImageGenerationError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
-    return FileResponse(path, media_type=mime_type)
 
 
 @router.get(
