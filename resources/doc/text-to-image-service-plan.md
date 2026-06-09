@@ -1,6 +1,6 @@
 # 文生图基础服务接入开发方案
 
-更新日期：2026-05-27
+更新日期：2026-06-09
 
 ## 1. 背景与目标
 
@@ -60,7 +60,7 @@ OpenAI 官方口径：
 | `IMAGE_GEN_API_KEY` | 空 | 环境变量直接注入的 API Key，作为文件读取失败后的兜底。 |
 | `IMAGE_GEN_API_KEY_FILE` | `/Users/salty/codeProject/ai/doc/86gamestore-image-apikey.txt` | 本机未入库密钥文件，优先读取。 |
 | `IMAGE_GEN_MODEL` | `gpt-image-2` | 默认文生图模型。 |
-| `IMAGE_GEN_TIMEOUT_SECONDS` | `300` | 生图最长等待时间，文档示例也使用 300 秒。 |
+| `IMAGE_GEN_TIMEOUT_SECONDS` | `500` | 生图最长等待时间；参考图编辑容易出现长尾延迟，默认放宽到 500 秒。 |
 | `IMAGE_GEN_DAILY_LIMIT_DEFAULT` | `10` | 新用户默认每日生成次数。 |
 | `IMAGE_GEN_STORAGE_BACKEND` | `oss` | 图片存储后端，生产环境使用阿里 OSS；`local` 仅用于单测或旧环境兜底。 |
 | `IMAGE_GEN_STORAGE_DIR` | `/opt/stock-ah-premium-ai/data/generated-images` | 本地兜底存储根目录，仅 `IMAGE_GEN_STORAGE_BACKEND=local` 时使用。 |
@@ -97,11 +97,12 @@ stock-ah-premium-ai/generated-images/
       05/
         27/
           user-1/
-            20260527-153012-<record_id>-<short_hash>.png
+            20260527-153012-<record_id>-<short_hash>.jpg
 ```
 
 保存规则：
 
+- 用户上传参考图后，后端先校验原文件不超过 10MB 且为 PNG/JPG/WebP，再统一按 EXIF 方向纠正、最长边压到 2048px、转成 quality 85 的 JPEG；OSS `references/` 目录只保存压缩后的 JPEG，供应商调用和重试均复用压缩图。
 - 后端收到外部 API 返回后立即下载 URL 图片或解码 `b64_json`，上传到 OSS 私有 Bucket。
 - 数据库保存 OSS object key，例如 `stock-ah-premium-ai/generated-images/outputs/2026/05/27/user-1/xxx.png`，不保存签名 URL。
 - 文件名包含记录 ID 和内容 hash 短码，避免用户 prompt 泄露到文件名。
@@ -224,8 +225,8 @@ backend/tests/test_image_generation_routes.py
 
 - `generate(prompt: str, size: str, model: str) -> ImageGenerationProviderResult`
 - `generate_with_reference(prompt: str, size: str, model: str, reference_image: StoredReferenceImage) -> ImageGenerationProviderResult`
-- 对 HTTP 超时、401、400、429、5xx 做清晰错误映射。
-- 对明确包含 `input-images per min` 的图片输入限流响应做最多 30 次短重试；若仍失败，详细错误写入 `ai_image_generation_error_log`，普通用户只看到友好失败摘要。
+- 对 HTTP 超时、401、400、429、5xx 做清晰错误映射；`ReadTimeout` 不重复请求，避免供应商侧长耗时任务重复执行。
+- 对明确包含 `input-images per min` 的图片输入限流响应做最多 30 次短重试；除此之外的 408、425、429、5xx 和短暂网络错误最多额外重试 5 次。若仍失败，详细错误写入 `ai_image_generation_error_log`，普通用户只看到友好失败摘要。
 - 兼容 URL 和 `b64_json` 两种返回；URL 由服务层继续下载，Base64 由服务层解码。
 - 开发时优先验证 86GameStore 是否兼容 OpenAI `POST /v1/images/edits`：若兼容，则参考图调用走 multipart `image + prompt + model + size`；若不兼容，再通过自定义页面抓包确认其内部上传和生成接口；若两者都不可用，后端返回“当前供应商暂未开放参考图 API”，但保留 OSS 参考图记录和 UI 能力开关。
 - 日志只允许输出状态码、模型、尺寸、耗时和错误摘要，不输出 API Key、完整 Authorization 或原始大体积图片内容。
@@ -419,9 +420,10 @@ frontend/src/pages/ImageGenerationPage.tsx
 - 管理员可查询所有图片，普通用户无法读取他人图片详情和文件。
 - 用户删除图片后历史列表不再展示该记录，详情和文件接口也不再可访问；OSS 对象和错误日志保留用于审计。
 - URL 返回和 `b64_json` 返回都能保存到 OSS。
-- 上传参考图时，后端会先保存参考图、校验文件类型和大小，再调用供应商；供应商不支持时返还次数。
+- 上传参考图时，后端会先校验文件类型和大小，再压缩保存 JPEG 后调用供应商；供应商不支持时返还次数。
 - 外部 401、400、429、5xx、超时均能落库为 `FAILED`，普通用户只看到友好摘要，管理员可查看详细错误日志。
-- `input-images per min` 图片输入限流响应最多重试 30 次；重试后仍失败时记录 `retry_count`。
+- 上传参考图后 OSS 仅保存压缩后的 JPEG，数据库 `reference_mime_type` 固定记录为 `image/jpeg`，`reference_file_size_bytes` 和 `reference_file_sha256` 均以压缩后内容为准。
+- `input-images per min` 图片输入限流响应最多重试 30 次；其他短暂 HTTP/网络错误最多额外重试 5 次；重试后仍失败时记录 `retry_count`。
 - 管理员修改每日上限、重置今日次数生效。
 
 前端验证：

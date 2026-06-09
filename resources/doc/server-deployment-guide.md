@@ -73,7 +73,7 @@ QWEN_API_KEY_FILE=/home/ubuntu/stock-ah-premium-ai/secrets/qwen-apikey.txt
 IMAGE_GEN_BASE_URL=https://api.86gamestore.com
 IMAGE_GEN_API_KEY_FILE=/home/ubuntu/stock-ah-premium-ai/secrets/86gamestore-image-apikey.txt
 IMAGE_GEN_MODEL=gpt-image-2
-IMAGE_GEN_TIMEOUT_SECONDS=300
+IMAGE_GEN_TIMEOUT_SECONDS=500
 IMAGE_GEN_DAILY_LIMIT_DEFAULT=10
 IMAGE_GEN_STORAGE_BACKEND=oss
 IMAGE_GEN_STORAGE_DIR=/opt/stock-ah-premium-ai/data/generated-images
@@ -95,6 +95,7 @@ DEFAULT_ADMIN_PASSWORD=<admin-password>
 - 数据库密码如果包含 `@`、`#`、`:` 等特殊字符，必须在 URL 中编码，例如 `@` 写成 `%40`。
 - 密钥文件建议统一放在服务器项目目录的 `secrets/` 下，目录权限设置为 `700`，文件权限设置为 `600`，属主应与后端 systemd 运行用户一致。
 - 文生图生产环境使用阿里 OSS 私有 Bucket，后端完成系统用户鉴权后返回 1 天有效签名 URL；`IMAGE_GEN_STORAGE_DIR` 只作为 `local` 兜底模式使用。
+- 用户上传参考图会在后端统一压缩并转成 JPEG 后保存到 OSS，供应商参考图调用和失败重试均读取压缩后的对象，避免原始手机照片拖慢 `images/edits`。
 - 首次部署或服务器提示 `llmConfigured=false`、`tushareConfigured=false`、`qwenConfigured=false`、`pushplusConfigured=false` 时，优先确认 `secrets/` 目录和凭据文件是否已经从本机未入库文档同步到服务器：
 
 ```bash

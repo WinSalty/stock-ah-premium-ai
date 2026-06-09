@@ -4,11 +4,13 @@ import hashlib
 import json
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
+from io import BytesIO
 from pathlib import Path
 from time import perf_counter
 from zoneinfo import ZoneInfo
 
 import httpx
+from PIL import Image, ImageOps, UnidentifiedImageError
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
@@ -63,6 +65,9 @@ SUPPORTED_REFERENCE_MIME_TYPES = {
     "image/jpeg": ".jpg",
     "image/webp": ".webp",
 }
+REFERENCE_IMAGE_JPEG_MIME_TYPE = "image/jpeg"
+REFERENCE_IMAGE_MAX_SIDE_PIXELS = 2048
+REFERENCE_IMAGE_JPEG_QUALITY = 85
 MAX_REFERENCE_IMAGE_BYTES = 10 * 1024 * 1024
 MAX_OUTPUT_IMAGE_BYTES = 60 * 1024 * 1024
 
@@ -818,16 +823,18 @@ class ImageGenerationService:
         mime_type = self._detect_mime_type(reference_image.content, reference_image.mime_type)
         if mime_type not in SUPPORTED_REFERENCE_MIME_TYPES:
             raise ValueError("参考图只支持 PNG、JPG 或 WebP")
-        # 按“同一用户 + 文件内容哈希 + MIME 类型”查找历史参考图，
-        # 避免同用户反复上传同一张图时重复写入 OSS。
+        compressed_content = self._compress_reference_image_to_jpeg(reference_image.content)
+        compressed_mime_type = REFERENCE_IMAGE_JPEG_MIME_TYPE
+        # 参考图上传后统一转成模型调用用 JPEG，OSS 中也只保存压缩后的版本；
+        # 复用判断按压缩后的内容哈希执行，保证同一用户重复上传同图时仍能命中历史对象。
         # 创建日期：2026-06-06；author: sunshengxian
-        sha256 = hashlib.sha256(reference_image.content).hexdigest()
+        sha256 = hashlib.sha256(compressed_content).hexdigest()
         existing_reference = self.db.scalar(
             select(AiImageGeneration)
             .where(
                 AiImageGeneration.user_id == user.id,
                 AiImageGeneration.reference_file_sha256 == sha256,
-                AiImageGeneration.reference_mime_type == mime_type,
+                AiImageGeneration.reference_mime_type == compressed_mime_type,
                 AiImageGeneration.reference_file_relative_path.is_not(None),
             )
             .order_by(AiImageGeneration.id.desc())
@@ -838,17 +845,57 @@ class ImageGenerationService:
             # 逻辑删除只隐藏历史记录但不删除对象，因此这里允许复用已删除记录里的对象。
             return StoredImageFile(
                 relative_path=existing_reference.reference_file_relative_path,
-                mime_type=mime_type,
-                size_bytes=len(reference_image.content),
+                mime_type=compressed_mime_type,
+                size_bytes=len(compressed_content),
                 sha256=sha256,
             )
         return self._store_bytes(
             record,
             user,
-            reference_image.content,
-            mime_type,
+            compressed_content,
+            compressed_mime_type,
             category="references",
         )
+
+    def _compress_reference_image_to_jpeg(self, content: bytes) -> bytes:
+        """把用户参考图压缩为 JPEG，降低供应商参考图编辑接口的上传和处理压力。
+
+        创建日期：2026-06-09
+        author: sunshengxian
+        """
+
+        try:
+            with Image.open(BytesIO(content)) as image:
+                # 按 EXIF 方向先纠正画面，再限制最长边，避免手机原图横竖方向错乱或超大像素拖慢生成。
+                normalized_image = ImageOps.exif_transpose(image)
+                normalized_image.thumbnail(
+                    (REFERENCE_IMAGE_MAX_SIDE_PIXELS, REFERENCE_IMAGE_MAX_SIDE_PIXELS),
+                    Image.Resampling.LANCZOS,
+                )
+                has_alpha_channel = normalized_image.mode in {"RGBA", "LA"}
+                if has_alpha_channel or "transparency" in normalized_image.info:
+                    # JPEG 不支持透明通道；统一用白底合成，避免透明区域在供应商侧变成黑底。
+                    rgba_image = normalized_image.convert("RGBA")
+                    rgb_image = Image.new("RGB", rgba_image.size, (255, 255, 255))
+                    rgb_image.paste(rgba_image, mask=rgba_image.getchannel("A"))
+                else:
+                    rgb_image = normalized_image.convert("RGB")
+                output = BytesIO()
+                rgb_image.save(
+                    output,
+                    format="JPEG",
+                    quality=REFERENCE_IMAGE_JPEG_QUALITY,
+                    optimize=True,
+                )
+        except (UnidentifiedImageError, OSError) as exc:
+            raise ValueError("参考图不是可识别的图片文件") from exc
+
+        compressed_content = output.getvalue()
+        if not compressed_content:
+            raise ValueError("参考图不是可识别的图片文件")
+        if len(compressed_content) > MAX_REFERENCE_IMAGE_BYTES:
+            raise ValueError("压缩后的参考图不能超过 10MB")
+        return compressed_content
 
     def _store_output_image(
         self,

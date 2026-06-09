@@ -11,6 +11,8 @@ from app.core.config import Settings
 
 IMAGE_GENERATION_RATE_LIMIT_RETRY_ATTEMPTS = 30
 IMAGE_GENERATION_RATE_LIMIT_RETRY_SECONDS = 0.2
+IMAGE_GENERATION_TRANSIENT_RETRY_ATTEMPTS = 5
+IMAGE_GENERATION_TRANSIENT_RETRY_SECONDS = 1.0
 
 
 class ImageGenerationClientError(RuntimeError):
@@ -137,22 +139,46 @@ class ImageGenerationClient:
         url: str,
         **kwargs: Any,
     ) -> tuple[httpx.Response, int]:
-        """对图片输入频率限制做短重试，避免毫秒级限流直接打断用户任务。
+        """对图片输入限流和短暂供应商错误做重试，读超时由上层按 500 秒配置兜底。
 
         创建日期：2026-06-05
         author: sunshengxian
         """
 
         retry_count = 0
-        for attempt in range(IMAGE_GENERATION_RATE_LIMIT_RETRY_ATTEMPTS + 1):
-            response = client.post(url, **kwargs)
+        rate_limit_retry_count = 0
+        transient_retry_count = 0
+        while True:
+            try:
+                response = client.post(url, **kwargs)
+            except httpx.ReadTimeout:
+                # 图片生成读超时代表供应商在完整超时时间内仍未产出响应；
+                # 这类请求重试成本高且可能重复计费，因此直接交给业务层记录失败。
+                raise
+            except httpx.HTTPError as exc:
+                if transient_retry_count >= IMAGE_GENERATION_TRANSIENT_RETRY_ATTEMPTS:
+                    self._attach_retry_count(exc, retry_count)
+                    raise
+                transient_retry_count += 1
+                retry_count += 1
+                time.sleep(IMAGE_GENERATION_TRANSIENT_RETRY_SECONDS)
+                continue
             if not self._is_rate_limit_response(response):
+                if self._is_transient_response(response) and (
+                    transient_retry_count < IMAGE_GENERATION_TRANSIENT_RETRY_ATTEMPTS
+                ):
+                    # 供应商 5xx、网关繁忙等短暂错误最多额外重试 5 次；
+                    # 4xx 参数、权限、内容策略错误不重试，避免把确定性失败扩大成重复请求。
+                    transient_retry_count += 1
+                    retry_count += 1
+                    time.sleep(IMAGE_GENERATION_TRANSIENT_RETRY_SECONDS)
+                    continue
                 return response, retry_count
-            if attempt >= IMAGE_GENERATION_RATE_LIMIT_RETRY_ATTEMPTS:
+            if rate_limit_retry_count >= IMAGE_GENERATION_RATE_LIMIT_RETRY_ATTEMPTS:
                 return response, retry_count
+            rate_limit_retry_count += 1
             retry_count += 1
             time.sleep(self._rate_limit_retry_seconds(response))
-        return response, retry_count
 
     def _is_rate_limit_response(self, response: httpx.Response) -> bool:
         """识别供应商返回的图片输入频率限制错误。
@@ -178,6 +204,27 @@ class ImageGenerationClient:
             except ValueError:
                 return IMAGE_GENERATION_RATE_LIMIT_RETRY_SECONDS
         return IMAGE_GENERATION_RATE_LIMIT_RETRY_SECONDS
+
+    def _is_transient_response(self, response: httpx.Response) -> bool:
+        """识别可以短等待后最多重试 5 次的供应商短暂失败。
+
+        创建日期：2026-06-09
+        author: sunshengxian
+        """
+
+        return response.status_code in {408, 425, 429} or response.status_code >= 500
+
+    def _attach_retry_count(self, exc: httpx.HTTPError, retry_count: int) -> None:
+        """把已重试次数挂到 HTTPX 异常上，供错误日志记录排查真实调用次数。
+
+        创建日期：2026-06-09
+        author: sunshengxian
+        """
+
+        try:
+            exc.retry_count = retry_count
+        except Exception:
+            return
 
     def _api_key(self) -> str:
         """读取供应商 API Key，避免上层误把空密钥发给外部服务。

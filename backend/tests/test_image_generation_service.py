@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 from pathlib import Path
 
 import httpx
@@ -13,6 +14,7 @@ from app.db.models.auth import AppUser
 from app.db.models.image_generation import AiImageGeneration, AiImageGenerationErrorLog
 from app.services.image_generation_client import (
     IMAGE_GENERATION_RATE_LIMIT_RETRY_ATTEMPTS,
+    IMAGE_GENERATION_TRANSIENT_RETRY_ATTEMPTS,
     ImageGenerationClient,
     ImageGenerationClientError,
     ImageGenerationProviderResult,
@@ -26,7 +28,10 @@ from app.services.image_generation_service import (
 )
 from app.services.image_generation_storage_service import ImageGenerationStorageError
 
-PNG_BYTES = b"\x89PNG\r\n\x1a\n" + b"\x00" * 32
+PNG_BYTES = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADUlEQVR4nGP4z8AAAAMBAQDJ/"
+    "pLvAAAAAElFTkSuQmCC"
+)
 
 
 class FakeImageClient:
@@ -277,7 +282,7 @@ def test_retry_failed_generation_creates_new_task(tmp_path: Path) -> None:
 
 
 def test_reference_generation_uses_reference_payload(tmp_path: Path) -> None:
-    """确认参考图会先保存到存储后端，再传给供应商适配层。
+    """确认参考图会压缩为 JPEG 后保存，再传给供应商适配层。
 
     创建日期：2026-05-27
     author: sunshengxian
@@ -305,7 +310,13 @@ def test_reference_generation_uses_reference_payload(tmp_path: Path) -> None:
         f"/api/image-generation/generations/{response.id}/reference-file"
     )
     assert fake_client.reference_calls
-    assert fake_client.reference_calls[0].mime_type == "image/png"
+    assert fake_client.reference_calls[0].mime_type == "image/jpeg"
+    assert fake_client.reference_calls[0].filename.endswith(".jpg")
+    stored_record = db.get(AiImageGeneration, response.id)
+    assert stored_record is not None
+    assert stored_record.reference_mime_type == "image/jpeg"
+    assert stored_record.reference_file_size_bytes is not None
+    assert stored_record.reference_file_size_bytes > 0
 
 
 def test_same_user_duplicate_reference_reuses_storage_object(tmp_path: Path) -> None:
@@ -533,3 +544,66 @@ def test_rate_limit_response_retries_configured_attempts(tmp_path: Path, monkeyp
     assert response.status_code == 502
     assert retry_count == IMAGE_GENERATION_RATE_LIMIT_RETRY_ATTEMPTS
     assert request_count == IMAGE_GENERATION_RATE_LIMIT_RETRY_ATTEMPTS + 1
+
+
+def test_transient_image_error_retries_five_times(tmp_path: Path, monkeypatch) -> None:
+    """确认非读超时的临时供应商错误会在原有限流重试之外额外重试五次。
+
+    创建日期：2026-06-09
+    author: sunshengxian
+    """
+
+    request_count = 0
+    monkeypatch.setattr("app.services.image_generation_client.time.sleep", lambda _: None)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal request_count
+        request_count += 1
+        return httpx.Response(
+            502,
+            json={"error": {"message": "temporary upstream failure"}},
+            request=request,
+        )
+
+    client = ImageGenerationClient(make_settings(tmp_path))
+    with httpx.Client(transport=httpx.MockTransport(handler)) as http_client:
+        response, retry_count = client._post_with_rate_limit_retry(
+            http_client,
+            "https://example.test/v1/images/generations",
+            json={},
+        )
+
+    assert response.status_code == 502
+    assert retry_count == IMAGE_GENERATION_TRANSIENT_RETRY_ATTEMPTS
+    assert request_count == IMAGE_GENERATION_TRANSIENT_RETRY_ATTEMPTS + 1
+
+
+def test_read_timeout_does_not_retry(tmp_path: Path, monkeypatch) -> None:
+    """确认图片读超时不做重复请求，避免长耗时任务在供应商侧重复执行。
+
+    创建日期：2026-06-09
+    author: sunshengxian
+    """
+
+    request_count = 0
+    monkeypatch.setattr("app.services.image_generation_client.time.sleep", lambda _: None)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal request_count
+        request_count += 1
+        raise httpx.ReadTimeout("read timeout", request=request)
+
+    client = ImageGenerationClient(make_settings(tmp_path))
+    with httpx.Client(transport=httpx.MockTransport(handler)) as http_client:
+        try:
+            client._post_with_rate_limit_retry(
+                http_client,
+                "https://example.test/v1/images/generations",
+                json={},
+            )
+        except httpx.ReadTimeout:
+            pass
+        else:
+            raise AssertionError("读超时不应被吞掉或重试")
+
+    assert request_count == 1

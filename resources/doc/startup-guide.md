@@ -93,7 +93,7 @@ IMAGE_GEN_BASE_URL=https://api.86gamestore.com
 IMAGE_GEN_API_KEY_FILE=/Users/salty/codeProject/ai/doc/86gamestore-image-apikey.txt
 IMAGE_GEN_API_KEY=
 IMAGE_GEN_MODEL=gpt-image-2
-IMAGE_GEN_TIMEOUT_SECONDS=300
+IMAGE_GEN_TIMEOUT_SECONDS=500
 IMAGE_GEN_DAILY_LIMIT_DEFAULT=10
 IMAGE_GEN_STORAGE_BACKEND=oss
 IMAGE_GEN_STORAGE_DIR=/opt/stock-ah-premium-ai/data/generated-images
@@ -106,7 +106,7 @@ IMAGE_GEN_OSS_SIGNED_URL_EXPIRES_SECONDS=86400
 APP_CORS_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
 ```
 
-不要把真实 Token、数据库密码、LLM Key 或文生图 Key 写入仓库。若 shell 中残留旧 `TUSHARE_TOKEN`，项目仍会优先使用 `TUSHARE_TOKEN_FILE` 指向的文件，避免误用旧 token；DeepSeek、Qwen 和文生图 Key 同理优先使用本机文件。
+不要把真实 Token、数据库密码、LLM Key 或文生图 Key 写入仓库。若 shell 中残留旧 `TUSHARE_TOKEN`，项目仍会优先使用 `TUSHARE_TOKEN_FILE` 指向的文件，避免误用旧 token；DeepSeek、Qwen 和文生图 Key 同理优先使用本机文件。文生图参考图会在后端压缩并转成 JPEG 后保存到 OSS，`IMAGE_GEN_TIMEOUT_SECONDS` 默认 500 秒用于覆盖参考图编辑的长尾耗时。
 
 智能问答仅面向投资研究问题。后端会先用 `deepseek-v4-flash` 做单次 JSON 前置路由，同时判断是否可答、是否需要结构化数据、是否需要按需补充市场数据，再为选定问答模型注入专业金融投资分析顾问角色、最近会话上下文、页面上下文、数据摘要和按需补数结果；前端只展示报告和数据摘要表格，不展示 SQL 或底层查询过程。若历史环境中仍配置 `deepseek-v4-pro[1m]`，后端会在请求 DeepSeek 时自动归一化为 API 支持的 `deepseek-v4-pro`；当前不额外传 `reasoning_effort`。
 

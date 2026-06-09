@@ -55,7 +55,7 @@ class Settings(BaseSettings):
         alias="IMAGE_GEN_API_KEY_FILE",
     )
     image_gen_model: str = Field(default="gpt-image-2", alias="IMAGE_GEN_MODEL")
-    image_gen_timeout_seconds: float = Field(default=300.0, alias="IMAGE_GEN_TIMEOUT_SECONDS")
+    image_gen_timeout_seconds: float = Field(default=500.0, alias="IMAGE_GEN_TIMEOUT_SECONDS")
     image_gen_daily_limit_default: int = Field(default=10, alias="IMAGE_GEN_DAILY_LIMIT_DEFAULT")
     image_gen_storage_backend: str = Field(default="oss", alias="IMAGE_GEN_STORAGE_BACKEND")
     image_gen_storage_dir: Path = Field(
