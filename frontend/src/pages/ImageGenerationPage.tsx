@@ -33,6 +33,7 @@ const statusOptions = [
   { label: '失败', value: 'FAILED' },
   { label: '生成中', value: 'GENERATING' }
 ];
+const IMAGE_GENERATION_HISTORY_PAGE_SIZE = 8;
 
 /**
  * AI 图片生成页面。
@@ -57,7 +58,7 @@ function ImageGenerationPage({ currentUser }: ImageGenerationPageProps) {
     queryFn: () =>
       fetchImageGenerations({
         page: 1,
-        page_size: 60,
+        page_size: IMAGE_GENERATION_HISTORY_PAGE_SIZE,
         status: statusFilter || undefined,
         keyword: keyword || undefined
       }),
