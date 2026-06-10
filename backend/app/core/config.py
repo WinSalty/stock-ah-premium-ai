@@ -174,8 +174,12 @@ class Settings(BaseSettings):
         alias="LIMIT_UP_PUSH_STAGE_CACHE_ENABLED",
     )
     limit_up_push_final_prompt_version: str = Field(
-        default="limit-up-multi-stage-v1",
+        default="limit-up-multi-stage-v2",
         alias="LIMIT_UP_PUSH_FINAL_PROMPT_VERSION",
+    )
+    limit_up_push_generating_stale_minutes: int = Field(
+        default=30,
+        alias="LIMIT_UP_PUSH_GENERATING_STALE_MINUTES",
     )
     nine_turn_push_scheduler_enabled: bool = Field(
         default=False,

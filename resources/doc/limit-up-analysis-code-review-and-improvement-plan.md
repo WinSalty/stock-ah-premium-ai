@@ -163,9 +163,9 @@ CHAIN_FOCUS / HIGH_BOARD_FOCUS 提示词增加：
 
 | 阶段 | 内容 | 涉及文件 | 验证 |
 |---|---|---|---|
-| 第一期（修复，0.5~1 天） | P0-1 复用当日 READY 报告 + 哈希规范化；P0-2 涨停/炸板拆池与统计口径修正；P1-1 GENERATING 僵死恢复；P2-3 缩进修正 | `limit_up_push_service.py` | `test_limit_up_push_service.py` 补：行序扰动哈希不变、炸板行不计入涨停数、僵死 GENERATING 重跑 |
-| 第二期（数据增强，1~2 天） | 二-1 昨日对照情绪指标；二-2 10cm/20cm 分层；二-3 封流比与开板次数透出；P2-1 梯队分布 | `limit_up_push_service.py`（context 组装层） | 用历史交易日回放 `_assemble_context`，人工核对 emotion_cycle 数值与开盘啦 APP 口径一致 |
-| 第三期（Prompt 升级，1 天） | 三-1 周期框架；三-2 评分维度；三-3 竞价清单与篇幅限制；三-4 final 瘦身；P1-3 json_mode；**同步 bump prompt_version** | `limit_up_push_service.py`（prompt 方法）、`config.py` | 选 3 个典型交易日（高潮日/退潮日/冰点日）人工评审报告质量；对比改造前后 token 消耗（`LlmCallMetric`） |
+| 第一期（修复） | P0-1 复用当日 READY 报告 + 哈希规范化；P0-2 涨停/炸板拆池与统计口径修正；P1-1 GENERATING 僵死恢复；P2-3 缩进修正 | `limit_up_push_service.py` | `test_limit_up_push_service.py` 补：行序扰动哈希不变、炸板行不计入涨停数、僵死 GENERATING 重跑 |
+| 第二期（数据增强） | 二-1 昨日对照情绪指标；二-2 10cm/20cm 分层；二-3 封流比与开板次数透出；P2-1 梯队分布 | `limit_up_push_service.py`（context 组装层） | 用历史交易日回放 `_assemble_context`，人工核对 emotion_cycle 数值与开盘啦 APP 口径一致 |
+| 第三期（Prompt 升级） | 三-1 周期框架；三-2 评分维度；三-3 竞价清单与篇幅限制；三-4 final 瘦身；P1-3 json_mode；**同步 bump prompt_version** | `limit_up_push_service.py`（prompt 方法）、`config.py` | 选 3 个典型交易日（高潮日/退潮日/冰点日）人工评审报告质量；对比改造前后 token 消耗（`LlmCallMetric`） |
 | 第四期（可选） | P0-1 方案 3 delivery 唯一键迁移；二-4 指数锚；二-5 题材梯队；P1-2 文本阶段降级 | service + alembic 迁移 | 迁移前清理历史重复 delivery |
 
 注意事项：

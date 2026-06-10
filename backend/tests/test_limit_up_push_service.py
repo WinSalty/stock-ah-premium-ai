@@ -11,7 +11,7 @@ from app.core.config import Settings
 from app.db.base import Base
 from app.db.models.auth import AppUser
 from app.db.models.chat import LlmCallMetric
-from app.db.models.market import ATradeCalendar
+from app.db.models.market import ADailyQuote, ATradeCalendar
 from app.db.models.notification import (
     LimitUpAnalysisCache,
     LimitUpPushRecipient,
@@ -31,7 +31,7 @@ class FakeTushareClient:
     author: sunshengxian
     """
 
-    def __init__(self, rows_by_api: dict[str, list[dict[str, object]]]) -> None:
+    def __init__(self, rows_by_api: dict[object, list[dict[str, object]]]) -> None:
         self.rows_by_api = rows_by_api
         self.calls: list[tuple[str, dict[str, object]]] = []
 
@@ -41,8 +41,18 @@ class FakeTushareClient:
         params: dict[str, object] | None = None,
         fields: list[str] | None = None,
     ) -> TushareResult:
-        self.calls.append((api_name, params or {}))
-        return TushareResult(fields=fields or [], rows=self.rows_by_api.get(api_name, []))
+        normalized_params = params or {}
+        self.calls.append((api_name, normalized_params))
+        tag = normalized_params.get("tag")
+        trade_date = normalized_params.get("trade_date")
+        rows = (
+            self.rows_by_api.get((api_name, trade_date, tag))
+            or self.rows_by_api.get((api_name, tag))
+            or self.rows_by_api.get((api_name, trade_date))
+            or self.rows_by_api.get(api_name)
+            or []
+        )
+        return TushareResult(fields=fields or [], rows=rows)
 
 
 class FakeNotificationService:
@@ -258,6 +268,256 @@ def test_limit_up_failed_snapshot_retries_same_cache(monkeypatch) -> None:
     assert retried.status == "READY"
     assert retried.error_message is None
     assert calls == 2
+
+
+def test_limit_up_snapshot_hash_is_stable_for_row_order() -> None:
+    """确认快照哈希不受列表行序扰动影响。
+
+    创建日期：2026-06-10
+    author: sunshengxian
+    """
+
+    db = make_db()
+    service = LimitUpPushService(
+        db,
+        settings=Settings(llm_api_key="key", llm_api_key_file=None, tushare_token="token", tushare_token_file=None),
+        tushare_client=FakeTushareClient({}),
+        notification_service=FakeNotificationService(),
+    )
+    left = {
+        "trade_date": "2026-05-08",
+        "limit_up_stocks": [
+            {"ts_code": "000002.SZ", "trade_date": "2026-05-08", "name": "乙"},
+            {"ts_code": "000001.SZ", "trade_date": "2026-05-08", "name": "甲"},
+        ],
+    }
+    right = {
+        "trade_date": "2026-05-08",
+        "limit_up_stocks": [
+            {"ts_code": "000001.SZ", "trade_date": "2026-05-08", "name": "甲"},
+            {"ts_code": "000002.SZ", "trade_date": "2026-05-08", "name": "乙"},
+        ],
+    }
+
+    assert service._snapshot_hash(left) == service._snapshot_hash(right)
+
+
+def test_limit_up_report_cache_reuses_ready_when_snapshot_order_changes(monkeypatch) -> None:
+    """确认早盘轮询已有 READY 报告时不因接口行序变化重新生成。
+
+    创建日期：2026-06-10
+    author: sunshengxian
+    """
+
+    db = make_db()
+    db.add(ATradeCalendar(exchange="SSE", cal_date=date(2026, 5, 8), is_open=1))
+    db.commit()
+    user = add_user(db)
+    fake_notification = FakeNotificationService()
+    fake_client = FakeTushareClient(
+        {
+            "kpl_list": [
+                {"ts_code": "000002.SZ", "name": "测试乙", "trade_date": "20260508", "status": "2连板", "tag": "涨停"},
+                {"ts_code": "000001.SZ", "name": "测试甲", "trade_date": "20260508", "status": "首板", "tag": "涨停"},
+            ]
+        }
+    )
+    service = LimitUpPushService(
+        db,
+        settings=Settings(llm_api_key="key", llm_api_key_file=None, tushare_token="token", tushare_token_file=None),
+        tushare_client=fake_client,
+        notification_service=fake_notification,
+    )
+    calls = 0
+
+    def fake_generate(context: dict[str, object]) -> tuple[str, str]:
+        nonlocal calls
+        calls += 1
+        return "<h2>报告</h2>", "报告"
+
+    monkeypatch.setattr(service, "_today_local", lambda: date(2026, 5, 9))
+    monkeypatch.setattr(service, "_generate_llm_report", fake_generate)
+    monkeypatch.setattr(service, "_latest_pushplus_log_id", lambda user_id, message_id: None)
+
+    first_analysis, first_pushed = service.ensure_latest_analysis_and_push()
+    fake_client.rows_by_api["kpl_list"] = list(reversed(fake_client.rows_by_api["kpl_list"]))
+    second_analysis, second_pushed = service.ensure_latest_analysis_and_push()
+
+    assert first_analysis is not None
+    assert second_analysis is not None
+    assert first_analysis.id == second_analysis.id
+    assert calls == 1
+    assert first_pushed == 1
+    assert second_pushed == 0
+    assert fake_notification.sent == [(user.id, "2026-05-08 A股涨停打板复盘", "<h2>报告</h2>")]
+
+
+def test_limit_up_stale_generating_snapshot_retries(monkeypatch) -> None:
+    """确认僵死 GENERATING 报告超过阈值后会复用原记录重跑。
+
+    创建日期：2026-06-10
+    author: sunshengxian
+    """
+
+    db = make_db()
+    service = LimitUpPushService(
+        db,
+        settings=Settings(
+            llm_api_key="key",
+            llm_api_key_file=None,
+            tushare_token="token",
+            tushare_token_file=None,
+            limit_up_push_generating_stale_minutes=30,
+        ),
+        tushare_client=FakeTushareClient(
+            {
+                "kpl_list": [
+                    {"ts_code": "000001.SZ", "name": "测试股份", "trade_date": "20260508", "status": "2连板", "tag": "涨停"}
+                ]
+            }
+        ),
+        notification_service=FakeNotificationService(),
+    )
+    stale = LimitUpAnalysisCache(
+        trade_date=date(2026, 5, 8),
+        model="deepseek-v4-pro",
+        prompt_version="limit-up-v1",
+        data_snapshot_hash=service._snapshot_hash(service._build_context_snapshot(date(2026, 5, 8))["context"]),
+        status="GENERATING",
+        title="旧报告",
+    )
+    db.add(stale)
+    db.commit()
+    db.refresh(stale)
+    stale.updated_at = datetime(2026, 5, 8, 8, 0, 0)
+    db.commit()
+    monkeypatch.setattr(service, "_now_local", lambda: datetime(2026, 5, 8, 8, 40, 0))
+    monkeypatch.setattr(service, "_generate_llm_report", lambda context: ("<h2>重跑</h2>", "重跑"))
+
+    retried = service.ensure_analysis_for_trade_date(date(2026, 5, 8))
+
+    assert retried is not None
+    assert retried.id == stale.id
+    assert retried.status == "READY"
+    assert retried.content_html == "<h2>重跑</h2>"
+
+
+def test_limit_up_market_emotion_uses_explicit_levels_and_cycle_metrics() -> None:
+    """确认情绪统计使用显式板高并计算炸板率、晋级率和昨日溢价。
+
+    创建日期：2026-06-10
+    author: sunshengxian
+    """
+
+    db = make_db()
+    service = LimitUpPushService(
+        db,
+        settings=Settings(llm_api_key="key", llm_api_key_file=None, tushare_token="token", tushare_token_file=None),
+        tushare_client=FakeTushareClient({}),
+        notification_service=FakeNotificationService(),
+    )
+    today_rows = [
+        {"ts_code": "000001.SZ", "status": "2连板", "tag": "涨停"},
+        {"ts_code": "000002.SZ", "status": "3连板", "tag": "涨停"},
+        {"ts_code": "000003.SZ", "status": "12连板", "tag": "涨停"},
+        {"ts_code": "000004.SZ", "status": "3天2板", "tag": "涨停"},
+        {"ts_code": "000005.SZ", "tag": "涨停"},
+    ]
+    prev_rows = [
+        {"ts_code": "000001.SZ", "status": "首板", "tag": "涨停"},
+        {"ts_code": "000002.SZ", "status": "2连板", "tag": "涨停"},
+    ]
+    emotion = service._market_emotion(
+        today_rows,
+        {
+            "kpl_list_炸板": [{"ts_code": "000099.SZ", "status": "炸板", "tag": "炸板"}],
+            "kpl_list_跌停": [{"ts_code": "000098.SZ", "status": "跌停", "tag": "跌停"}],
+            "prev_kpl_list": prev_rows,
+            "prev_trade_date": [{"trade_date": "2026-05-07"}],
+        },
+        {
+            "000001.SZ": {"open": 11, "pre_close": 10, "pct_chg": 5},
+            "000002.SZ": {"open": 9, "pre_close": 10, "pct_chg": -2},
+        },
+    )
+
+    assert emotion["limit_up_count"] == 5
+    assert emotion["second_board_count"] == 2
+    assert emotion["third_board_count"] == 1
+    assert emotion["highest_chain"] == 12
+    assert emotion["unrecognized_board_count"] == 1
+    assert emotion["limit_down_count"] == 1
+    assert emotion["emotion_cycle"]["broken_board_rate_pct"] == pytest.approx(16.666667)
+    assert emotion["emotion_cycle"]["advancement"]["1进2"]["rate_pct"] == 100.0
+    assert emotion["emotion_cycle"]["prev_limit_up_premium"]["high_open_rate_pct"] == 50.0
+
+
+def test_limit_up_json_stage_requests_json_mode(monkeypatch) -> None:
+    """确认 JSON 阶段调用模型时开启 response_format json_object。
+
+    创建日期：2026-06-10
+    author: sunshengxian
+    """
+
+    db = make_db()
+    captured: list[bool] = []
+    service = LimitUpPushService(
+        db,
+        settings=Settings(llm_api_key="key", llm_api_key_file=None, tushare_token="token", tushare_token_file=None),
+        tushare_client=FakeTushareClient({}),
+        notification_service=FakeNotificationService(),
+    )
+
+    def fake_chat(prompt: str, system_prompt: str, json_mode: bool = False) -> str:
+        captured.append(json_mode)
+        return '{"selected_stocks": []}'
+
+    monkeypatch.setattr(service, "_chat_completion_with_reasoning", fake_chat)
+    service._run_json_stage("CHAIN_SELECTION", {"trade_date": "2026-05-08"}, "system", "user", {"selected_stocks": []}, [])
+
+    assert captured == [True]
+
+
+def test_limit_up_focus_text_stage_falls_back_on_llm_error(monkeypatch) -> None:
+    """确认重点文本阶段失败时降级为确定性 HTML，不阻断最终合成。
+
+    创建日期：2026-06-10
+    author: sunshengxian
+    """
+
+    db = make_db()
+    service = LimitUpPushService(
+        db,
+        settings=Settings(llm_api_key="key", llm_api_key_file=None, tushare_token="token", tushare_token_file=None),
+        tushare_client=FakeTushareClient({}),
+        notification_service=FakeNotificationService(),
+    )
+    monkeypatch.setattr(service, "_chat_completion_with_reasoning", lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("模型异常")))
+    stage_quality: list[dict[str, object]] = []
+
+    payload = service._run_text_stage(
+        "CHAIN_FOCUS",
+        {
+            "trade_date": "2026-05-08",
+            "selected_chain_stocks": [
+                {
+                    "ts_code": "000001.SZ",
+                    "name": "测试股份",
+                    "status": "2连板",
+                    "theme": "人工智能",
+                    "selection": {"selection_reason": "板块前排"},
+                }
+            ],
+            "supplements": {"000001.SZ": {"cyq_summary": {"next_day_premium_bias": "偏友好"}}},
+        },
+        "system",
+        "user",
+        stage_quality,
+    )
+
+    assert payload["error_fallback"] is True
+    assert "LLM 重点分析不可用" in payload["html_fragment"]
+    assert stage_quality[0]["status"] == "FAILED_FALLBACK"
 
 
 def test_limit_up_llm_error_response_is_recorded(monkeypatch) -> None:
