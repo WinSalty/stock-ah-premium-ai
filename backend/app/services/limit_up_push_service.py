@@ -334,6 +334,8 @@ class LimitUpPushService:
                 context_json=self._json_dumps(context),
                 data_quality_json=self._json_dumps(data_quality),
             )
+            # GENERATING 僵死判断只比较应用写入的 UTC-naive 时间，避免依赖数据库服务器时区。
+            analysis.updated_at = self._now_naive()
             self.db.add(analysis)
             try:
                 self.db.commit()
@@ -1187,8 +1189,8 @@ class LimitUpPushService:
         seen: set[str] = set()
         codes: list[str] = []
         for row in kpl_rows:
-            status = str(row.get("status") or "")
-            if any(token in status for token in ("2连", "3连", "连板", "首板")):
+            # 技术指标补数与分层上下文共用 _board_level 口径，避免“N天M板”进了候选池却缺少 technical。
+            if self._board_level(row) >= 1:
                 code = str(row.get("ts_code") or "").strip()
                 if code and code not in seen:
                     seen.add(code)
@@ -1400,15 +1402,35 @@ class LimitUpPushService:
                 ),
             }
         quote_metrics = self._prev_limit_up_premium_metrics(prev_rows, prev_quotes)
-        broken_rate = self._safe_pct_ratio(Decimal(len(broken_rows)), Decimal(len(today_rows) + len(broken_rows)))
+        today_codes = self._row_code_set(today_rows)
+        broken_codes = self._row_code_set(broken_rows)
+        broken_only_codes = broken_codes - today_codes
+        denominator_codes = today_codes | broken_codes
+        denominator_count = len(denominator_codes) if denominator_codes else len(today_rows) + len(broken_rows)
+        broken_numerator_count = len(broken_only_codes) if broken_codes else 0
+        broken_rate = self._safe_pct_ratio(Decimal(broken_numerator_count), Decimal(denominator_count))
         return {
             "prev_trade_date": prev_trade_date,
             "broken_board_count": len(broken_rows),
+            "broken_board_unique_count": len(broken_codes),
+            "broken_board_only_count": broken_numerator_count,
+            "limit_up_or_broken_unique_count": denominator_count,
             "broken_board_rate_pct": self._decimal_to_float(broken_rate),
+            "broken_board_rate_scope": "炸板池剔除已回封涨停代码后 / 涨停与炸板代码并集",
             "advancement": advancement,
             "prev_limit_up_premium": quote_metrics,
             "highest_chain_change": self._highest_chain_change(today_rows, prev_rows),
         }
+
+    def _row_code_set(self, rows: list[dict[str, Any]]) -> set[str]:
+        """提取股票代码集合，用于跨池去重统计。
+
+        创建日期：2026-06-11
+        author: sunshengxian
+        """
+
+        # Tushare 多个 KPL tag 池可能存在回封股票交集；情绪指标按代码集合去重，避免重复计数。
+        return {str(row.get("ts_code") or "").strip() for row in rows if str(row.get("ts_code") or "").strip()}
 
     def _prev_limit_up_premium_metrics(
         self,
@@ -1440,7 +1462,8 @@ class LimitUpPushService:
                     high_open_count += 1
         return {
             "prev_limit_up_count": len(prev_codes),
-            "quote_sample_count": len(prev_quotes),
+            "quote_sample_count": len(pct_values),
+            "high_open_sample_count": sample_count,
             "avg_pct_chg": self._decimal_to_float(self._avg_decimal(pct_values)),
             "high_open_rate_pct": self._decimal_to_float(
                 self._safe_pct_ratio(Decimal(high_open_count), Decimal(sample_count))
@@ -1861,6 +1884,7 @@ class LimitUpPushService:
             "必须同时判断空间地位、题材带动性、高位风险、20cm/10cm制度差异和首封时间质量。输出严格 JSON："
             "{\"selected_stocks\":[{\"ts_code\":\"代码\",\"name\":\"名称\",\"board_status\":\"5连板\","
             "\"theme\":\"题材\",\"leader_role\":\"空间板/题材龙头/高辨识度\","
+            "\"score_detail\":{\"space_status\":\"强/中/弱\",\"theme_leadership\":\"强/中/弱\",\"seal_quality\":\"强/中/弱\",\"risk_control\":\"强/中/弱\"},"
             "\"selection_reason\":\"入选理由\",\"risk_level\":\"高/中/低\"}],"
             "\"high_board_cycle_view\":\"高连板周期判断\"}。\n\n"
             f"输入数据：\n{self._json_dumps(context.get('high_board_context') or {})}"
@@ -2320,7 +2344,7 @@ class LimitUpPushService:
         author: sunshengxian
         """
 
-        return f"{self.settings.limit_up_push_final_prompt_version}:{stage_key.lower()}:v2"
+        return f"{self.settings.limit_up_push_final_prompt_version}:{stage_key.lower()}:v3"
 
     def _context_trade_date(self, context: dict[str, Any]) -> date:
         """从任意阶段输入中解析报告交易日。
@@ -2490,9 +2514,9 @@ class LimitUpPushService:
         updated_at = analysis.updated_at or analysis.created_at
         if updated_at is None:
             return True
-        # updated_at 在本项目表结构中由数据库生成，按当前服务器东八区 naive 理解；
-        # 因此用本地 naive 对齐数据库口径，避免 UTC naive 直接比较产生 8 小时误差。
-        return self._now_local().replace(tzinfo=None) - updated_at > timedelta(minutes=threshold_minutes)
+        # 进入 GENERATING 时会由应用主动写入 UTC-naive updated_at；
+        # 这里继续使用 _now_naive 比较，避免数据库服务器时区不同导致正在生成的报告被误判僵死。
+        return self._now_naive() - updated_at > timedelta(minutes=threshold_minutes)
 
     def _analysis_for_snapshot(
         self,
@@ -2528,6 +2552,7 @@ class LimitUpPushService:
         analysis.content_markdown = None
         analysis.generated_at = None
         analysis.error_message = None
+        analysis.updated_at = self._now_naive()
         self.db.commit()
         self.db.refresh(analysis)
 
@@ -2817,6 +2842,7 @@ class LimitUpPushService:
                 return token
 
     def _report_list_item(self, report: LimitUpAnalysisCache) -> LimitUpReportListItem:
+        context = self._json_loads_dict(report.context_json)
         return LimitUpReportListItem(
             id=report.id,
             trade_date=report.trade_date,
@@ -2829,7 +2855,21 @@ class LimitUpPushService:
             created_at=report.created_at,
             updated_at=report.updated_at,
             error_message=report.error_message,
+            has_stage_fallback=self._has_stage_fallback(context),
         )
+
+    def _has_stage_fallback(self, context: dict[str, Any]) -> bool:
+        """判断报告生成阶段是否发生过确定性降级。
+
+        创建日期：2026-06-11
+        author: sunshengxian
+        """
+
+        # 重点文本阶段降级后报告仍可 READY；列表直接暴露标识，方便管理员决定是否手动重跑。
+        pipeline = context.get("pipeline") if isinstance(context, dict) else None
+        pipeline = pipeline if isinstance(pipeline, dict) else {}
+        stage_quality = pipeline.get("stage_quality") or []
+        return any(isinstance(item, dict) and item.get("status") == "FAILED_FALLBACK" for item in stage_quality)
 
     def _normalize_api_row(self, row: dict[str, Any]) -> dict[str, Any]:
         normalized: dict[str, Any] = {}

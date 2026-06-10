@@ -391,7 +391,7 @@ def test_limit_up_stale_generating_snapshot_retries(monkeypatch) -> None:
     db.refresh(stale)
     stale.updated_at = datetime(2026, 5, 8, 8, 0, 0)
     db.commit()
-    monkeypatch.setattr(service, "_now_local", lambda: datetime(2026, 5, 8, 8, 40, 0))
+    monkeypatch.setattr(service, "_now_naive", lambda: datetime(2026, 5, 8, 8, 40, 0))
     monkeypatch.setattr(service, "_generate_llm_report", lambda context: ("<h2>重跑</h2>", "重跑"))
 
     retried = service.ensure_analysis_for_trade_date(date(2026, 5, 8))
@@ -400,6 +400,55 @@ def test_limit_up_stale_generating_snapshot_retries(monkeypatch) -> None:
     assert retried.id == stale.id
     assert retried.status == "READY"
     assert retried.content_html == "<h2>重跑</h2>"
+
+
+def test_limit_up_recent_generating_snapshot_is_not_reset(monkeypatch) -> None:
+    """确认未超过阈值的 GENERATING 报告不会因数据库时区差异被误判僵死。
+
+    创建日期：2026-06-11
+    author: sunshengxian
+    """
+
+    db = make_db()
+    service = LimitUpPushService(
+        db,
+        settings=Settings(
+            llm_api_key="key",
+            llm_api_key_file=None,
+            tushare_token="token",
+            tushare_token_file=None,
+            limit_up_push_generating_stale_minutes=30,
+        ),
+        tushare_client=FakeTushareClient(
+            {
+                "kpl_list": [
+                    {"ts_code": "000001.SZ", "name": "测试股份", "trade_date": "20260508", "status": "2连板", "tag": "涨停"}
+                ]
+            }
+        ),
+        notification_service=FakeNotificationService(),
+    )
+    context = service._build_context_snapshot(date(2026, 5, 8))["context"]
+    generating = LimitUpAnalysisCache(
+        trade_date=date(2026, 5, 8),
+        model="deepseek-v4-pro",
+        prompt_version="limit-up-v1",
+        data_snapshot_hash=service._snapshot_hash(context),
+        status="GENERATING",
+        title="生成中报告",
+        updated_at=datetime(2026, 5, 8, 0, 20, 0),
+    )
+    db.add(generating)
+    db.commit()
+    db.refresh(generating)
+    monkeypatch.setattr(service, "_now_naive", lambda: datetime(2026, 5, 8, 0, 40, 0))
+    monkeypatch.setattr(service, "_generate_llm_report", lambda context: (_ for _ in ()).throw(AssertionError("不应重跑")))
+
+    current = service.ensure_analysis_for_trade_date(date(2026, 5, 8))
+
+    assert current is not None
+    assert current.id == generating.id
+    assert current.status == "GENERATING"
 
 
 def test_limit_up_market_emotion_uses_explicit_levels_and_cycle_metrics() -> None:
@@ -430,7 +479,10 @@ def test_limit_up_market_emotion_uses_explicit_levels_and_cycle_metrics() -> Non
     emotion = service._market_emotion(
         today_rows,
         {
-            "kpl_list_炸板": [{"ts_code": "000099.SZ", "status": "炸板", "tag": "炸板"}],
+            "kpl_list_炸板": [
+                {"ts_code": "000001.SZ", "status": "炸板回封", "tag": "炸板"},
+                {"ts_code": "000099.SZ", "status": "炸板", "tag": "炸板"},
+            ],
             "kpl_list_跌停": [{"ts_code": "000098.SZ", "status": "跌停", "tag": "跌停"}],
             "prev_kpl_list": prev_rows,
             "prev_trade_date": [{"trade_date": "2026-05-07"}],
@@ -447,8 +499,12 @@ def test_limit_up_market_emotion_uses_explicit_levels_and_cycle_metrics() -> Non
     assert emotion["highest_chain"] == 12
     assert emotion["unrecognized_board_count"] == 1
     assert emotion["limit_down_count"] == 1
+    assert emotion["emotion_cycle"]["broken_board_unique_count"] == 2
+    assert emotion["emotion_cycle"]["broken_board_only_count"] == 1
+    assert emotion["emotion_cycle"]["limit_up_or_broken_unique_count"] == 6
     assert emotion["emotion_cycle"]["broken_board_rate_pct"] == pytest.approx(16.666667)
     assert emotion["emotion_cycle"]["advancement"]["1进2"]["rate_pct"] == 100.0
+    assert emotion["emotion_cycle"]["prev_limit_up_premium"]["quote_sample_count"] == 2
     assert emotion["emotion_cycle"]["prev_limit_up_premium"]["high_open_rate_pct"] == 50.0
 
 
@@ -518,6 +574,68 @@ def test_limit_up_focus_text_stage_falls_back_on_llm_error(monkeypatch) -> None:
     assert payload["error_fallback"] is True
     assert "LLM 重点分析不可用" in payload["html_fragment"]
     assert stage_quality[0]["status"] == "FAILED_FALLBACK"
+
+
+def test_limit_up_focus_codes_use_board_level_for_multi_day_board() -> None:
+    """确认 N天M板股票会按板高识别进入技术补数范围。
+
+    创建日期：2026-06-11
+    author: sunshengxian
+    """
+
+    db = make_db()
+    service = LimitUpPushService(
+        db,
+        settings=Settings(llm_api_key="key", llm_api_key_file=None, tushare_token="token", tushare_token_file=None),
+        tushare_client=FakeTushareClient({}),
+        notification_service=FakeNotificationService(),
+    )
+
+    codes = service._focus_ts_codes(
+        [
+            {"ts_code": "000001.SZ", "status": "5天3板", "tag": "涨停"},
+            {"ts_code": "000002.SZ", "status": "普通涨停", "tag": "涨停"},
+        ],
+        {},
+    )
+
+    assert codes == ["000001.SZ"]
+
+
+def test_limit_up_report_list_marks_stage_fallback() -> None:
+    """确认列表项暴露阶段降级标识，便于管理员判断是否手动重跑。
+
+    创建日期：2026-06-11
+    author: sunshengxian
+    """
+
+    db = make_db()
+    analysis = LimitUpAnalysisCache(
+        trade_date=date(2026, 5, 8),
+        model="deepseek-v4-pro",
+        prompt_version="limit-up-v1",
+        data_snapshot_hash="hash",
+        status="READY",
+        title="报告",
+        content_html="<h2>报告</h2>",
+        context_json=(
+            '{"pipeline":{"stage_quality":[{"stage_key":"CHAIN_FOCUS","status":"FAILED_FALLBACK","message":"模型异常"}]}}'
+        ),
+    )
+    db.add(analysis)
+    db.commit()
+    service = LimitUpPushService(
+        db,
+        settings=Settings(llm_api_key="key", llm_api_key_file=None, tushare_token="token", tushare_token_file=None),
+        tushare_client=FakeTushareClient({}),
+        notification_service=FakeNotificationService(),
+    )
+
+    items = service.list_reports()
+    detail = service.get_report(analysis.id)
+
+    assert items[0].has_stage_fallback is True
+    assert detail.has_stage_fallback is True
 
 
 def test_limit_up_llm_error_response_is_recorded(monkeypatch) -> None:

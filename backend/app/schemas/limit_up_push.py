@@ -73,6 +73,7 @@ class LimitUpReportListItem(BaseModel):
     created_at: datetime
     updated_at: datetime
     error_message: str | None = None
+    has_stage_fallback: bool = False
 
 
 class LimitUpReportDetail(LimitUpReportListItem):
