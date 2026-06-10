@@ -129,3 +129,48 @@ cd /Users/salty/codeProject/ai/coding/stock-ah-premium-ai/backend && .venv/bin/p
 - `LIMIT_UP_PUSH_FINAL_PROMPT_VERSION` 默认已从 `limit-up-multi-stage-v1` 升级到 `limit-up-multi-stage-v2`，上线后阶段缓存会按新版本重新生成。
 - 主报告 `LIMIT_UP_PUSH_PROMPT_VERSION` 未强制升级，避免报告主缓存整体失效；早盘自动任务会优先复用当天同主版本 READY 报告。
 - 新增炸板/跌停/昨日涨停 KPL 请求会增加少量 Tushare 调用，但仍在现有轮询链路内记录 data_quality，失败不阻断主报告生成。
+
+## 五、代码评审意见（追加）
+
+- 评审日期：2026-06-11
+- 评审对象：commit `bb40118`（完善打板推送分析稳定性与情绪指标）
+- 评审方式：逐行阅读 `limit_up_push_service.py` 全部 diff、`config.py`、新增测试；核对模型字段（`ADailyQuote.pre_close` 存在）；复跑 `tests/test_limit_up_push_service.py` 结果 `23 passed`，与第三节声明一致（后端全集的 2 个既有失败用例未复验）。
+
+### 总体结论
+
+实现与原方案对应良好：早盘幂等、快照规范化、服务层推送查重、情绪周期指标、分层数据增强、Prompt 升级和文本阶段降级均已按预期落地；对未按原方案处理部分（kpl_list tag 默认口径复核、不做唯一索引迁移、不加指数锚）的说明诚实且理由成立。**评审结论：通过，但 P1-1 需尽快跟进。**
+
+### 需处理项
+
+**P1-1 `_is_generating_stale` 的时区基准依赖数据库服务器时区，存在环境性失效风险**
+
+`updated_at` 由 `TimestampMixin` 的 `func.now()` 生成（数据库服务器时间），代码注释断言其为东八区 naive 并用 `_now_local()` 对齐比较。但项目其它应用写入字段（`generated_at`、`sent_at`）口径是 UTC naive（`_now_naive()`），同一张表存在两种时间基准；该比较的正确性完全取决于生产 MySQL 的 `time_zone` 变量，而 `database_url` 与 engine 配置均未固化该变量。若部署环境 MySQL 为 UTC（Docker 默认常见），`_now_local()` 恒比 `updated_at` 快约 8 小时，30 分钟阈值瞬间满足——**所有 GENERATING 记录都会被判定为僵死**，正在生成中的报告可能被并发入口（手动 `generate-latest` + 调度器）重置重跑。
+
+现有测试仅用 monkeypatch 同时固定两端时间验证了"超阈值重跑"的正例；没有用数据库真实生成的 `updated_at` 验证"未超阈值不重置"的负例（SQLite 的 `CURRENT_TIMESTAMP` 恰好是 UTC，真实负例测试可以直接暴露该问题）。
+
+建议修复方向：不依赖 server 生成的 `updated_at` 做僵死判断，改为在进入 GENERATING 时由应用写入 `generation_started_at`（沿用 `_now_naive()` UTC naive 口径），比较两个同口径时间；若暂不加字段，至少在部署文档中固化"MySQL `time_zone` 必须为 +8:00"的约束，并补充上述负例测试。
+
+### 建议处理项
+
+**P2-1 焦点股票选取与板级识别口径不一致**
+
+`_focus_ts_codes` 仍用旧子串匹配（"2连"/"3连"/"连板"/"首板"）挑选技术指标补数对象，而分层上下文已改用增强后的 `_board_level`（支持 "N天M板"）。状态形如 "5天3板" 的股票会进入 `chain_board_context` 参与 LLM 筛选，但拿不到 technical 指标，LLM 评分和兜底排序（依赖 `amount_ratio_5d`）对这类股票失真。建议 `_focus_ts_codes` 统一改用 `_board_level(row) >= 1` 口径。
+
+**P2-2 炸板率分母可能对"回封股"重复计数**
+
+KPL 口径中"炸板后回封"的股票可能同时出现在 `tag=涨停` 与 `tag=炸板` 两个池，`Decimal(len(today_rows) + len(broken_rows))` 会把回封股计入两次，炸板率系统性偏高。建议按 `ts_code` 去重：分母取两池代码并集，或炸板池先剔除已在涨停池中的代码，并在 `emotion_cycle` 输出中注明口径。需要先用真实交易日数据验证 KPL 两池是否确有交集。
+
+**P2-3 降级片段会固化为当日最终报告，无自动重试入口**
+
+CHAIN_FOCUS / HIGH_BOARD_FOCUS 降级后 FINAL_REPORT 正常合成，analysis 进入 READY；早盘轮询的 READY 早退逻辑使降级内容成为当日最终推送内容，后续不会自动重试（失败阶段缓存虽不会被复用，但没有重入点）。属可接受的设计取舍，但建议：发生 `FAILED_FALLBACK` 时在报告列表接口上暴露"含降级片段"标识（stage_quality 中已有记录，前端可读取），便于管理员决定是否手动重新生成。
+
+### 记录项（Nit）
+
+- `_canonicalize_for_hash` 对所有 list 排序，哈希对元素顺序不敏感：`selected_stocks` 的 priority 顺序变化（语义不同）会命中同一阶段缓存。当前 selection 元素自带 `priority` 字段、排序不丢信息，实际影响极小，仅作记录。
+- `optional_payload["prev_trade_date"] = [{"trade_date": ...}]` 把标量塞进行集合形状传参，`_market_emotion` 再从 `rows[0]` 取回，绕路；直接给 `_assemble_context` / `_market_emotion` 增加 `prev_trade_date` 参数更直接。
+- `_prev_limit_up_premium_metrics` 的 `quote_sample_count` 取行情命中映射大小，而 `avg_pct_chg` 实际样本是 `pct_values` 数量，两者可能不同，字段命名易误读。
+- 高连板筛选 prompt 未像两三连筛选那样加入 `score_detail` 固定评分维度，第一节"选股阶段增加固定评分维度"的表述实际只覆盖了 chain selection，建议补齐或修正表述。
+
+### 信息项（FYI）
+
+- DeepSeek `json_object` 模式要求消息中包含 "json" 字样，现有 JSON 阶段 prompt 均含"输出严格 JSON"，满足约束；后续修改 prompt 时注意保留该字样，否则兼容接口会直接报错。
