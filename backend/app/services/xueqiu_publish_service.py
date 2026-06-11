@@ -23,6 +23,7 @@ from app.db.models.notification import (
     XueqiuPublishRecord,
     XueqiuPublishSetting,
 )
+from app.db.session import SessionLocal
 from app.schemas.xueqiu_publish import (
     XueqiuChatAnswerPublishRequest,
     XueqiuCredentialRequest,
@@ -34,7 +35,7 @@ from app.schemas.xueqiu_publish import (
     XueqiuPublishSettingSummary,
 )
 from app.services.limit_up_push_service import ANALYSIS_STATUS_READY, LimitUpPushService
-from app.services.llm_service import LlmCallTrace, LlmService
+from app.services.llm_client import LlmCallTrace, LlmClient
 from app.services.notification_service import NotificationError, NotificationService
 
 logger = logging.getLogger(__name__)
@@ -94,6 +95,18 @@ class XueqiuPublishService:
     def __init__(self, db: Session, settings: Settings | None = None) -> None:
         self.db = db
         self.settings = settings or get_settings()
+
+    def _llm_client(self) -> LlmClient:
+        """构建共享 LLM 客户端，用于标题生成与 Markdown 转 HTML。
+
+        指标落库使用独立短会话（SessionLocal），不 commit 雪球发布自身的
+        请求会话，避免发布事务被指标写入连带提交。
+
+        创建日期：2026-06-11
+        author: claude
+        """
+
+        return LlmClient(self.db, self.settings, metric_session_factory=SessionLocal)
 
     def get_credential_summary(self) -> XueqiuCredentialSummary:
         """读取雪球登录态摘要，不返回完整 Cookie。
@@ -980,7 +993,7 @@ class XueqiuPublishService:
         if custom_title and custom_title.strip():
             return self._normalize_xueqiu_title(custom_title)
         try:
-            title = LlmService(self.db, self.settings)._chat_completion(
+            title = self._llm_client().chat_completion(
                 (
                     "请为下面这段投资问答回答生成一个 50 字以内的雪球长文短标题。\n\n"
                     f"问答回答：\n{message.content[:4000]}"
@@ -1048,7 +1061,7 @@ class XueqiuPublishService:
             "注意：表格必须改写为 h3 + ul/li 列表，禁止输出 table 标签。\n\n"
             f"Markdown 原文：\n{message.content}"
         )
-        html_text = LlmService(self.db, self.settings)._chat_completion(
+        html_text = self._llm_client().chat_completion(
             prompt,
             system_prompt=CHAT_XUEQIU_HTML_SYSTEM_PROMPT,
             model=self.settings.llm_model,

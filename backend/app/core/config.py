@@ -113,6 +113,50 @@ class Settings(BaseSettings):
         default=None,
         alias="QWEN_QUESTION_CLASSIFIER_MODEL",
     )
+    # ---- Agent 问答引擎（问答模块 Agent 化重构，阶段 0 起逐步生效）----
+    # Agent 循环模型独立于 legacy 问答模型：工具调用准确性优先，默认用 pro 档。
+    agent_model: str = Field(default="deepseek-v4-pro", alias="AGENT_MODEL")
+    # 单轮回答内工具迭代上限；达到上限后强制模型基于已有材料收尾作答。
+    agent_max_iterations: int = Field(default=8, alias="AGENT_MAX_ITERATIONS")
+    # 单轮 messages 材料字符预算；超限时从最早的工具结果开始压缩为摘要。
+    agent_context_budget_chars: int = Field(
+        default=48000,
+        alias="AGENT_CONTEXT_BUDGET_CHARS",
+    )
+    # 用户可感知配额：问答轮数/天（区别于 llm_daily_call_limit 的内部调用硬上限）。
+    chat_daily_round_limit: int = Field(default=50, alias="CHAT_DAILY_ROUND_LIMIT")
+    # ---- 博查联网搜索 ----
+    bocha_base_url: str = Field(default="https://api.bochaai.com", alias="BOCHA_BASE_URL")
+    bocha_api_key: str | None = Field(default=None, alias="BOCHA_API_KEY")
+    bocha_api_key_file: Path | None = Field(
+        default=Path("/Users/salty/codeProject/ai/doc/博查-apikey.txt"),
+        alias="BOCHA_API_KEY_FILE",
+    )
+    # 搜索（含网页正文抓取）次数/天；用尽后 web_search 工具当日自动降级移除。
+    agent_web_search_daily_limit: int = Field(
+        default=100,
+        alias="AGENT_WEB_SEARCH_DAILY_LIMIT",
+    )
+    # ---- Python 沙箱 ----
+    # 沙箱执行次数/天；用尽后 run_python 工具当日自动降级移除。
+    agent_run_python_daily_limit: int = Field(
+        default=100,
+        alias="AGENT_RUN_PYTHON_DAILY_LIMIT",
+    )
+    # 墙钟超时：到期对沙箱进程组整体 SIGKILL，防止 CPU 限额外的 IO 阻塞挂死。
+    py_sandbox_wall_timeout_seconds: int = Field(
+        default=20,
+        alias="PY_SANDBOX_WALL_TIMEOUT_SECONDS",
+    )
+    # CPU 时间上限（RLIMIT_CPU），防死循环烧 CPU。
+    py_sandbox_cpu_seconds: int = Field(default=10, alias="PY_SANDBOX_CPU_SECONDS")
+    # 地址空间上限（RLIMIT_AS），防内存炸弹。
+    py_sandbox_memory_mb: int = Field(default=512, alias="PY_SANDBOX_MEMORY_MB")
+    # stdout 截断长度：超出部分丢弃，只回填给模型可消化的结果片段。
+    py_sandbox_output_max_chars: int = Field(
+        default=8000,
+        alias="PY_SANDBOX_OUTPUT_MAX_CHARS",
+    )
     auth_secret_key: str = Field(default="stock-ah-premium-local-secret", alias="AUTH_SECRET_KEY")
     auth_token_expire_hours: int = Field(default=168, alias="AUTH_TOKEN_EXPIRE_HOURS")
     auth_remember_login_expire_days: int = Field(
@@ -306,6 +350,18 @@ class Settings(BaseSettings):
         if self.qwen_api_key:
             return self.qwen_api_key.strip()
         return None
+
+    def resolve_bocha_api_key(self) -> str | None:
+        """按本机文件优先、环境变量兜底的顺序读取博查搜索 API Key。
+
+        Key 缺失时联网搜索工具会从 Agent 工具目录中移除并平滑降级，
+        因此这里只负责读取，不抛异常。
+
+        创建日期：2026-06-11
+        author: claude
+        """
+
+        return self._read_optional_secret(self.bocha_api_key_file, self.bocha_api_key)
 
     def resolve_image_gen_api_key(self) -> str | None:
         """按本机数据盘外密钥文件优先、环境变量兜底的顺序读取文生图 API Key。

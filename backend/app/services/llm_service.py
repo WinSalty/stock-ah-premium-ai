@@ -5,22 +5,44 @@ import logging
 import re
 from collections.abc import Iterator
 from dataclasses import dataclass
-from datetime import datetime, time, timedelta
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from time import perf_counter
 from typing import Any
 from uuid import uuid4
-from zoneinfo import ZoneInfo
 
 import httpx
-from sqlalchemy import func, select, text
+from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.core.config import Settings, get_settings
 from app.db.models.auth import AppUser
-from app.db.models.chat import LlmCallMetric
-from app.services.llm_metric_definitions import phase_description, phase_label
+
+# 通用常量与限流异常已迁移至 llm_client；同名 as 别名为显式 re-export，
+# 保持 routes_chat、推送服务与测试的旧 import 路径在过渡期可用。
+from app.services.llm_client import (
+    DEFAULT_CHAT_MODEL as DEFAULT_CHAT_MODEL,
+)
+from app.services.llm_client import (
+    LLM_CHAT_TIMEOUT_SECONDS as LLM_CHAT_TIMEOUT_SECONDS,
+)
+from app.services.llm_client import (
+    LLM_LIMIT_EXCEEDED_MESSAGE as LLM_LIMIT_EXCEEDED_MESSAGE,
+)
+from app.services.llm_client import (
+    QWEN_CHAT_MODEL as QWEN_CHAT_MODEL,
+)
+from app.services.llm_client import (
+    SUPPORTED_CHAT_MODELS as SUPPORTED_CHAT_MODELS,
+)
+from app.services.llm_client import (
+    LlmCallTrace,
+    LlmClient,
+    LlmEndpoint,
+)
+from app.services.llm_client import (
+    LlmDailyLimitExceeded as LlmDailyLimitExceeded,
+)
 from app.services.market_data_orchestrator import (
     MAX_MARKET_DATA_STOCKS,
     MarketDataDemand,
@@ -31,31 +53,11 @@ from app.services.stock_identity_resolver import StockIdentity, StockIdentityRes
 
 logger = logging.getLogger(__name__)
 
-LLM_CHAT_TIMEOUT_SECONDS = 90.0
-LLM_STREAM_TIMEOUT_SECONDS = 240.0
-LLM_LIMIT_TIMEZONE = ZoneInfo("Asia/Shanghai")
-LLM_LIMIT_EXCEEDED_MESSAGE = (
-    "今日智能问答模型调用次数已达到项目日限额 100 次，请明天再试或联系管理员调整配置。"
-)
-LLM_EXTERNAL_CALL_PHASES = (
-    "question_router",
-    "stock_code_extraction",
-    "stock_disambiguation",
-    "generate_sql",
-    "repair_sql",
-    "answer",
-    "answer_stream",
-    "threshold_answer",
-    "threshold_answer_stream",
-)
-DEFAULT_CHAT_MODEL = "deepseek-v4-flash"
+# 端点、超时、限额、模型名等通用常量已迁移到 llm_client.py；
+# 这里仅保留问答业务自身的展示与裁剪口径。
 ANSWER_MARKET_ROW_LIMIT = 60
-DEEPSEEK_PRO_CHAT_MODEL = "deepseek-v4-pro"
-QWEN_CHAT_MODEL = "qwen3.6-flash"
-SUPPORTED_CHAT_MODELS = (DEFAULT_CHAT_MODEL, DEEPSEEK_PRO_CHAT_MODEL, QWEN_CHAT_MODEL)
 LLM_METRIC_TITLE_MAX_CHARS = 48
 LLM_METRIC_USER_NAME_MAX_CHARS = 64
-LLM_FALLBACK_HTTP_STATUS_CODES = {429, 500, 502, 503, 504}
 DIVIDEND_REINVESTMENT_ANSWER_MODE = "dividend_reinvestment"
 INVESTMENT_PREFERENCE_CLARIFICATION_MODE = "investment_preference_clarification"
 CONSERVATIVE_VALUE_RECOMMENDATION_MODE = "conservative_value_recommendation"
@@ -899,36 +901,6 @@ class ChatAnswer:
 
 
 @dataclass(frozen=True)
-class LlmEndpoint:
-    """OpenAI-compatible 模型调用端点。
-
-    创建日期：2026-05-04
-    author: sunshengxian
-    """
-
-    provider: str
-    base_url: str
-    api_key: str | None
-    model: str
-
-
-@dataclass(frozen=True)
-class LlmCallTrace:
-    """LLM 单轮调用日志上下文。
-
-    创建日期：2026-05-05
-    author: sunshengxian
-    """
-
-    question_id: str
-    phase: str
-    user_id: int | None = None
-    session_id: int | None = None
-    conversation_title: str | None = None
-    user_name: str | None = None
-
-
-@dataclass(frozen=True)
 class ThresholdRecommendationResult:
     """自选股阈值推荐的本地确定性计算结果。
 
@@ -985,14 +957,6 @@ class StockCodeExtractionResult:
     ambiguous: bool = False
 
 
-class LlmDailyLimitExceeded(Exception):
-    """LLM 项目级日调用限流异常。
-
-    创建日期：2026-05-05
-    author: sunshengxian
-    """
-
-
 class LlmService:
     """OpenAI-compatible LLM 问答服务。
 
@@ -1004,6 +968,9 @@ class LlmService:
         self.db = db
         self.settings = settings or get_settings()
         self.sql_guard = SqlGuardService()
+        # HTTP 调用、端点 fallback、日限额与调用指标统一走共享客户端；
+        # 不传 metric_session_factory，指标仍写入请求会话，保持旧链路行为不变。
+        self.llm_client = LlmClient(db, self.settings)
         self._metric_context_by_question_id: dict[str, tuple[str | None, str | None]] = {}
 
     def answer(
@@ -2443,78 +2410,20 @@ class LlmService:
         trace: LlmCallTrace | None = None,
         response_format: dict[str, str] | None = None,
     ) -> str:
-        endpoint = self._model_endpoint(model)
-        if not endpoint.api_key:
-            raise ValueError(f"{endpoint.provider} LLM 未配置 API Key")
-        try:
-            return self._chat_completion_with_endpoint(
-                endpoint,
-                prompt,
-                system_prompt,
-                temperature,
-                trace,
-                response_format,
-            )
-        except httpx.HTTPError as exc:
-            fallback_endpoint = self._fallback_endpoint(endpoint, exc)
-            if fallback_endpoint is None:
-                raise
-            logger.error(
-                "%s API 临时不可用，自动切换到 %s question_id=%s phase=%s",
-                endpoint.provider,
-                fallback_endpoint.provider,
-                self._trace_values(trace)[0],
-                self._trace_values(trace)[1],
-                exc_info=True,
-            )
-            return self._chat_completion_with_endpoint(
-                fallback_endpoint,
-                prompt,
-                system_prompt,
-                temperature,
-                trace,
-                response_format,
-            )
+        """委托共享客户端发起非流式调用（含端点 fallback 与指标落库）。
 
-    def _chat_completion_with_endpoint(
-        self,
-        endpoint: LlmEndpoint,
-        prompt: str,
-        system_prompt: str | None,
-        temperature: float,
-        trace: LlmCallTrace | None,
-        response_format: dict[str, str] | None = None,
-    ) -> str:
-        """按指定端点发起非流式调用，供主模型与备用模型复用。
-
-        创建日期：2026-05-08
-        author: sunshengxian
+        创建日期：2026-06-11
+        author: claude
         """
 
-        self._enforce_daily_llm_call_limit(endpoint, trace)
-        url = f"{endpoint.base_url.rstrip('/')}/chat/completions"
-        headers = {"Authorization": f"Bearer {endpoint.api_key}"}
-        messages: list[dict[str, str]] = []
-        if system_prompt:
-            messages.append({"role": "system", "content": system_prompt})
-        messages.append({"role": "user", "content": prompt})
-        payload = {
-            "model": endpoint.model,
-            "messages": messages,
-            "temperature": temperature,
-        }
-        if response_format is not None:
-            # 仅对结构化小任务透传 JSON 约束，普通回答仍保持模型默认输出口径。
-            payload["response_format"] = response_format
-        request_payload_json = self._metric_request_payload_json(payload)
-        started_at = perf_counter()
-        with httpx.Client(timeout=LLM_CHAT_TIMEOUT_SECONDS) as client:
-            response = client.post(url, headers=headers, json=payload)
-        self._raise_for_status(response, endpoint.provider)
-        body = response.json()
-        content = body["choices"][0]["message"]["content"]
-        self._log_llm_completion(endpoint, trace, started_at, content, request_payload_json)
-        return content
+        return self.llm_client.chat_completion(
+            prompt,
+            system_prompt=system_prompt,
+            model=model,
+            temperature=temperature,
+            trace=trace,
+            response_format=response_format,
+        )
 
     def _chat_completion_stream(
         self,
@@ -2526,305 +2435,67 @@ class LlmService:
         row_count: int = 0,
         total_phase: str = "stream_done",
     ) -> Iterator[str]:
-        endpoint = self._model_endpoint(model)
-        if not endpoint.api_key:
-            raise ValueError(f"{endpoint.provider} LLM 未配置 API Key")
-        return self._chat_completion_stream_with_fallback(
-            endpoint,
-            prompt,
-            system_prompt,
-            trace,
-            total_started_at,
-            row_count,
-            total_phase,
-        )
+        """委托共享客户端发起流式调用。
 
-    def _chat_completion_stream_with_fallback(
-        self,
-        endpoint: LlmEndpoint,
-        prompt: str,
-        system_prompt: str | None,
-        trace: LlmCallTrace | None,
-        total_started_at: float | None,
-        row_count: int,
-        total_phase: str,
-    ) -> Iterator[str]:
-        """执行流式调用，并在主模型繁忙时切换到备用 Qwen。
+        整轮总耗时指标依赖本服务的指标上下文缓存（会话标题、用户名），
+        因此通过 on_stream_complete 回调在流结束后由本服务登记。
 
-        创建日期：2026-05-08
-        author: sunshengxian
+        创建日期：2026-06-11
+        author: claude
         """
 
-        try:
-            yield from self._chat_completion_stream_once(
-                endpoint,
-                prompt,
-                system_prompt,
-                trace,
-                total_started_at,
-                row_count,
-                total_phase,
-            )
-        except httpx.HTTPError as exc:
-            fallback_endpoint = self._fallback_endpoint(endpoint, exc)
-            if fallback_endpoint is None:
-                raise
-            logger.error(
-                "%s 流式 API 临时不可用，自动切换到 %s question_id=%s phase=%s",
-                endpoint.provider,
-                fallback_endpoint.provider,
-                self._trace_values(trace)[0],
-                self._trace_values(trace)[1],
-                exc_info=True,
-            )
-            yield from self._chat_completion_stream_once(
-                fallback_endpoint,
-                prompt,
-                system_prompt,
-                trace,
-                total_started_at,
-                row_count,
-                total_phase,
-            )
-
-    def _chat_completion_stream_once(
-        self,
-        endpoint: LlmEndpoint,
-        prompt: str,
-        system_prompt: str | None,
-        trace: LlmCallTrace | None,
-        total_started_at: float | None,
-        row_count: int,
-        total_phase: str,
-    ) -> Iterator[str]:
-        """按指定端点发起一次流式调用，不在本层重试。
-
-        创建日期：2026-05-08
-        author: sunshengxian
-        """
-
-        self._enforce_daily_llm_call_limit(endpoint, trace)
-        url = f"{endpoint.base_url.rstrip('/')}/chat/completions"
-        headers = {"Authorization": f"Bearer {endpoint.api_key}"}
-        messages: list[dict[str, str]] = []
-        if system_prompt:
-            messages.append({"role": "system", "content": system_prompt})
-        messages.append({"role": "user", "content": prompt})
-        payload = {
-            "model": endpoint.model,
-            "messages": messages,
-            "temperature": 0.1,
-            "stream": True,
-        }
-        request_payload_json = self._metric_request_payload_json(payload)
-        started_at = perf_counter()
-        first_chunk_at: float | None = None
-        chunk_count = 0
-        char_count = 0
-        response_parts: list[str] = []
-        with httpx.Client(timeout=LLM_STREAM_TIMEOUT_SECONDS) as client:
-            with client.stream("POST", url, headers=headers, json=payload) as response:
-                self._raise_for_status(response, endpoint.provider)
-                for line in response.iter_lines():
-                    if not line.startswith("data:"):
-                        continue
-                    data = line.removeprefix("data:").strip()
-                    if data == "[DONE]":
-                        break
-                    chunk = json.loads(data)
-                    delta = chunk["choices"][0].get("delta", {})
-                    content = delta.get("content")
-                    if content:
-                        now = perf_counter()
-                        if first_chunk_at is None:
-                            first_chunk_at = now
-                            self._log_llm_first_chunk(
-                                endpoint,
-                                trace,
-                                started_at,
-                                request_payload_json,
-                            )
-                        chunk_count += 1
-                        char_count += len(content)
-                        response_parts.append(content)
-                        yield content
-        self._log_llm_stream_done(
-            endpoint,
-            trace,
-            started_at,
-            first_chunk_at,
-            chunk_count,
-            char_count,
-            request_payload_json,
-            "".join(response_parts),
-        )
+        on_stream_complete = None
         if total_started_at is not None and trace is not None:
-            self._log_total_elapsed(
-                total_phase,
-                trace.question_id,
-                endpoint.model,
-                total_started_at,
-                row_count,
-                user_id=trace.user_id,
-                session_id=trace.session_id,
-            )
+
+            def on_stream_complete(endpoint_model: str) -> None:
+                self._log_total_elapsed(
+                    total_phase,
+                    trace.question_id,
+                    endpoint_model,
+                    total_started_at,
+                    row_count,
+                    user_id=trace.user_id,
+                    session_id=trace.session_id,
+                )
+
+        return self.llm_client.chat_completion_stream(
+            prompt,
+            system_prompt=system_prompt,
+            model=model,
+            trace=trace,
+            on_stream_complete=on_stream_complete,
+        )
 
     def _normalize_chat_model(self, model: str | None) -> str:
-        """转换为 OpenAI-compatible API 支持的模型名。
+        """转换为 OpenAI-compatible API 支持的模型名（委托共享客户端）。
 
         创建日期：2026-05-04
         author: sunshengxian
         """
 
-        if not model:
-            return DEFAULT_CHAT_MODEL
-        normalized = model.strip()
-        if normalized.startswith("deepseek-v4-pro"):
-            return "deepseek-v4-pro"
-        if normalized.startswith("deepseek-v4-flash"):
-            return "deepseek-v4-flash"
-        return normalized
+        return self.llm_client.normalize_chat_model(model)
 
     def _model_endpoint(self, model: str | None = None) -> LlmEndpoint:
-        """根据模型名选择 DeepSeek 或 Qwen 调用端点。
+        """根据模型名选择 DeepSeek 或 Qwen 调用端点（委托共享客户端）。
 
         创建日期：2026-05-04
         author: sunshengxian
         """
 
-        normalized = self._normalize_chat_model(model or self.settings.llm_model)
-        if normalized.startswith("qwen"):
-            return LlmEndpoint(
-                provider="Qwen",
-                base_url=self.settings.qwen_base_url,
-                api_key=self.settings.resolve_qwen_api_key(),
-                model=normalized,
-            )
-        return LlmEndpoint(
-            provider="DeepSeek",
-            base_url=self.settings.llm_base_url,
-            api_key=self.settings.resolve_llm_api_key(),
-            model=normalized,
-        )
-
-    def _fallback_endpoint(
-        self,
-        endpoint: LlmEndpoint,
-        exc: httpx.HTTPError,
-    ) -> LlmEndpoint | None:
-        """在主模型临时不可用时选择备用端点。
-
-        创建日期：2026-05-08
-        author: sunshengxian
-        """
-
-        if endpoint.provider != "DeepSeek":
-            return None
-        if not self._is_retryable_llm_error(exc):
-            return None
-        fallback = self._model_endpoint(QWEN_CHAT_MODEL)
-        if not fallback.api_key:
-            return None
-        return fallback
-
-    def _is_retryable_llm_error(self, exc: httpx.HTTPError) -> bool:
-        """判断外部模型错误是否适合透明切到备用模型。
-
-        创建日期：2026-05-08
-        author: sunshengxian
-        """
-
-        if isinstance(exc, (httpx.TimeoutException, httpx.NetworkError)):
-            return True
-        if isinstance(exc, httpx.HTTPStatusError):
-            return exc.response.status_code in LLM_FALLBACK_HTTP_STATUS_CODES
-        return False
-
-    def _raise_for_status(self, response: httpx.Response, provider: str) -> None:
-        try:
-            response.raise_for_status()
-        except httpx.HTTPStatusError:
-            try:
-                body = response.text
-            except httpx.ResponseNotRead:
-                body = response.read().decode("utf-8", errors="replace")
-            logger.error(
-                "%s API 请求失败 status=%s body=%s",
-                provider,
-                response.status_code,
-                body[:2000],
-            )
-            raise
+        return self.llm_client.model_endpoint(model)
 
     def _enforce_daily_llm_call_limit(
         self,
         endpoint: LlmEndpoint,
         trace: LlmCallTrace | None,
     ) -> None:
-        """检查项目级 LLM 日调用限额。
+        """检查项目级 LLM 日调用限额（委托共享客户端）。
 
         创建日期：2026-05-05
         author: sunshengxian
         """
 
-        limit = self.settings.llm_daily_call_limit
-        if limit <= 0:
-            return
-        used_count = self._today_external_llm_call_count()
-        if used_count < limit:
-            return
-        question_id, phase = self._trace_values(trace)
-        logger.error(
-            "LLM 日调用限额已用尽 question_id=%s phase=%s provider=%s model=%s used=%s limit=%s",
-            question_id,
-            phase,
-            endpoint.provider,
-            endpoint.model,
-            used_count,
-            limit,
-        )
-        raise LlmDailyLimitExceeded(self._daily_limit_message(limit))
-
-    def _today_external_llm_call_count(self) -> int:
-        """统计当天已发生的外部 LLM 主调用次数。
-
-        创建日期：2026-05-05
-        author: sunshengxian
-        """
-
-        now = datetime.now(LLM_LIMIT_TIMEZONE).replace(tzinfo=None)
-        today_start = datetime.combine(now.date(), time.min)
-        tomorrow_start = today_start + timedelta(days=1)
-        statement = select(func.count(LlmCallMetric.id)).where(
-            LlmCallMetric.phase.in_(LLM_EXTERNAL_CALL_PHASES),
-            LlmCallMetric.created_at >= today_start,
-            LlmCallMetric.created_at < tomorrow_start,
-        )
-        try:
-            raw_count = self.db.scalar(statement)
-        except Exception:
-            self.db.rollback()
-            logger.error("LLM 日调用次数统计失败，临时放行本次模型调用", exc_info=True)
-            return 0
-        if isinstance(raw_count, int):
-            return raw_count
-        if isinstance(raw_count, float):
-            return int(raw_count)
-        return 0
-
-    def _daily_limit_message(self, limit: int) -> str:
-        """生成可展示的 LLM 日限流提示。
-
-        创建日期：2026-05-05
-        author: sunshengxian
-        """
-
-        if limit == 100:
-            return LLM_LIMIT_EXCEEDED_MESSAGE
-        return (
-            f"今日智能问答模型调用次数已达到项目日限额 {limit} 次，"
-            "请明天再试或联系管理员调整配置。"
-        )
+        self.llm_client.enforce_daily_call_limit(endpoint, trace)
 
     def _new_trace_id(self) -> str:
         """生成单轮问答唯一追踪 ID，不暴露问题原文。
@@ -2834,14 +2505,6 @@ class LlmService:
         """
 
         return uuid4().hex
-
-    def _trace_values(
-        self,
-        trace: LlmCallTrace | None,
-    ) -> tuple[str, str]:
-        if trace is None:
-            return "-", "-"
-        return trace.question_id, trace.phase
 
     def _trace_scope(self, context: dict[str, Any]) -> tuple[int | None, int | None]:
         """从问答上下文读取用户和会话范围。
@@ -2924,15 +2587,6 @@ class LlmService:
         except (TypeError, ValueError):
             return None
 
-    def _metric_request_payload_json(self, payload: dict[str, Any]) -> str:
-        """序列化实际发送给 LLM 的请求参数，不包含鉴权头和 API Key。
-
-        创建日期：2026-05-05
-        author: sunshengxian
-        """
-
-        return json.dumps(payload, ensure_ascii=False, default=str)
-
     def _record_llm_metric(
         self,
         *,
@@ -2954,39 +2608,31 @@ class LlmService:
         request_payload_json: str | None = None,
         response_content: str | None = None,
     ) -> None:
-        """记录 LLM 调用耗时指标，失败不影响问答主流程。
+        """记录 LLM 调用耗时指标（委托共享客户端），失败不影响问答主流程。
 
         创建日期：2026-05-05
         author: sunshengxian
         """
 
-        metric = LlmCallMetric(
-            question_id=question_id,
-            conversation_title=conversation_title,
-            user_id=user_id,
-            user_name=user_name,
-            session_id=session_id,
+        self.llm_client.record_metric(
             phase=phase,
-            phase_label=phase_label(phase),
-            phase_description=phase_description(phase),
+            question_id=question_id,
+            user_id=user_id,
+            session_id=session_id,
+            conversation_title=conversation_title,
+            user_name=user_name,
             provider=provider,
             model=model,
-            success=1 if success else 0,
             elapsed_ms=elapsed_ms,
             first_chunk_ms=first_chunk_ms,
             output_chars=output_chars,
             chunk_count=chunk_count,
             row_count=row_count,
+            success=success,
+            error_message=error_message,
             request_payload_json=request_payload_json,
             response_content=response_content,
-            error_message=error_message[:512] if error_message else None,
         )
-        try:
-            self.db.add(metric)
-            self.db.commit()
-        except Exception:
-            self.db.rollback()
-            logger.error("LLM 调用耗时指标落库失败", exc_info=True)
 
     def _log_llm_completion(
         self,
@@ -2996,111 +2642,19 @@ class LlmService:
         content: str,
         request_payload_json: str,
     ) -> None:
-        question_id, phase = self._trace_values(trace)
-        elapsed_ms = (perf_counter() - started_at) * 1000
-        logger.info(
-            "LLM 调用完成 question_id=%s phase=%s provider=%s model=%s elapsed_ms=%.1f "
-            "output_chars=%s",
-            question_id,
-            phase,
-            endpoint.provider,
-            endpoint.model,
-            elapsed_ms,
-            len(content),
-        )
-        if trace is not None:
-            self._record_llm_metric(
-                phase=trace.phase,
-                question_id=trace.question_id,
-                user_id=trace.user_id,
-                session_id=trace.session_id,
-                conversation_title=trace.conversation_title,
-                user_name=trace.user_name,
-                provider=endpoint.provider,
-                model=endpoint.model,
-                elapsed_ms=elapsed_ms,
-                output_chars=len(content),
-                request_payload_json=request_payload_json,
-                response_content=content,
-                success=True,
-            )
+        """记录非流式调用完成日志与指标（委托共享客户端）。
 
-    def _log_llm_first_chunk(
-        self,
-        endpoint: LlmEndpoint,
-        trace: LlmCallTrace | None,
-        started_at: float,
-        request_payload_json: str,
-    ) -> None:
-        question_id, phase = self._trace_values(trace)
-        first_chunk_ms = (perf_counter() - started_at) * 1000
-        logger.info(
-            "LLM 流式首包 question_id=%s phase=%s provider=%s model=%s first_chunk_ms=%.1f",
-            question_id,
-            phase,
-            endpoint.provider,
-            endpoint.model,
-            first_chunk_ms,
-        )
-        if trace is not None:
-            self._record_llm_metric(
-                phase=f"{trace.phase}_first_chunk",
-                question_id=trace.question_id,
-                user_id=trace.user_id,
-                session_id=trace.session_id,
-                conversation_title=trace.conversation_title,
-                user_name=trace.user_name,
-                provider=endpoint.provider,
-                model=endpoint.model,
-                first_chunk_ms=first_chunk_ms,
-                request_payload_json=request_payload_json,
-                success=True,
-            )
+        创建日期：2026-05-05
+        author: sunshengxian
+        """
 
-    def _log_llm_stream_done(
-        self,
-        endpoint: LlmEndpoint,
-        trace: LlmCallTrace | None,
-        started_at: float,
-        first_chunk_at: float | None,
-        chunk_count: int,
-        char_count: int,
-        request_payload_json: str,
-        response_content: str,
-    ) -> None:
-        question_id, phase = self._trace_values(trace)
-        elapsed_ms = (perf_counter() - started_at) * 1000
-        first_chunk_ms = (first_chunk_at - started_at) * 1000 if first_chunk_at else None
-        logger.info(
-            "LLM 流式完成 question_id=%s phase=%s provider=%s model=%s elapsed_ms=%.1f "
-            "first_chunk_ms=%s chunks=%s output_chars=%s",
-            question_id,
-            phase,
-            endpoint.provider,
-            endpoint.model,
-            elapsed_ms,
-            f"{first_chunk_ms:.1f}" if first_chunk_ms is not None else "-",
-            chunk_count,
-            char_count,
+        self.llm_client.log_completion(
+            endpoint,
+            trace,
+            started_at,
+            content,
+            request_payload_json,
         )
-        if trace is not None:
-            self._record_llm_metric(
-                phase=trace.phase,
-                question_id=trace.question_id,
-                user_id=trace.user_id,
-                session_id=trace.session_id,
-                conversation_title=trace.conversation_title,
-                user_name=trace.user_name,
-                provider=endpoint.provider,
-                model=endpoint.model,
-                elapsed_ms=elapsed_ms,
-                first_chunk_ms=first_chunk_ms,
-                output_chars=char_count,
-                chunk_count=chunk_count,
-                request_payload_json=request_payload_json,
-                response_content=response_content,
-                success=True,
-            )
 
     def _log_total_elapsed(
         self,

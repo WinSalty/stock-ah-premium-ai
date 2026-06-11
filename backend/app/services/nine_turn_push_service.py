@@ -42,8 +42,8 @@ from app.services.limit_up_push_service import (
     DELIVERY_STATUS_SKIPPED,
     LLM_ERROR_RESPONSE_LOG_LIMIT,
 )
+from app.services.llm_client import LLM_CHAT_TIMEOUT_SECONDS
 from app.services.llm_metric_definitions import phase_description, phase_label
-from app.services.llm_service import LLM_CHAT_TIMEOUT_SECONDS
 from app.services.notification_service import NotificationService
 from app.services.tushare_client import TushareClient
 

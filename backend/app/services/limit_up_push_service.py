@@ -44,8 +44,8 @@ from app.schemas.limit_up_push import (
 )
 from app.services.date_utils import format_tushare_date, parse_tushare_date
 from app.services.decimal_utils import to_decimal
+from app.services.llm_client import LLM_CHAT_TIMEOUT_SECONDS
 from app.services.llm_metric_definitions import phase_description, phase_label
-from app.services.llm_service import LLM_CHAT_TIMEOUT_SECONDS
 from app.services.notification_service import NotificationService
 from app.services.tushare_client import TushareClient
 

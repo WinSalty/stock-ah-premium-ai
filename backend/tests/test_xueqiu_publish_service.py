@@ -348,7 +348,7 @@ def test_chat_answer_can_be_saved_as_xueqiu_draft(monkeypatch) -> None:
         )
 
     monkeypatch.setattr(
-        "app.services.llm_service.LlmService._chat_completion",
+        "app.services.llm_client.LlmClient.chat_completion",
         fake_chat_completion,
     )
     monkeypatch.setattr(
@@ -432,7 +432,7 @@ def test_chat_answer_existing_draft_is_refreshed_as_html(monkeypatch) -> None:
         return {"id": "old-chat-draft-id"}
 
     monkeypatch.setattr(
-        "app.services.llm_service.LlmService._chat_completion",
+        "app.services.llm_client.LlmClient.chat_completion",
         fake_chat_completion,
     )
     monkeypatch.setattr(service, "_save_draft", fake_save_draft)
@@ -513,7 +513,7 @@ def test_chat_answer_uses_default_cover_when_payload_cover_is_empty(monkeypatch)
         return {"id": "chat-draft-id"}
 
     monkeypatch.setattr(
-        "app.services.llm_service.LlmService._chat_completion",
+        "app.services.llm_client.LlmClient.chat_completion",
         fake_chat_completion,
     )
     monkeypatch.setattr(service, "_save_draft", fake_save_draft)
@@ -553,7 +553,7 @@ def test_chat_answer_rejects_table_html_for_xueqiu_draft(monkeypatch) -> None:
     service = XueqiuPublishService(db, Settings())
 
     monkeypatch.setattr(
-        "app.services.llm_service.LlmService._chat_completion",
+        "app.services.llm_client.LlmClient.chat_completion",
         lambda *_args, **_kwargs: (
             "<h2>核心结论</h2><table><tbody><tr><td>ROE</td><td>稳定</td></tr></tbody></table>"
         ),
@@ -638,7 +638,7 @@ def test_chat_answer_title_is_limited_to_xueqiu_max_length(monkeypatch) -> None:
     service = XueqiuPublishService(db, Settings())
 
     monkeypatch.setattr(
-        "app.services.llm_service.LlmService._chat_completion",
+        "app.services.llm_client.LlmClient.chat_completion",
         lambda *_args, **_kwargs: (
             "招商银行财务质量估值红利现金流风险反证条件观察和配置建议超长标题"
             "继续追加直到超过雪球标题限制再次追加更多文字"

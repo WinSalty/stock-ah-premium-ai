@@ -1,7 +1,7 @@
 # 智能问答模块 Agent 化重构设计与开发计划
 
 - 创建日期：2026-06-11
-- 更新日期：2026-06-11（v2：迁移策略由"灰度共存"改为"直接彻底替换"；补全开发落地细节）
+- 更新日期：2026-06-12（v3：实施前对照代码现状全面评审，新增第八节评审修订；v2：迁移策略由"灰度共存"改为"直接彻底替换"；补全开发落地细节）
 - 关联文档：`chat-module-code-review-and-optimization-plan.md`（2026-06-10 代码评审）
 - 已确认选型：
   - 联网搜索：博查 Bocha API（key 文件 `/Users/salty/codeProject/ai/doc/博查-apikey.txt`）
@@ -442,3 +442,26 @@ ALTER TABLE llm_call_metric
 4. **沙箱逃逸风险**：subprocess 隔离强度低于容器。对策：四层约束叠加 + 全量审计留痕；`SandboxExecutor` 接口化，后续可换 Docker 实现。
 5. **外部内容注入风险**：搜索/网页内容携带指令性文本。对策：数据块包裹 + 提示词声明 + 协议词转义 + 注入用例长期回归。
 6. **提示词漂移风险**：系统提示词集中承载业务规则后改动影响面大。对策：`PROMPT_VERSION` 写入指标，每次改动跑金标集并按版本对比效果。
+
+## 八、实施前评审修订（v3，2026-06-12）
+
+实施前对照代码现状（含上一轮会话遗留的阶段 0 未提交改动）逐节核对本文档，结论：总体设计成立、2.3 删除边界 / 3.11 迁移映射 / 第四节旧评审编号映射核对无误，可按计划实施。以下为必须落实的修订点与口径澄清，实施时以本节为准：
+
+### 8.1 设计修订（影响实现方案）
+
+1. **`llm_client` 需扩展 messages+tools 接口（归入 S1-1）**：现有 `LlmClient.chat_completion(prompt, system_prompt, ...)` 是单轮 prompt 形态，不支持 messages 数组、`tools` 参数与 `tool_calls` 解析。Agent 主循环（3.1 伪代码）依赖的 `chat_completion(messages, tools=..., stream=False)` 需在 `llm_client.py` 新增（非流式返回含 tool_calls 的结构化消息；流式接受 messages 数组），端点 fallback、日限额、指标落库三件套在新接口内同样生效。旧 prompt 形态接口保留给雪球发布等既有调用方。
+2. **日限额 phase 口径必须随切换更新**：`llm_client.LLM_EXTERNAL_CALL_PHASES` 目前只含旧链路 phase（question_router/answer 等）。S1-3 切换 AgentEngine 时必须把 `agent_iteration` 等新 phase 计入，否则 `llm_daily_call_limit` 对新引擎完全失效（防异常循环烧钱的安全网失守）；S1-7 删除旧链路后同步移除已退役 phase。
+3. **`recommend_threshold` 改为零参数工具**：3.2 原设计让模型把 `watchlist_context` 大对象抄写为工具入参，存在数字抄写幻觉风险。改为：前端透传的 `threshold_recommendation` 上下文由引擎写入 turn_state，工具零参数直接读取；模型只决定"何时调用"。前端透传协议不变。
+4. **ChartSpec 的 kline 类型矛盾修正**：3.5 中 `ChartSeries.values: list[float | None]` 与"kline 时为四元组列表"矛盾。pydantic 模型改为 `values: list[float | None] | list[list[float]]`，并按 `chart_type` 联动校验（kline 必须四元组列表且每组长度为 4，其余图型必须标量列表）。
+5. **前端改造范围补充两处调用方**：3.6 清单遗漏 `OverviewPage.tsx`（约 L707）与 `PremiumPage.tsx`（约 L368）的阈值推荐入口——两者直接调 `sendChatMessageStream` 且消费 `THRESHOLD_RECOMMENDATION_PROGRESS_STEPS` 假进度。S1-5 需把这两页纳入：进度展示改为消费真实 `tool_start/tool_result` 事件（或降级为通用 Spin），假进度常量随 2.3 删除清单一并移除。
+6. **模型选择口径**：Agent 化后迭代与最终回答统一使用 `agent_model`（pro 档，工具调用质量优先）。请求体 `llm_model` 字段为接口兼容保留但不再生效；S1-5 前端隐藏模型选择器（或改为只读展示），避免用户选 flash 档劣化工具调用质量。
+7. **E6（前端 turn 配对）提前到 S1-5**：历史回放要渲染轨迹与图表，`buildTurns` 本来就要重写，按消息相邻配对一次到位，避免阶段 5 对同一段代码二次返工。S5-3 仅保留 E5 魔法字符串治理。
+8. **SqlGuard 现状更正（S1-2 工作量澄清）**：语句类型主判定现已是 sqlglot AST（`isinstance(exp.Select)`），LIMIT 注入也是 AST 改写。实际改造点收敛为三处：(a) 移除会误伤字符串字面量的关键字黑名单正则（仅保留为注释/多语句的粗筛或直接删除）；(b) 白名单比对时排除 CTE 别名，使 `WITH ... AS` 可用；(c) 多语句判定改用 sqlglot 解析结果而非 `";" in sql`。
+9. **非流式失败落库的 HTTP 契约**：统一"失败也落一条 assistant 消息"后，非流式 `create_message` 保持现有状态码行为（限流 429、其他 502）不变，仅在抛出前补落库，避免破坏移动端等潜在调用方对状态码的依赖。
+
+### 8.2 实施口径澄清（不改设计）
+
+10. **金标集基线跑批的成本与配额冲突**：50~80 条用例 × 旧链路单轮 4~5 次外部调用 ≈ 200~400 次，超过 `llm_daily_call_limit=100` 的单日上限且产生真实费用。`run-golden-set.sh` 需支持按类别/子集采样与断点续跑；全量基线跑批由使用者择机手动触发，不在开发流程中自动执行。S1-6 的"命中率不低于基线"验收在基线报告产出前以"业务规则用例（推荐/分红再投/拒答边界）逐条人工核验 + 单测锁定"替代。
+11. **沙箱内存限制的平台差异**：`RLIMIT_AS` 在 macOS（本机开发环境）上行为不可靠，且 pandas import 自身即占用数百 MB 地址空间。`sandbox_runner.py` 设置 rlimit 失败时容错降级（记录日志，依赖墙钟超时 + CPU 限额兜底）；内存硬限制仅在 Linux 部署机严格生效；"超内存被杀"安全用例按平台条件跳过。
+12. **阶段 0 实际进度**：S0-1 与 S0-3 已在上一轮会话基本完成（工作区未提交改动）：`llm_client.py` 已抽取且行为与旧实现逐行对齐、雪球发布已切 `LlmClient`（含独立指标会话）、两个推送服务已解除对 `llm_service` 的 import 依赖（其自建 reasoning 调用按最小改动原则暂不强制迁移）、13 项配置 + `resolve_bocha_api_key()` + `.env.example` + 配置单测均就位。遗留：S0-2 金标集未建设；问答主链路的 `LlmClient` 暂未传 `metric_session_factory`（有意保持旧链路行为不变，Agent 引擎接入时显式传 `SessionLocal`，R3 在新引擎中终态落地）。
+13. **alembic 命名沿用项目惯例**：revision id 采用 `YYYYMMDD_NNNN` 手写递增（当前最新 `20260605_0047`），3.7 的迁移按此命名。

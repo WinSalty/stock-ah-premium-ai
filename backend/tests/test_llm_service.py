@@ -1573,7 +1573,7 @@ def test_deepseek_model_alias_uses_supported_api_name(monkeypatch) -> None:
             captured_payload.update(json)
             return FakeResponse()
 
-    monkeypatch.setattr("app.services.llm_service.httpx.Client", FakeClient)
+    monkeypatch.setattr("app.services.llm_client.httpx.Client", FakeClient)
     service = LlmService(
         Mock(),
         settings=Settings(
@@ -1643,7 +1643,7 @@ def test_qwen_chat_model_uses_qwen_endpoint(monkeypatch) -> None:
             captured["payload"] = json
             return FakeResponse()
 
-    monkeypatch.setattr("app.services.llm_service.httpx.Client", FakeClient)
+    monkeypatch.setattr("app.services.llm_client.httpx.Client", FakeClient)
     service = LlmService(
         Mock(),
         settings=Settings(
@@ -1704,7 +1704,7 @@ def test_uncertain_question_scope_uses_default_deepseek_router(monkeypatch) -> N
             captured_payload.update(json)
             return FakeResponse()
 
-    monkeypatch.setattr("app.services.llm_service.httpx.Client", FakeClient)
+    monkeypatch.setattr("app.services.llm_client.httpx.Client", FakeClient)
     service = LlmService(
         Mock(),
         settings=Settings(
@@ -1781,7 +1781,7 @@ def test_question_router_falls_back_to_qwen_when_deepseek_busy(monkeypatch) -> N
                 return FakeResponse(503, "Service is too busy")
             return FakeResponse(200, "ok")
 
-    monkeypatch.setattr("app.services.llm_service.httpx.Client", FakeClient)
+    monkeypatch.setattr("app.services.llm_client.httpx.Client", FakeClient)
     service = LlmService(
         Mock(),
         settings=Settings(
@@ -1854,7 +1854,7 @@ def test_deepseek_busy_falls_back_to_qwen(monkeypatch) -> None:
                 return FakeResponse(503, "Service is too busy")
             return FakeResponse(200, "ok")
 
-    monkeypatch.setattr("app.services.llm_service.httpx.Client", FakeClient)
+    monkeypatch.setattr("app.services.llm_client.httpx.Client", FakeClient)
     service = LlmService(
         Mock(),
         settings=Settings(
