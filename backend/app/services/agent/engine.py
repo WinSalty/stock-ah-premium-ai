@@ -346,7 +346,8 @@ class AgentEngine:
             session_id=turn_state.session_id,
             conversation_title=turn_state.conversation_title,
             user_name=turn_state.user_name,
-            provider="AgentTool",
+            # 工具可通过 extra 标注真实外部供应商（如博查），便于按 provider 看成本。
+            provider=str(result.extra.get("metric_provider") or "AgentTool"),
             elapsed_ms=round(result.elapsed_ms, 1),
             output_chars=len(result.payload or ""),
             success=bool(result.ok),
