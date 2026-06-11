@@ -25,6 +25,10 @@ from sqlalchemy.orm import Session
 
 from app.core.config import Settings, get_settings
 from app.db.models.chat import LlmCallMetric
+
+# 日限额异常的单点定义在 agent.budget（设计 2.3：异常类迁入 budget），
+# 此处 re-export 维持既有 import 路径（llm_service / routes 过渡期继续可用）。
+from app.services.agent.budget import LlmDailyLimitExceeded as LlmDailyLimitExceeded
 from app.services.llm_metric_definitions import phase_description, phase_label
 
 logger = logging.getLogger(__name__)
@@ -38,7 +42,10 @@ LLM_LIMIT_EXCEEDED_MESSAGE = (
     "今日智能问答模型调用次数已达到项目日限额 100 次，请明天再试或联系管理员调整配置。"
 )
 # 计入项目日限额的外部模型主调用阶段；first_chunk 等派生指标不重复计数。
+# agent_iteration 是 Agent 引擎的迭代调用 phase：必须计入，否则日限额安全网
+# 对新引擎失效（设计 v3 修订 2）；旧链路 phase 在旧链路退役后移除。
 LLM_EXTERNAL_CALL_PHASES = (
+    "agent_iteration",
     "question_router",
     "stock_code_extraction",
     "stock_disambiguation",
@@ -85,14 +92,37 @@ class LlmCallTrace:
     session_id: int | None = None
     conversation_title: str | None = None
     user_name: str | None = None
+    # Agent 系统提示词版本号（创建日期：2026-06-12，author: claude）：
+    # 由 Agent 引擎在构造 trace 时填入，随指标落库到 llm_call_metric.prompt_version，
+    # 用于按版本对比提示词迭代效果；旧链路不传，保持 None 向后兼容。
+    prompt_version: str | None = None
 
 
-class LlmDailyLimitExceeded(Exception):
-    """LLM 项目级日调用限流异常。
+@dataclass(frozen=True)
+class LlmToolCallRequest:
+    """LLM 响应中的单次工具调用请求（OpenAI function calling 协议）。
 
-    创建日期：2026-05-05
-    author: sunshengxian
+    创建日期：2026-06-12
+    author: claude
     """
+
+    call_id: str
+    name: str
+    arguments_json: str
+
+
+@dataclass(frozen=True)
+class LlmChatResult:
+    """messages 形态调用的结构化响应：正文与工具调用请求二选一或并存。
+
+    创建日期：2026-06-12
+    author: claude
+    """
+
+    content: str | None
+    tool_calls: tuple[LlmToolCallRequest, ...]
+    provider: str
+    model: str
 
 
 class LlmClient:
@@ -283,6 +313,222 @@ class LlmClient:
         content = body["choices"][0]["message"]["content"]
         self.log_completion(endpoint, trace, started_at, content, request_payload_json)
         return content
+
+    # ------------------------------------------------------------------
+    # messages 形态调用（Agent 引擎用：支持工具目录与 tool_calls 解析）
+    # ------------------------------------------------------------------
+
+    def chat_completion_messages(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
+        model: str | None = None,
+        temperature: float = 0.1,
+        trace: LlmCallTrace | None = None,
+        tool_choice: str = "auto",
+    ) -> LlmChatResult:
+        """以 messages 数组发起非流式调用，返回含 tool_calls 的结构化结果。
+
+        与 prompt 形态接口共用端点选择、备用端点 fallback、日限额与指标落库；
+        Agent 引擎的迭代调用走这里（phase=agent_iteration）。
+
+        创建日期：2026-06-12
+        author: claude
+        """
+
+        endpoint = self.model_endpoint(model)
+        if not endpoint.api_key:
+            raise ValueError(f"{endpoint.provider} LLM 未配置 API Key")
+        try:
+            return self._chat_completion_messages_with_endpoint(
+                endpoint, messages, tools, temperature, trace, tool_choice
+            )
+        except httpx.HTTPError as exc:
+            fallback_endpoint = self.fallback_endpoint(endpoint, exc)
+            if fallback_endpoint is None:
+                raise
+            logger.error(
+                "%s API 临时不可用，自动切换到 %s question_id=%s phase=%s",
+                endpoint.provider,
+                fallback_endpoint.provider,
+                self._trace_values(trace)[0],
+                self._trace_values(trace)[1],
+                exc_info=True,
+            )
+            return self._chat_completion_messages_with_endpoint(
+                fallback_endpoint, messages, tools, temperature, trace, tool_choice
+            )
+
+    def _chat_completion_messages_with_endpoint(
+        self,
+        endpoint: LlmEndpoint,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None,
+        temperature: float,
+        trace: LlmCallTrace | None,
+        tool_choice: str,
+    ) -> LlmChatResult:
+        """按指定端点执行 messages 形态调用并解析 tool_calls。
+
+        创建日期：2026-06-12
+        author: claude
+        """
+
+        self.enforce_daily_call_limit(endpoint, trace)
+        url = f"{endpoint.base_url.rstrip('/')}/chat/completions"
+        headers = {"Authorization": f"Bearer {endpoint.api_key}"}
+        payload: dict[str, Any] = {
+            "model": endpoint.model,
+            "messages": messages,
+            "temperature": temperature,
+        }
+        if tools:
+            payload["tools"] = tools
+            payload["tool_choice"] = tool_choice
+        request_payload_json = self._metric_request_payload_json(payload)
+        started_at = perf_counter()
+        with httpx.Client(timeout=LLM_CHAT_TIMEOUT_SECONDS) as client:
+            response = client.post(url, headers=headers, json=payload)
+        self._raise_for_status(response, endpoint.provider)
+        body = response.json()
+        message = body["choices"][0]["message"]
+        content = message.get("content")
+        tool_calls: list[LlmToolCallRequest] = []
+        for index, raw_call in enumerate(message.get("tool_calls") or []):
+            function = raw_call.get("function") or {}
+            tool_calls.append(
+                LlmToolCallRequest(
+                    # 个别 OpenAI 兼容端点可能缺 id：用序号兜底，保证回填配对成立。
+                    call_id=str(raw_call.get("id") or f"call_{index}"),
+                    name=str(function.get("name") or ""),
+                    arguments_json=str(function.get("arguments") or "{}"),
+                )
+            )
+        # 指标的响应内容：有正文记正文，纯工具调用记调用清单，便于耗时页排查。
+        metric_content = content or json.dumps(
+            [{"tool": call.name, "arguments": call.arguments_json} for call in tool_calls],
+            ensure_ascii=False,
+        )
+        self.log_completion(endpoint, trace, started_at, metric_content, request_payload_json)
+        return LlmChatResult(
+            content=content,
+            tool_calls=tuple(tool_calls),
+            provider=endpoint.provider,
+            model=endpoint.model,
+        )
+
+    def chat_completion_stream_messages(
+        self,
+        messages: list[dict[str, Any]],
+        model: str | None = None,
+        trace: LlmCallTrace | None = None,
+        on_stream_complete: Callable[[str], None] | None = None,
+    ) -> Iterator[str]:
+        """以 messages 数组发起流式调用（Agent 引擎最终回答用，phase=answer_stream）。
+
+        创建日期：2026-06-12
+        author: claude
+        """
+
+        endpoint = self.model_endpoint(model)
+        if not endpoint.api_key:
+            raise ValueError(f"{endpoint.provider} LLM 未配置 API Key")
+        return self._stream_messages_with_fallback(endpoint, messages, trace, on_stream_complete)
+
+    def _stream_messages_with_fallback(
+        self,
+        endpoint: LlmEndpoint,
+        messages: list[dict[str, Any]],
+        trace: LlmCallTrace | None,
+        on_stream_complete: Callable[[str], None] | None,
+    ) -> Iterator[str]:
+        """messages 流式调用 + 主端点繁忙时切换备用 Qwen。
+
+        创建日期：2026-06-12
+        author: claude
+        """
+
+        try:
+            yield from self._stream_messages_once(endpoint, messages, trace, on_stream_complete)
+        except httpx.HTTPError as exc:
+            fallback_endpoint = self.fallback_endpoint(endpoint, exc)
+            if fallback_endpoint is None:
+                raise
+            logger.error(
+                "%s 流式 API 临时不可用，自动切换到 %s question_id=%s phase=%s",
+                endpoint.provider,
+                fallback_endpoint.provider,
+                self._trace_values(trace)[0],
+                self._trace_values(trace)[1],
+                exc_info=True,
+            )
+            yield from self._stream_messages_once(
+                fallback_endpoint, messages, trace, on_stream_complete
+            )
+
+    def _stream_messages_once(
+        self,
+        endpoint: LlmEndpoint,
+        messages: list[dict[str, Any]],
+        trace: LlmCallTrace | None,
+        on_stream_complete: Callable[[str], None] | None,
+    ) -> Iterator[str]:
+        """按指定端点发起一次 messages 流式调用，不在本层重试。
+
+        创建日期：2026-06-12
+        author: claude
+        """
+
+        self.enforce_daily_call_limit(endpoint, trace)
+        url = f"{endpoint.base_url.rstrip('/')}/chat/completions"
+        headers = {"Authorization": f"Bearer {endpoint.api_key}"}
+        payload = {
+            "model": endpoint.model,
+            "messages": messages,
+            "temperature": 0.1,
+            "stream": True,
+        }
+        request_payload_json = self._metric_request_payload_json(payload)
+        started_at = perf_counter()
+        first_chunk_at: float | None = None
+        chunk_count = 0
+        char_count = 0
+        response_parts: list[str] = []
+        with httpx.Client(timeout=LLM_STREAM_TIMEOUT_SECONDS) as client:
+            with client.stream("POST", url, headers=headers, json=payload) as response:
+                self._raise_for_status(response, endpoint.provider)
+                for line in response.iter_lines():
+                    if not line.startswith("data:"):
+                        continue
+                    data = line.removeprefix("data:").strip()
+                    if data == "[DONE]":
+                        break
+                    chunk = json.loads(data)
+                    delta = chunk["choices"][0].get("delta", {})
+                    content = delta.get("content")
+                    if content:
+                        now = perf_counter()
+                        if first_chunk_at is None:
+                            first_chunk_at = now
+                            self.log_first_chunk(
+                                endpoint, trace, started_at, request_payload_json
+                            )
+                        chunk_count += 1
+                        char_count += len(content)
+                        response_parts.append(content)
+                        yield content
+        self.log_stream_done(
+            endpoint,
+            trace,
+            started_at,
+            first_chunk_at,
+            chunk_count,
+            char_count,
+            request_payload_json,
+            "".join(response_parts),
+        )
+        if on_stream_complete is not None:
+            on_stream_complete(endpoint.model)
 
     # ------------------------------------------------------------------
     # 流式调用
@@ -528,8 +774,12 @@ class LlmClient:
         error_message: str | None = None,
         request_payload_json: str | None = None,
         response_content: str | None = None,
+        prompt_version: str | None = None,
     ) -> None:
         """记录 LLM 调用耗时指标，失败不影响调用主流程。
+
+        prompt_version 为 Agent 系统提示词版本号（2026-06-12 新增，author: claude），
+        默认 None 以兼容所有既有调用方；仅 Agent 链路携带，用于提示词迭代效果对比。
 
         创建日期：2026-05-05
         author: sunshengxian
@@ -555,6 +805,8 @@ class LlmClient:
             request_payload_json=request_payload_json,
             response_content=response_content,
             error_message=error_message[:512] if error_message else None,
+            # Agent 提示词版本透传：非 Agent 链路为 None，列保持 NULL。
+            prompt_version=prompt_version,
         )
         if self._metric_session_factory is not None:
             # 独立短会话写指标：不污染调用方请求事务，commit 范围只覆盖指标本身。
@@ -613,6 +865,8 @@ class LlmClient:
                 request_payload_json=request_payload_json,
                 response_content=content,
                 success=True,
+                # 透传 Agent 提示词版本（2026-06-12，author: claude），旧链路为 None。
+                prompt_version=trace.prompt_version,
             )
 
     def log_first_chunk(
@@ -651,6 +905,8 @@ class LlmClient:
                 first_chunk_ms=first_chunk_ms,
                 request_payload_json=request_payload_json,
                 success=True,
+                # 透传 Agent 提示词版本（2026-06-12，author: claude），旧链路为 None。
+                prompt_version=trace.prompt_version,
             )
 
     def log_stream_done(
@@ -702,6 +958,8 @@ class LlmClient:
                 request_payload_json=request_payload_json,
                 response_content=response_content,
                 success=True,
+                # 透传 Agent 提示词版本（2026-06-12，author: claude），旧链路为 None。
+                prompt_version=trace.prompt_version,
             )
 
     # ------------------------------------------------------------------

@@ -10,6 +10,16 @@ PHASE_LABELS: dict[str, str] = {
     "answer": "非流式回答",
     "answer_stream_first_chunk": "流式首包",
     "answer_stream": "流式回答",
+    # Agent 引擎新增 phase（创建日期：2026-06-12，author: claude）：
+    # agent_iteration 是外部 LLM 迭代调用，tool_* 是本地/外部工具执行记录（不调用 LLM）。
+    "agent_iteration": "Agent 工具迭代",
+    "tool_query_database": "工具-本地SQL查询",
+    "tool_get_stock_data": "工具-个股数据包",
+    "tool_web_search": "工具-联网搜索",
+    "tool_fetch_url": "工具-网页抓取",
+    "tool_run_python": "工具-沙箱计算",
+    "tool_render_chart": "工具-图表登记",
+    "tool_recommend_threshold": "工具-阈值推荐",
     "follow_up_answer": "追问回答",
     "follow_up_answer_stream_first_chunk": "追问流式首包",
     "follow_up_answer_stream": "追问流式回答",
@@ -49,6 +59,28 @@ PHASE_DESCRIPTIONS: dict[str, str] = {
     "answer": "非流式回答阶段，用于 AI 阈值推荐等一次性返回场景；字符表示模型回答字符数。",
     "answer_stream_first_chunk": "流式回答首包记录，只记录首包耗时；其它计数字段通常为 0。",
     "answer_stream": "流式回答主体完成记录；Chunk 是流式片段数，字符是累计输出字符数。",
+    # Agent 引擎新增 phase 说明（创建日期：2026-06-12，author: claude）。
+    "agent_iteration": (
+        "Agent 引擎单次外部 LLM 迭代调用，模型决定继续调工具或直接给出回答；"
+        "每次迭代记一条并计入日限额。"
+    ),
+    "tool_query_database": (
+        "Agent 工具：执行模型生成的只读 SQL 查本地库，不调用 LLM；行数为返回给模型的数据行数。"
+    ),
+    "tool_get_stock_data": (
+        "Agent 工具：组装单只股票的行情/溢价等本地数据包，不调用 LLM；每次工具调用记一条。"
+    ),
+    "tool_web_search": "Agent 工具：调用外部联网搜索接口获取资讯摘要，不调用 LLM；每次搜索记一条。",
+    "tool_fetch_url": "Agent 工具：抓取指定 URL 网页并抽取正文，不调用 LLM；每次抓取记一条。",
+    "tool_run_python": (
+        "Agent 工具：在受限沙箱中执行模型生成的 Python 计算代码，不调用 LLM；每次执行记一条。"
+    ),
+    "tool_render_chart": (
+        "Agent 工具：校验并登记模型给出的图表 ChartSpec 供前端渲染，不调用 LLM；每次登记记一条。"
+    ),
+    "tool_recommend_threshold": (
+        "Agent 工具：按本地确定性规则计算自选股提醒阈值推荐，不调用 LLM；每次计算记一条。"
+    ),
     "follow_up_answer": "同会话追问非流式回答阶段，只携带历史对话，不进入通用路由和按需补数。",
     "follow_up_answer_stream_first_chunk": "同会话追问流式首包记录，只记录首包耗时。",
     "follow_up_answer_stream": "同会话追问流式回答主体完成记录，不进入通用路由和按需补数。",

@@ -44,6 +44,18 @@ class LlmChatMessage(TimestampMixin, Base):
     content: Mapped[str] = mapped_column(Text, nullable=False)
     sql_text: Mapped[str | None] = mapped_column(Text)
     result_preview_json: Mapped[str | None] = mapped_column(Text)
+    # Agent 引擎新增列（创建日期：2026-06-12，author: claude）：
+    # 一轮回答可能串联多次工具调用，工具执行轨迹（工具名/入参摘要/结果摘要/耗时/是否成功）
+    # 与登记的图表 ChartSpec 列表以 JSON 文本整体落库；历史消息与旧链路写入的消息为 NULL，
+    # 读取侧（schemas.ChatStoredMessageResponse）解析失败或为空时统一回退空列表。
+    tool_trace_json: Mapped[str | None] = mapped_column(
+        Text().with_variant(LONGTEXT, "mysql"),
+        nullable=True,
+    )
+    charts_json: Mapped[str | None] = mapped_column(
+        Text().with_variant(LONGTEXT, "mysql"),
+        nullable=True,
+    )
     session: Mapped[LlmChatSession] = relationship(back_populates="messages")
 
 
@@ -90,3 +102,7 @@ class LlmCallMetric(TimestampMixin, Base):
         nullable=True,
     )
     error_message: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    # Agent 系统提示词版本号（创建日期：2026-06-12，author: claude）：
+    # 用于在 LLM 耗时页按提示词版本对比同一 phase 的耗时与成功率，评估提示词迭代效果；
+    # 旧链路与系统内部汇总指标不携带版本号，保持 NULL。
+    prompt_version: Mapped[str | None] = mapped_column(String(32), nullable=True)

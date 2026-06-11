@@ -27,7 +27,7 @@ from app.schemas.chat import (
     ChatSessionResponse,
     ChatStoredMessageResponse,
 )
-from app.services.llm_service import LlmDailyLimitExceeded, LlmService
+from app.services.agent.engine import CHAT_FAILURE_MESSAGE, AgentEngine
 
 router = APIRouter()
 DbSession = Annotated[Session, Depends(get_db)]
@@ -100,20 +100,26 @@ def _display_user_name(current_user: CurrentUser) -> str:
     return (current_user.display_name or current_user.username).strip()
 
 
-def _parse_rows(message: LlmChatMessage) -> list[dict[str, object]]:
-    """解析消息中保存的数据预览。
+def _parse_json_list(raw: str | None) -> list[dict[str, object]]:
+    """解析落库的 JSON 列表列（tool_trace_json / charts_json）。
 
-    创建日期：2026-05-04
-    author: sunshengxian
+    历史数据可能为 NULL 或损坏，统一容错为返回空列表，不影响历史回放接口。
+
+    创建日期：2026-06-12
+    author: claude
     """
 
-    # LLM 回答的原始查询样本只用于后端审计和排查，不再通过历史消息接口返回前端，
-    # 避免页面展示“数据摘要”时暴露过多底层样本和字段口径。
-    return []
+    if not raw:
+        return []
+    try:
+        parsed = json.loads(raw)
+    except (TypeError, ValueError):
+        return []
+    return parsed if isinstance(parsed, list) else []
 
 
 def _message_response(message: LlmChatMessage) -> ChatStoredMessageResponse:
-    """转换聊天消息响应。
+    """转换聊天消息响应：附带工具轨迹与图表，供前端历史回放渲染。
 
     创建日期：2026-05-04
     author: sunshengxian
@@ -123,7 +129,10 @@ def _message_response(message: LlmChatMessage) -> ChatStoredMessageResponse:
         id=message.id,
         role=message.role,
         content=message.content,
-        rows=_parse_rows(message),
+        # rows 字段为接口兼容保留恒空：底层数据样本只留服务端审计。
+        rows=[],
+        charts=_parse_json_list(message.charts_json),
+        tool_trace=_parse_json_list(message.tool_trace_json),
         created_at=message.created_at,
         updated_at=message.updated_at,
     )
@@ -169,22 +178,23 @@ def _touch_session(session: LlmChatSession, question: str, has_history: bool) ->
     session.updated_at = _now_east8()
 
 
-def _store_stream_assistant_message(
+def _store_assistant_message(
     session_id: int,
     visible_question: str,
-    sql: str | None,
-    rows: list[dict[str, object]],
     answer_text: str,
+    tool_trace: list[dict[str, object]],
+    charts: list[dict[str, object]],
 ) -> int | None:
-    """在独立数据库会话中保存流式问答结果。
+    """在独立数据库会话中保存一条 assistant 回答（成功与失败共用口径）。
 
     创建日期：2026-06-02
-    author: sunshengxian
+    author: sunshengxian（Agent 化改造：轨迹与图表落库，claude，2026-06-12）
     """
 
     # 流式连接可能被浏览器关闭，后台线程不能复用请求生命周期里的 db；
     # 因此这里重新打开会话，按“每轮回答只写一条 assistant 消息”的口径落库，
     # 即使前端不再消费响应，也能在历史记录中看到完整结果。
+    # 新引擎不再写 sql_text（多次查询场景下单列无意义），轨迹统一进 tool_trace_json。
     with SessionLocal() as worker_db:
         session = worker_db.get(LlmChatSession, session_id)
         if session is None:
@@ -194,8 +204,8 @@ def _store_stream_assistant_message(
             session_id=session_id,
             role="assistant",
             content=answer_text,
-            sql_text=sql,
-            result_preview_json=json.dumps(rows[:20], ensure_ascii=False, default=str),
+            tool_trace_json=json.dumps(tool_trace, ensure_ascii=False, default=str),
+            charts_json=json.dumps(charts, ensure_ascii=False, default=str),
             created_at=_now_east8(),
             updated_at=_now_east8(),
         )
@@ -217,80 +227,56 @@ def _run_chat_stream_worker(
     visible_question: str,
     event_queue: queue.Queue[dict[str, object] | object],
 ) -> None:
-    """后台执行流式问答并把进度写入队列。
+    """后台消费 Agent 引擎事件流：转发进度事件、终态先落库再回填 message_id。
+
+    引擎保证以 done 或 error 事件收尾（内部异常已转 error），这里只兜底
+    worker 自身的意外异常（如落库失败），保证前端总能等到终态事件。
 
     创建日期：2026-06-02
-    author: sunshengxian
+    author: sunshengxian（Agent 化改造：claude，2026-06-12）
     """
 
-    sql = None
-    rows: list[dict[str, object]] = []
-    answer_parts: list[str] = []
+    terminal_sent = False
     try:
         with SessionLocal() as worker_db:
-            sql, rows, chunks = LlmService(worker_db).stream_answer(
-                payload.question,
-                context,
-                model=payload.llm_model,
-            )
-            # meta/done/error 事件不再携带 rows；LLM 内部仍可使用 rows 生成答案，
-            # 但前端不展示底层数据摘要，减少字段泄露和移动端渲染负担。
-            event_queue.put({"type": "meta", "rows": []})
-            for chunk in chunks:
-                answer_parts.append(chunk)
-                event_queue.put({"type": "delta", "content": chunk})
-        answer_text = "".join(answer_parts).strip() or "LLM 未返回有效内容。"
-        message_id = _store_stream_assistant_message(
-            session_id,
-            visible_question,
-            sql,
-            rows,
-            answer_text,
-        )
-        event_queue.put(
-            {
-                "type": "done",
-                "message_id": message_id,
-                "answer": answer_text,
-                "rows": [],
-            }
-        )
-    except LlmDailyLimitExceeded as exc:
-        logger.error("LLM 流式问答触发日限流")
-        answer_text = str(exc)
-        message_id = _store_stream_assistant_message(
-            session_id,
-            visible_question,
-            sql,
-            rows,
-            answer_text,
-        )
-        event_queue.put(
-            {
-                "type": "error",
-                "message_id": message_id,
-                "answer": answer_text,
-                "rows": [],
-            }
-        )
+            engine = AgentEngine(worker_db)
+            for event in engine.run(payload.question, context):
+                if event.type == "done":
+                    answer_text = event.answer.strip() or "LLM 未返回有效内容。"
+                    message_id = _store_assistant_message(
+                        session_id,
+                        visible_question,
+                        answer_text,
+                        event.tool_trace,
+                        event.charts,
+                    )
+                    body = event.to_payload()
+                    body["answer"] = answer_text
+                    body["message_id"] = message_id
+                    event_queue.put(body)
+                    terminal_sent = True
+                elif event.type == "error":
+                    # 失败同样落一条 assistant 消息（吸收旧评审 R7），轨迹与图表留空。
+                    message_id = _store_assistant_message(
+                        session_id, visible_question, event.answer, [], []
+                    )
+                    body = event.to_payload()
+                    # kind 是给非流式 HTTP 契约用的内部字段，不进前端协议。
+                    body.pop("kind", None)
+                    body["message_id"] = message_id
+                    event_queue.put(body)
+                    terminal_sent = True
+                else:
+                    event_queue.put(event.to_payload())
     except Exception:
-        logger.error("LLM 流式问答失败", exc_info=True)
-        answer_text = "问答失败：智能分析服务暂时不可用，请稍后重试。"
-        message_id = _store_stream_assistant_message(
-            session_id,
-            visible_question,
-            sql,
-            rows,
-            answer_text,
-        )
-        event_queue.put(
-            {
-                "type": "error",
-                "message_id": message_id,
-                "answer": answer_text,
-                "rows": [],
-            }
-        )
+        logger.error("LLM 流式问答 worker 异常", exc_info=True)
+        if not terminal_sent:
+            message_id = _store_assistant_message(
+                session_id, visible_question, CHAT_FAILURE_MESSAGE, [], []
+            )
+            event_queue.put(
+                {"type": "error", "message_id": message_id, "answer": CHAT_FAILURE_MESSAGE}
+            )
     finally:
         # 结束标记只通知仍在线的前端停止读取；后台线程不会因浏览器断开而提前退出。
         event_queue.put(CHAT_STREAM_DONE)
@@ -467,25 +453,29 @@ def create_message(
     context["conversation_history"] = history
     _touch_session(session, visible_question, has_history=bool(history))
     db.commit()
-    try:
-        answer = LlmService(db).answer(payload.question, context, model=payload.llm_model)
-    except LlmDailyLimitExceeded as exc:
-        db.rollback()
-        logger.error("LLM 非流式问答触发日限流")
-        raise HTTPException(status_code=429, detail=str(exc)) from exc
-    except Exception as exc:
-        db.rollback()
-        logger.error("LLM 非流式问答失败", exc_info=True)
-        raise HTTPException(
-            status_code=502,
-            detail="智能分析服务暂时不可用，请稍后重试。",
-        ) from exc
+    # 非流式接口兼容口径（设计 3.1）：消费引擎事件流，丢弃中间事件，只取终态。
+    engine = AgentEngine(db)
+    final_event = None
+    for event in engine.run(payload.question, context):
+        if event.type in {"done", "error"}:
+            final_event = event
+    if final_event is None or final_event.type == "error":
+        # 失败也落一条 assistant 消息（吸收旧评审 R7），再按既有 HTTP 契约抛错
+        # （限流 429 / 其他 502，设计 v3 修订 9：状态码行为保持不变）。
+        failure_answer = final_event.answer if final_event is not None else CHAT_FAILURE_MESSAGE
+        _store_assistant_message(session_id, visible_question, failure_answer, [], [])
+        if final_event is not None and final_event.kind == "daily_limit":
+            logger.error("LLM 非流式问答触发日限流")
+            raise HTTPException(status_code=429, detail=failure_answer)
+        logger.error("LLM 非流式问答失败")
+        raise HTTPException(status_code=502, detail="智能分析服务暂时不可用，请稍后重试。")
+    answer_text = final_event.answer.strip() or "LLM 未返回有效内容。"
     assistant_message = LlmChatMessage(
         session_id=session_id,
         role="assistant",
-        content=answer.answer,
-        sql_text=answer.sql,
-        result_preview_json=json.dumps(answer.rows[:20], ensure_ascii=False, default=str),
+        content=answer_text,
+        tool_trace_json=json.dumps(final_event.tool_trace, ensure_ascii=False, default=str),
+        charts_json=json.dumps(final_event.charts, ensure_ascii=False, default=str),
         created_at=_now_east8(),
         updated_at=_now_east8(),
     )
@@ -494,8 +484,8 @@ def create_message(
     db.commit()
     return ChatMessageResponse(
         message_id=assistant_message.id,
-        answer=answer.answer,
-        # 非流式接口同样不向前端返回数据摘要；rows 仍落库供服务端审计。
+        answer=answer_text,
+        # rows 字段为接口兼容保留恒空：底层数据样本只留服务端审计。
         rows=[],
     )
 
