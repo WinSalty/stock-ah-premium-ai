@@ -536,13 +536,43 @@ export interface ChatSession {
   updated_at: string;
 }
 
+/**
+ * Agent 单步工具执行轨迹摘要。
+ * summary 为工具启动时面向用户的一句话（如"查询：自选股机会"），
+ * result_summary 为执行结果摘要（如"返回 30 行"），elapsed_ms 为该步耗时毫秒数。
+ * 创建日期：2026-06-12
+ * author: sunshengxian
+ */
+export interface ToolTraceItem {
+  tool: string;
+  summary: string;
+  result_summary: string;
+  ok: boolean;
+  elapsed_ms: number;
+}
+
+/**
+ * 图表规格（Agent render_chart 工具登记的 spec）。
+ * 本阶段仅做存储透传不渲染，故定义为宽松类型；阶段 4 接入 ECharts 时再细化字段约束。
+ * 创建日期：2026-06-12
+ * author: sunshengxian
+ */
+export interface ChartSpec {
+  chart_type: string;
+  title: string;
+  [key: string]: unknown;
+}
+
 export interface ChatStoredMessage {
   id: number;
   role: 'user' | 'assistant' | string;
   content: string;
-  rows: Record<string, unknown>[];
   created_at: string;
   updated_at: string;
+  // 以下两个字段为 Agent 引擎新增，仅 assistant 消息携带；
+  // 历史旧数据可能缺省，前端需按空数组兜底（向后兼容口径）。
+  charts?: ChartSpec[];
+  tool_trace?: ToolTraceItem[];
 }
 
 export interface ChatSessionDetail extends ChatSession {
@@ -564,6 +594,7 @@ export interface ChatMessageRequest {
   end_date?: string;
   ts_code?: string;
   only_watchlist?: boolean;
+  // Agent 化后服务端统一使用 agent_model，该字段仅作接口兼容保留，前端不再发送。
   llm_model?: ChatModel;
   threshold_recommendation?: ThresholdRecommendationContext;
 }
@@ -589,7 +620,6 @@ export interface ThresholdRecommendationContext {
 export interface ChatMessageResponse {
   message_id?: number | null;
   answer: string;
-  rows: Record<string, unknown>[];
 }
 
 export interface ChatTurnExportItem {

@@ -1,10 +1,11 @@
 import { API_BASE_URL, ApiError, getAuthToken, requestJson } from './client';
 import type {
+  ChartSpec,
   ChatMessageRequest,
-  ChatMessageResponse,
   ChatSessionBatchDeleteResponse,
   ChatSession,
-  ChatSessionDetail
+  ChatSessionDetail,
+  ToolTraceItem
 } from '../types/domain';
 
 export function createChatSession(title = '新的数据问答') {
@@ -46,31 +47,83 @@ export function batchDeleteChatSessions(sessionIds: number[]) {
   });
 }
 
-export function sendChatMessage(sessionId: number, payload: ChatMessageRequest) {
-  return requestJson<ChatMessageResponse>(`/api/chat/sessions/${sessionId}/messages`, {
-    method: 'POST',
-    body: JSON.stringify(payload)
-  });
+/** Agent 工具开始执行事件：summary 为面向用户的一句话动作摘要（如"查询：自选股机会"）。 */
+export interface ChatToolStartEvent {
+  type: 'tool_start';
+  tool: string;
+  summary: string;
 }
 
-interface ChatStreamEvent {
-  type: 'meta' | 'delta' | 'done' | 'error';
+/** Agent 工具执行结束事件：summary 为结果摘要（如"返回 30 行"），elapsed_ms 为该步耗时毫秒数。 */
+export interface ChatToolResultEvent {
+  type: 'tool_result';
+  tool: string;
+  ok: boolean;
+  summary: string;
+  elapsed_ms: number;
+}
+
+/** 图表登记事件：本阶段前端仅存储 spec 不渲染，阶段 4 接入 ECharts 后按 chart_id 占位渲染。 */
+export interface ChatChartEvent {
+  type: 'chart';
+  chart_id: string;
+  spec: ChartSpec;
+}
+
+/** 最终回答增量文本事件。 */
+export interface ChatDeltaEvent {
+  type: 'delta';
+  content: string;
+}
+
+/** 回答完成事件：answer 为完整回答，charts/tool_trace 为本轮全量汇总（以此为准覆盖流式过程累积值）。 */
+export interface ChatDoneEvent {
+  type: 'done';
   message_id?: number | null;
-  content?: string;
-  answer?: string;
-  rows?: Record<string, unknown>[];
+  answer: string;
+  charts?: ChartSpec[];
+  tool_trace?: ToolTraceItem[];
 }
 
-interface ChatStreamHandlers {
-  onMeta?: (event: ChatStreamEvent) => void;
-  onDelta?: (content: string) => void;
-  onDone?: (event: ChatStreamEvent) => void;
-  onError?: (event: ChatStreamEvent) => void;
+/** 回答失败事件：answer 为失败文案（服务端已落库为 assistant 消息）。 */
+export interface ChatErrorEvent {
+  type: 'error';
+  message_id?: number | null;
+  answer: string;
 }
 
 /**
- * 流式提交聊天消息。
+ * NDJSON 流式事件联合类型（Agent 引擎协议）。
+ * 旧协议的 meta 事件与 rows 字段已彻底移除，前端不再兼容。
+ * 创建日期：2026-06-12
+ * author: sunshengxian
+ */
+export type ChatStreamEvent =
+  | ChatToolStartEvent
+  | ChatToolResultEvent
+  | ChatChartEvent
+  | ChatDeltaEvent
+  | ChatDoneEvent
+  | ChatErrorEvent;
+
+export interface ChatStreamHandlers {
+  onToolStart?: (event: ChatToolStartEvent) => void;
+  onToolResult?: (event: ChatToolResultEvent) => void;
+  onChart?: (event: ChatChartEvent) => void;
+  onDelta?: (content: string) => void;
+  onDone?: (event: ChatDoneEvent) => void;
+  onError?: (event: ChatErrorEvent) => void;
+}
+
+/**
+ * 流式提交聊天消息（NDJSON，每行一个 JSON 事件）。
+ * 边界口径：
+ * - 单行 JSON 解析失败时仅 console.warn 后跳过该行，继续读流——网络分片或服务端偶发坏行
+ *   不应中断整轮回答（吸收旧评审 B3 的容错要求）；
+ * - 收到 error 事件时先回调 onError 让调用方展示已落库的失败文案，流读完后再抛 ApiError，
+ *   保证未注册 onError 的调用方（如阈值推荐入口）也能经由异常路径感知失败。
  * 创建日期：2026-05-04
+ * 更新日期：2026-06-12（协议对齐 Agent 引擎：tool_start/tool_result/chart 事件，删除 meta/rows）
  * author: sunshengxian
  */
 export async function sendChatMessageStream(
@@ -107,17 +160,30 @@ export async function sendChatMessageStream(
       if (!line.trim()) {
         continue;
       }
-      const event = JSON.parse(line) as ChatStreamEvent;
-      if (event.type === 'meta') {
-        handlers.onMeta?.(event);
-      } else if (event.type === 'delta' && event.content) {
-        handlers.onDelta?.(event.content);
+      let event: ChatStreamEvent;
+      try {
+        event = JSON.parse(line) as ChatStreamEvent;
+      } catch (parseError) {
+        // 坏行容错：单行损坏（如代理截断、服务端日志混入）只丢弃该行，不中断整轮流式回答。
+        console.warn('跳过无法解析的流式事件行', line, parseError);
+        continue;
+      }
+      if (event.type === 'tool_start') {
+        handlers.onToolStart?.(event);
+      } else if (event.type === 'tool_result') {
+        handlers.onToolResult?.(event);
+      } else if (event.type === 'chart') {
+        handlers.onChart?.(event);
+      } else if (event.type === 'delta') {
+        if (event.content) {
+          handlers.onDelta?.(event.content);
+        }
       } else if (event.type === 'done') {
         handlers.onDone?.(event);
       } else if (event.type === 'error') {
-        const errorText = event.content || event.answer || '流式响应失败';
+        const errorText = event.answer || '流式响应失败';
         streamError = errorText;
-        handlers.onError?.({ ...event, content: errorText, answer: event.answer || errorText });
+        handlers.onError?.({ ...event, answer: errorText });
       }
     }
   }

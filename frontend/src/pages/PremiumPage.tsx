@@ -48,7 +48,6 @@ import {
   getCachedThresholdRecommendation,
   setCachedThresholdRecommendation
 } from '../utils/thresholdRecommendationCache';
-import { THRESHOLD_RECOMMENDATION_PROGRESS_STEPS } from '../constants/llmProgress';
 import { PUSHPLUS_BIND_SUCCESS_NOTICE } from '../constants/pushplus';
 
 const AH_COLOR = '#2563eb';
@@ -341,12 +340,9 @@ function PremiumPage({ currentUser }: PremiumPageProps) {
       if (!watchlistModal?.item) {
         throw new Error('AI 阈值推荐仅支持 A/H 配对关注');
       }
-      setThresholdRecommendationProgress(THRESHOLD_RECOMMENDATION_PROGRESS_STEPS[0]);
-      let progressIndex = 0;
-      let progressTimer: number | null = window.setInterval(() => {
-        progressIndex = Math.min(progressIndex + 1, THRESHOLD_RECOMMENDATION_PROGRESS_STEPS.length - 1);
-        setThresholdRecommendationProgress(THRESHOLD_RECOMMENDATION_PROGRESS_STEPS[progressIndex]);
-      }, 2600);
+      // Agent 协议下不再做假进度轮播，等待阶段展示固定通用文案；
+      // 首个流式 delta 到达后该提示即被回答内容替换。
+      setThresholdRecommendationProgress('正在分析自选股价差与分位数据...');
       const values = watchlistForm.getFieldsValue();
       const direction = values.preferred_direction || watchlistModal.item.metric_direction || 'HA';
       const cacheInput = {
@@ -384,10 +380,6 @@ function PremiumPage({ currentUser }: PremiumPageProps) {
         setCachedThresholdRecommendation(cacheInput, streamedAnswer);
         return { answer: streamedAnswer, source: 'fresh' as RecommendationSource };
       } finally {
-        if (progressTimer !== null) {
-          window.clearInterval(progressTimer);
-          progressTimer = null;
-        }
         setThresholdRecommendationProgress('');
       }
     },

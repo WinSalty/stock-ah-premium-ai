@@ -2378,6 +2378,89 @@ pre.llm-payload-viewer,
   min-width: 0;
 }
 
+/* Agent 工具执行时间线：流式期间在回答区顶部实时展示每一步工具调用状态 */
+.chat-tool-timeline {
+  margin-bottom: 10px;
+  padding: 8px 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  background: #fbfcfe;
+}
+
+.chat-tool-steps {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.chat-tool-step {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  color: #475569;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.chat-tool-step .ant-spin {
+  flex: 0 0 auto;
+}
+
+.chat-tool-step-icon {
+  flex: 0 0 auto;
+}
+
+.chat-tool-step-icon.ok {
+  color: #16a34a;
+}
+
+.chat-tool-step-icon.fail {
+  color: #dc2626;
+}
+
+.chat-tool-step-summary {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.chat-tool-step-result {
+  color: #94a3b8;
+  font-size: 12px;
+}
+
+.chat-tool-step-elapsed {
+  flex: 0 0 auto;
+  margin-left: auto;
+  color: #94a3b8;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 回答完成后的轨迹折叠摘要："本轮执行 N 步（耗时合计 X s）"，点击展开明细 */
+.chat-tool-trace-collapse {
+  margin-bottom: 8px;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  background: #fbfcfe;
+}
+
+.chat-tool-trace-collapse.ant-collapse-ghost > .ant-collapse-item > .ant-collapse-header {
+  padding: 8px 12px;
+  color: #475569;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.chat-tool-trace-collapse.ant-collapse-ghost
+  > .ant-collapse-item
+  > .ant-collapse-content
+  > .ant-collapse-content-box {
+  padding: 0 12px 10px;
+}
+
 .markdown-answer {
   color: #111827;
   font-size: 14px;
@@ -2858,21 +2941,11 @@ pre.llm-payload-viewer,
     min-height: 76px;
   }
 
+  /* 模型选择器已随 Agent 化移除，动作区只剩发送按钮，保持靠右对齐 */
   .mobile-app-content.mobile-page-chat .composer-actions {
     flex-wrap: nowrap;
     gap: 8px;
-    justify-content: space-between;
-  }
-
-  .mobile-app-content.mobile-page-chat .composer-actions .ant-segmented {
-    flex: 1;
-    min-width: 0;
-    overflow-x: auto;
-  }
-
-  .mobile-app-content.mobile-page-chat .composer-actions .ant-segmented-item-label {
-    padding-inline: 8px;
-    font-size: 12px;
+    justify-content: flex-end;
   }
 
   .mobile-app-content.mobile-page-chat .composer-actions .ant-btn-primary {

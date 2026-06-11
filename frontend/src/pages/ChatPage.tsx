@@ -1,5 +1,15 @@
-import { Button, Checkbox, Drawer, Form, Input, Popconfirm, Segmented, Skeleton, message } from 'antd';
-import { Download, FileText, MessageCircleMore, Plus, Send, SendHorizontal, Trash2 } from 'lucide-react';
+import { Button, Checkbox, Collapse, Drawer, Form, Input, Popconfirm, Skeleton, Spin, message } from 'antd';
+import {
+  CircleCheck,
+  CircleX,
+  Download,
+  FileText,
+  MessageCircleMore,
+  Plus,
+  Send,
+  SendHorizontal,
+  Trash2
+} from 'lucide-react';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { useEffect, useRef, useState } from 'react';
@@ -14,15 +24,15 @@ import {
   sendChatMessageStream
 } from '../api/chat';
 import type {
+  ChartSpec,
   ChatMessageResponse,
-  ChatModel,
   ChatSession,
   ChatStoredMessage,
+  ToolTraceItem,
   UserInfo
 } from '../types/domain';
 import { formatEast8DateTime } from '../utils/datetime';
 import { exportChatAnswersToWord } from '../utils/chatWordExport';
-import { CHAT_PROGRESS_STEPS } from '../constants/llmProgress';
 import { publishXueqiuChatAnswer } from '../api/xueqiuPublish';
 
 interface ChatFormValues {
@@ -35,7 +45,12 @@ interface ChatTurn {
   question: string;
   response?: ChatMessageResponse;
   streaming?: boolean;
-  progressText?: string;
+  /** 已完成的工具执行轨迹（流式过程逐步累积，done 事件以全量汇总覆盖）。 */
+  toolTrace: ToolTraceItem[];
+  /** 正在执行中的工具步骤；Agent 主循环为串行执行，同一时刻最多一个进行中步骤。 */
+  activeTool?: { tool: string; summary: string };
+  /** 本轮登记的图表 spec：本阶段仅存储不渲染，阶段 4 接入 ECharts 后启用。 */
+  charts?: ChartSpec[];
 }
 
 interface ChatPageProps {
@@ -56,12 +71,6 @@ const markdownComponents: Components = {
 
 const PRESET_QUESTION_COUNT = 4;
 const CHAT_AUTO_SCROLL_THRESHOLD = 96;
-const DEFAULT_CHAT_MODEL: ChatModel = 'deepseek-v4-flash';
-const CHAT_MODEL_OPTIONS: { label: string; value: ChatModel }[] = [
-  { label: 'DeepSeek Flash', value: 'deepseek-v4-flash' },
-  { label: 'DeepSeek Pro', value: 'deepseek-v4-pro' },
-  { label: 'Qwen 3.6 Flash', value: 'qwen3.6-flash' }
-];
 
 const STRUCTURED_ANALYSIS_PRESET_QUESTIONS = [
   '我该买什么股票？',
@@ -108,6 +117,85 @@ function randomPresetQuestions(previous: string[] = []) {
 }
 
 /**
+ * 把毫秒耗时格式化为秒级展示（如 412.5 -> "0.4s"），用于工具步骤与合计耗时。
+ * 创建日期：2026-06-12
+ * author: sunshengxian
+ */
+function formatElapsedSeconds(elapsedMs: number) {
+  return `${(elapsedMs / 1000).toFixed(1)}s`;
+}
+
+/**
+ * 渲染工具执行步骤明细（轻量自定义列表）：
+ * - 已完成步骤按成功/失败展示打勾/打叉图标，并附结果摘要与耗时；
+ * - 进行中的步骤展示 Spin 小图标（Agent 主循环串行执行，同一时刻最多一个进行中步骤）。
+ * 流式实时时间线与完成后的折叠明细复用同一份渲染，保证两种形态展示口径一致。
+ * 创建日期：2026-06-12
+ * author: sunshengxian
+ */
+function renderToolSteps(toolTrace: ToolTraceItem[], activeTool?: { tool: string; summary: string }) {
+  return (
+    <ul className="chat-tool-steps">
+      {toolTrace.map((step, index) => (
+        <li key={`${step.tool}-${index}`} className="chat-tool-step">
+          {step.ok ? (
+            <CircleCheck size={14} className="chat-tool-step-icon ok" />
+          ) : (
+            <CircleX size={14} className="chat-tool-step-icon fail" />
+          )}
+          <span className="chat-tool-step-summary">{step.summary || step.tool}</span>
+          {step.result_summary ? (
+            <span className="chat-tool-step-result">{step.result_summary}</span>
+          ) : null}
+          <span className="chat-tool-step-elapsed">{formatElapsedSeconds(step.elapsed_ms || 0)}</span>
+        </li>
+      ))}
+      {activeTool ? (
+        <li className="chat-tool-step running">
+          <Spin size="small" />
+          <span className="chat-tool-step-summary">{activeTool.summary || activeTool.tool}</span>
+        </li>
+      ) : null}
+    </ul>
+  );
+}
+
+/**
+ * 渲染一轮回答的工具执行时间线：
+ * - 流式进行中：在回答区顶部实时展示每一步执行状态；
+ * - 回答完成（含历史回放）：折叠为"本轮执行 N 步（耗时合计 X s）"一行摘要，点击可展开明细。
+ * 没有任何工具步骤时不渲染（纯对话轮次保持原有界面）。
+ * 创建日期：2026-06-12
+ * author: sunshengxian
+ */
+function renderToolTimeline(turn: ChatTurn) {
+  if (turn.streaming) {
+    if (!turn.toolTrace.length && !turn.activeTool) {
+      return null;
+    }
+    return <div className="chat-tool-timeline">{renderToolSteps(turn.toolTrace, turn.activeTool)}</div>;
+  }
+  if (!turn.toolTrace.length) {
+    return null;
+  }
+  const totalElapsed = turn.toolTrace.reduce((sum, step) => sum + (step.elapsed_ms || 0), 0);
+  return (
+    <Collapse
+      ghost
+      size="small"
+      className="chat-tool-trace-collapse"
+      items={[
+        {
+          key: 'trace',
+          label: `本轮执行 ${turn.toolTrace.length} 步（耗时合计 ${formatElapsedSeconds(totalElapsed)}）`,
+          children: renderToolSteps(turn.toolTrace)
+        }
+      ]}
+    />
+  );
+}
+
+/**
  * 智能问答页面。
  * 创建日期：2026-05-04
  * author: sunshengxian
@@ -126,7 +214,6 @@ function ChatPage({ currentUser }: ChatPageProps) {
   const [isSending, setIsSending] = useState(false);
   const [isLoadingSessions, setIsLoadingSessions] = useState(false);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
-  const [selectedModel, setSelectedModel] = useState<ChatModel>(DEFAULT_CHAT_MODEL);
   const [selectedSessionIds, setSelectedSessionIds] = useState<number[]>([]);
   const [publishingTurnId, setPublishingTurnId] = useState<string | null>(null);
   const [isMobileSessionOpen, setIsMobileSessionOpen] = useState(false);
@@ -343,9 +430,10 @@ function ChatPage({ currentUser }: ChatPageProps) {
         item.id === id
           ? {
               ...item,
+              // 合并已有 response（保留先前写入的 message_id 等字段），answer 兜底为空串。
               response: {
+                ...item.response,
                 answer: item.response?.answer || '',
-                rows: item.response?.rows || [],
                 ...patch
               }
             }
@@ -363,8 +451,6 @@ function ChatPage({ currentUser }: ChatPageProps) {
       return;
     }
     const turnId = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-    let progressIndex = 0;
-    let progressTimer: number | null = null;
     shouldAutoScrollRef.current = true;
     setIsSending(true);
     form.setFieldValue('question', '');
@@ -373,28 +459,61 @@ function ChatPage({ currentUser }: ChatPageProps) {
       {
         id: turnId,
         question,
-        response: { answer: '', rows: [] },
+        response: { answer: '' },
         streaming: true,
-        progressText: CHAT_PROGRESS_STEPS[0]
+        toolTrace: []
       }
     ]);
     try {
-      progressTimer = window.setInterval(() => {
-        progressIndex = Math.min(progressIndex + 1, CHAT_PROGRESS_STEPS.length - 1);
-        updateTurn(turnId, { progressText: CHAT_PROGRESS_STEPS[progressIndex] });
-      }, 2600);
       const currentSession = session || (await createChatSession());
       if (!session) {
         setSession(currentSession);
         window.localStorage.setItem(LAST_SESSION_KEY, String(currentSession.id));
       }
+      // Agent 化后服务端统一使用 agent_model，请求体不再携带 llm_model；
+      // 等待提示完全由真实的 tool_start/tool_result 事件驱动，不再做假进度轮播。
       await sendChatMessageStream(
         currentSession.id,
-        { question, llm_model: selectedModel },
+        { question },
         {
-          onMeta: (event) => {
-            updateTurn(turnId, { progressText: '正在生成分析...' });
-            updateTurnResponse(turnId, { rows: event.rows || [] });
+          onToolStart: (event) => {
+            // 记录进行中的工具步骤；启动 summary 留待 tool_result 时合入轨迹明细。
+            updateTurn(turnId, { activeTool: { tool: event.tool, summary: event.summary } });
+          },
+          onToolResult: (event) => {
+            setTurns((items) =>
+              items.map((item) =>
+                item.id === turnId
+                  ? {
+                      ...item,
+                      activeTool: undefined,
+                      toolTrace: [
+                        ...item.toolTrace,
+                        {
+                          tool: event.tool,
+                          // 步骤动作摘要取自配对的 tool_start 事件；若事件乱序导致无法配对，
+                          // 降级用工具名兜底（renderToolSteps 中 summary 为空时回退 tool）。
+                          summary:
+                            item.activeTool && item.activeTool.tool === event.tool
+                              ? item.activeTool.summary
+                              : '',
+                          result_summary: event.summary,
+                          ok: event.ok,
+                          elapsed_ms: event.elapsed_ms
+                        }
+                      ]
+                    }
+                  : item
+              )
+            );
+          },
+          onChart: (event) => {
+            // 本阶段仅累积图表 spec 供 done 前占位存储，不做渲染（阶段 4 接入 ECharts）。
+            setTurns((items) =>
+              items.map((item) =>
+                item.id === turnId ? { ...item, charts: [...(item.charts || []), event.spec] } : item
+              )
+            );
           },
           onDelta: (content) =>
             setTurns((items) =>
@@ -402,42 +521,54 @@ function ChatPage({ currentUser }: ChatPageProps) {
                 item.id === turnId && item.response
                   ? {
                       ...item,
-                      progressText: '',
                       response: { ...item.response, answer: `${item.response.answer}${content}` }
                     }
                   : item
               )
             ),
           onDone: (event) => {
-            updateTurn(turnId, { streaming: false, progressText: '', messageId: event.message_id });
-            updateTurnResponse(turnId, {
-              message_id: event.message_id,
-              answer: event.answer || '',
-              rows: event.rows || []
-            });
+            setTurns((items) =>
+              items.map((item) =>
+                item.id === turnId
+                  ? {
+                      ...item,
+                      streaming: false,
+                      messageId: event.message_id,
+                      activeTool: undefined,
+                      // done 事件携带的 tool_trace/charts 为本轮全量汇总，以服务端口径覆盖
+                      // 流式过程累积值；缺省时保留已累积的本地数据兜底。
+                      toolTrace: event.tool_trace?.length ? event.tool_trace : item.toolTrace,
+                      charts: event.charts?.length ? event.charts : item.charts,
+                      response: {
+                        message_id: event.message_id,
+                        answer: event.answer || item.response?.answer || ''
+                      }
+                    }
+                  : item
+              )
+            );
             void refreshSessions(currentSession.id);
           },
           onError: (event) => {
-            updateTurn(turnId, { streaming: false, progressText: '', messageId: event.message_id });
+            // error 事件的 answer 为服务端已落库的失败文案，直接作为本轮回答展示；
+            // toast 提示统一交给下方 catch（sendChatMessageStream 收到 error 后仍会抛出）。
+            updateTurn(turnId, { streaming: false, activeTool: undefined, messageId: event.message_id });
             updateTurnResponse(turnId, {
               message_id: event.message_id,
-              answer: event.answer || '问答失败，请稍后再试。',
-              rows: event.rows || []
+              answer: event.answer || '问答失败，请稍后再试。'
             });
             void refreshSessions(currentSession.id);
-            message.error(event.answer || '问答失败');
           }
         }
       );
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : '问答失败';
-      updateTurn(turnId, { streaming: false, progressText: '' });
+      // 网络中断等未收到 error 事件的失败：此时回答仍为空，用异常文案兜底展示；
+      // 若已由 onError 写入落库文案，这里覆盖为同一段文案（streamError 即 event.answer），无副作用。
+      updateTurn(turnId, { streaming: false, activeTool: undefined });
       updateTurnResponse(turnId, { answer: errorMessage });
       message.error(errorMessage);
     } finally {
-      if (progressTimer !== null) {
-        window.clearInterval(progressTimer);
-      }
       setIsSending(false);
     }
   };
@@ -647,7 +778,8 @@ function ChatPage({ currentUser }: ChatPageProps) {
             {!isLoadingHistory
               ? turns.map((turn) => (
                   <div className="chat-turn" key={turn.id}>
-                    <div className="chat-question">{turn.question}</div>
+                    {/* 孤立 assistant 消息（历史回放中无配对提问）不渲染空的提问气泡 */}
+                    {turn.question ? <div className="chat-question">{turn.question}</div> : null}
                     <div className="chat-answer">
                       <div className="chat-answer-actions">
                         {canPublishChatAnswerToXueqiu ? (
@@ -690,6 +822,7 @@ function ChatPage({ currentUser }: ChatPageProps) {
                           导出
                         </Button>
                       </div>
+                      {renderToolTimeline(turn)}
                       <div className="markdown-answer">
                         <ReactMarkdown
                           remarkPlugins={[remarkGfm]}
@@ -697,8 +830,12 @@ function ChatPage({ currentUser }: ChatPageProps) {
                         >
                           {turn.response?.answer || ''}
                         </ReactMarkdown>
-                        {turn.streaming && !turn.response?.answer ? (
-                          <LlmProgressNote text={turn.progressText} />
+                        {turn.streaming &&
+                        !turn.response?.answer &&
+                        !turn.toolTrace.length &&
+                        !turn.activeTool ? (
+                          // 首个工具事件到达前的等待提示：固定通用文案，不再做假进度轮播。
+                          <LlmProgressNote />
                         ) : null}
                         {turn.streaming && turn.response?.answer ? <span className="stream-caret" /> : null}
                       </div>
@@ -725,14 +862,6 @@ function ChatPage({ currentUser }: ChatPageProps) {
                 />
               </Form.Item>
               <div className="composer-actions">
-                <Segmented
-                  size="small"
-                  options={CHAT_MODEL_OPTIONS}
-                  value={selectedModel}
-                  onChange={(value) => setSelectedModel(value as ChatModel)}
-                  disabled={isSending}
-                  aria-label="选择问答模型"
-                />
                 <Button
                   type="primary"
                   htmlType="submit"
@@ -751,23 +880,49 @@ function ChatPage({ currentUser }: ChatPageProps) {
   );
 }
 
+/**
+ * 历史会话回放：把按 id 升序返回的消息列表按"相邻配对"组装为问答轮次。
+ * 配对口径：user 消息开启新一轮；紧随其后的第一条 assistant 消息即本轮回答
+ * （依赖接口按消息 id 升序返回的相邻关系）。连续两条 user 消息时前一条单独成轮
+ * （无回答），修复旧实现"倒查最近未回答轮"在该场景下的错配（旧评审 E6）。
+ * 孤立的 assistant 消息（前面没有待配对的 user 消息）也单独成轮展示，避免内容丢失。
+ * 创建日期：2026-05-04
+ * 更新日期：2026-06-12（改为相邻配对；回放 tool_trace 与 charts）
+ * author: sunshengxian
+ */
 function buildTurns(messages: ChatStoredMessage[]): ChatTurn[] {
   const turns: ChatTurn[] = [];
+  // 指向最近一条尚未配对回答的 user 轮次；配对成功或被更新的 user 消息顶替后清空/重置。
+  let pendingTurn: ChatTurn | null = null;
   messages.forEach((item) => {
     if (item.role === 'user') {
-      turns.push({
+      pendingTurn = {
         id: `message-${item.id}`,
         question: item.content,
-        response: { answer: '', rows: [] }
-      });
+        toolTrace: [],
+        response: { answer: '' }
+      };
+      turns.push(pendingTurn);
       return;
     }
     if (item.role === 'assistant') {
-      const target = [...turns].reverse().find((turn) => !turn.response?.answer);
-      if (target) {
-        target.messageId = item.id;
-        target.response = { message_id: item.id, answer: item.content, rows: [] };
+      if (pendingTurn) {
+        pendingTurn.messageId = item.id;
+        pendingTurn.response = { message_id: item.id, answer: item.content };
+        // 历史旧消息可能没有 tool_trace/charts 字段，按空数组兜底（向后兼容口径）。
+        pendingTurn.toolTrace = item.tool_trace || [];
+        pendingTurn.charts = item.charts || [];
+        pendingTurn = null;
+        return;
       }
+      turns.push({
+        id: `message-${item.id}`,
+        messageId: item.id,
+        question: '',
+        toolTrace: item.tool_trace || [],
+        charts: item.charts || [],
+        response: { message_id: item.id, answer: item.content }
+      });
     }
   });
   return turns.filter((turn) => turn.question || turn.response?.answer);
