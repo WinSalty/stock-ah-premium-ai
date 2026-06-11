@@ -8,8 +8,8 @@
 | 阶段 | 内容 | 状态 | 提交 |
 | --- | --- | --- | --- |
 | 准备 | 基线修复（存量 lint / 失败测试）+ `pre-agent-refactor` tag | 已完成 | 9998d61 |
-| 阶段 0 | 前置解耦与基线（llm_client 抽取 / 金标集 / 配置骨架） | 已完成 | 本节提交 |
-| 阶段 1 | Agent 引擎替换与旧链路退役（S1-1~S1-7） | 未开始 | - |
+| 阶段 0 | 前置解耦与基线（llm_client 抽取 / 金标集 / 配置骨架） | 已完成 | 6da8df7 |
+| 阶段 1 | Agent 引擎替换与旧链路退役（S1-1~S1-7） | 已完成 | a3d2f01 / 5187240 / 本节提交 |
 | 阶段 2 | 联网搜索（博查 web_search / fetch_url / 注入防护） | 未开始 | - |
 | 阶段 3 | Python 沙箱执行（sandbox_runner / run_python） | 未开始 | - |
 | 阶段 4 | 图表呈现（Chart DSL → ECharts） | 未开始 | - |
@@ -59,9 +59,27 @@
 - `ruff check app tests` 零错误；`pytest` 248 passed；前端 `npm run build` + `npm audit --omit=dev` 通过。
 - 配置缺省时现有行为完全不变（全量测试通过佐证）。
 
-## 阶段 1：Agent 引擎替换与旧链路退役
+## 阶段 1：Agent 引擎替换与旧链路退役（2026-06-12 交付）
 
-（待交付时补充）
+### 交付内容
+
+- **S1-1 引擎骨架**（`backend/app/services/agent/`）：`engine.py` 主循环（非流式迭代解析 tool_calls + 最终回答重发流式 + 迭代耗尽强制收尾 + 失败统一 error 事件）、`tool_registry.py`（OpenAI specs/配额强制/异常转错误文本）、`events.py`（六类事件与 NDJSON 协议对齐）、`budget.py`（轮内配额组、材料截断、messages 预算压缩、LlmDailyLimitExceeded 迁入）、`prompts.py`（系统提示词 v1，`PROMPT_VERSION="agent-v1"`，能力声明随工具目录动态拼装）、`data_catalog.py`（数据字典单点定义）。`llm_client` 扩展 messages+tools 非流式/流式接口（fallback/日限额/指标三件套生效）；`agent_iteration` 计入日限额安全网（v3 修订 2）。
+- **S1-2 本地三工具**：`query_database`（SqlGuard 强化为纯 AST 判定 + CTE 支持 + 多语句解析判定；执行错误回填模型自修复，替代旧 repair_sql；分红再投 status 兼容口径改入工具描述，不再静默改写 SQL）、`get_stock_data`（复用编排器与识别器，歧义返回候选让模型确认）、`recommend_threshold`（零参数化，公式逐行平移并有数值回归保护）。
+- **S1-3 路由切换**：流式 worker 消费引擎事件流转发真实进度；失败统一落 assistant 消息（流式与非流式一致，R7）；非流式聚合兼容，HTTP 状态码契约不变（429/502，v3 修订 9）；每次工具执行写 `llm_call_metric`（phase=tool_*，provider 可标注外部供应商）。
+- **S1-4 数据迁移**：`20260612_0048` 增量迁移（`tool_trace_json`/`charts_json`/`prompt_version`），已在本机 MySQL 执行验证可升；历史接口透出解析后的 charts/tool_trace。
+- **S1-5 前端协议对齐**：新事件联合类型 + 坏行容错（B3）；真实工具时间线（流式实时 + 完成后折叠"本轮执行 N 步"）；`buildTurns` 相邻配对（E6 提前修复）；删除假进度轮播与模型选择器（v3 修订 6）；Overview/Premium 阈值入口适配（v3 修订 5）；chart 事件先存储，阶段 4 渲染。
+- **S1-6 提示词与业务回归**：真实端到端用例 4/4 通过——本地取数（g064，自主调 query_database 查 AH 溢价）、泛推荐反问偏好（g001，零工具调用）、违法请求拒答（g043）、阈值工具（g100，公式值 10.55 正确引用）。指标链路验证：单轮 2 次 agent_iteration + 工具计量 + answer_stream，全部带 prompt_version。
+- **S1-7 旧链路退役**：删除 `llm_service.py`（约 4100 行）与 `test_llm_service.py`（58 用例）；llm_client 行为测试迁移为 `tests/test_llm_client.py`（10 用例，端点/降级/限额/指标/messages 接口）；金标跑批器 legacy 模式改为指引切换 `pre-agent-refactor` tag 补跑。
+
+### 验证
+
+- `ruff check` 零错误；后端 `pytest` 240 passed（新增引擎 13 / 工具 20 / SqlGuard 6 / 路由 7 / llm_client 10）；前端 `npm run build`（tsc + vite）通过。
+- 回滚口径：S1-7 删除为独立 commit，revert 即恢复旧链路；DB 变更全为增列无损。
+
+### 遗留与说明
+
+- 金标集全量基线/回归跑批仍由使用者择机执行（费用与日限额约束，见 v3 修订 10）。
+- 一轮典型消耗 2~5 次外部 LLM 调用（实测简单取数问题 3 次），与设计预估一致。
 
 ## 阶段 2：联网搜索
 

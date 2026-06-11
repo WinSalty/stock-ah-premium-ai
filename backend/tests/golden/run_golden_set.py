@@ -97,17 +97,19 @@ def build_context(case: dict[str, Any], user_id: int) -> dict[str, Any]:
 
 
 def run_case_legacy(db, settings, case: dict[str, Any], user_id: int) -> dict[str, Any]:
-    """旧链路执行单条用例：调用 LlmService.answer，返回回答与空工具轨迹。
+    """旧链路执行单条用例（旧链路已随阶段 1 S1-7 退役）。
+
+    如需补跑旧链路基线：git checkout pre-agent-refactor 后在旧版本工作区执行
+    `./scripts/run-golden-set.sh --engine legacy --report-tag baseline`。
 
     创建日期：2026-06-12
     author: claude
     """
 
-    from app.services.llm_service import LlmService
-
-    service = LlmService(db, settings=settings)
-    result = service.answer(case["question"], build_context(case, user_id))
-    return {"answer": result.answer, "tools": [], "engine": "legacy"}
+    raise RuntimeError(
+        "旧问答链路已退役（llm_service.py 已删除）。"
+        "补跑基线请切换到 git tag pre-agent-refactor 后执行 --engine legacy。"
+    )
 
 
 def run_case_agent(db, settings, case: dict[str, Any], user_id: int) -> dict[str, Any]:
