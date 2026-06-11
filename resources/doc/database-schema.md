@@ -98,8 +98,8 @@ LLM 按需个股研究数据：
 - `xueqiu_publish_setting`：雪球发布定时配置表，保存页面配置的工作日定时开关、草稿/正式发布模式、东八区小时/分钟 cron 字段和默认封面图；进程级调度注册仍由环境变量控制，任务执行时实时读取本表决定是否真正发起保存或发布。
 - `xueqiu_publish_record`：雪球长文草稿与发布流水表，按 `source_type` 区分打板报告、问答回答和神奇九转报告；打板报告使用 `analysis_id`，神奇九转报告使用 `nine_turn_analysis_id`，九转文章不提交封面图。记录每次草稿或发布尝试的草稿 ID、正式发布 ID、文章 URL、请求摘要、响应 JSON、失败原因和发布时间；默认操作复用同一来源同一模式的最近流水，管理员强制新建/重试时会新增流水以保留历史审计。
 - `llm_chat_session`：LLM 问答会话，用于保存投资问答主题和更新时间，按 `user_id` 隔离，`deleted_at` 非空表示会话已逻辑删除。
-- `llm_chat_message`：LLM 问答消息，用于保存用户问题、助手回答、内部查询口径和结果预览，支持后续会话上下文记忆。
-- `llm_call_metric`：LLM 调用耗时指标，按每轮问答唯一 `question_id` 串联路由、SQL、回答和流式首包等阶段；新增 `conversation_title` 和 `user_name` 保存对话标题与用户展示名称；`phase_label`、`phase_description` 解释阶段中文含义，`request_payload_json` 使用 `LONGTEXT` 记录实际发送给 LLM 的请求 JSON 和上下文 messages，不保存鉴权头和 API Key；`response_content` 使用 `LONGTEXT` 记录大模型返回的原始响应内容，流式回答保存拼接后的完整内容。
+- `llm_chat_message`：LLM 问答消息，用于保存用户问题、助手回答与会话上下文记忆。问答模块 Agent 化重构后新增 `tool_trace_json`（本条回答的工具执行轨迹：工具名/入参摘要/结果摘要/耗时/是否成功，`LONGTEXT`）和 `charts_json`（本条回答登记的图表 ChartSpec 列表，`LONGTEXT`），供前端历史回放渲染执行时间线与内嵌图表；旧字段 `sql_text`/`result_preview_json` 保留供历史数据可读，新引擎不再写入。
+- `llm_call_metric`：LLM 调用耗时指标，按每轮问答唯一 `question_id` 串联各阶段。Agent 引擎下的 phase 维度：`agent_iteration`（工具迭代调用，计入项目日限额）、`answer_stream`（最终流式回答）、`tool_query_database`/`tool_get_stock_data`/`tool_web_search`/`tool_fetch_url`/`tool_run_python`/`tool_render_chart`/`tool_recommend_threshold`（各工具执行记录，不计 LLM 日限额，沙箱/搜索的日配额据此计数）。`conversation_title`/`user_name` 保存对话标题与用户展示名称；`phase_label`/`phase_description` 为阶段中文含义；重构新增 `prompt_version` 记录 Agent 系统提示词版本（如 `agent-v1`），用于提示词迭代效果按版本对比。`request_payload_json`/`response_content` 使用 `LONGTEXT` 记录请求 JSON（不含鉴权头）与响应全文（工具阶段记录代码与输出供审计）。该表按 `LLM_METRIC_RETENTION_DAYS`（默认 90 天）由 `scripts/cleanup-llm-metrics.sh` 定期清理过期记录，控制表膨胀。
 
 ## 使用建议
 

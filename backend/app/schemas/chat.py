@@ -10,6 +10,11 @@ from app.schemas.common import OrmModel
 
 ChatModel = Literal["deepseek-v4-flash", "deepseek-v4-pro", "qwen3.6-flash"]
 
+# 默认会话标题单点定义（吸收旧评审 E5）：会话创建默认值与"首问改标题"判定
+# 此前在 schema 默认值、路由 _touch_session、前端三处硬编码同一字符串，
+# 改一处即破坏改名逻辑。后端统一引用本常量，避免魔法字符串漂移。
+DEFAULT_CHAT_SESSION_TITLE = "新的数据问答"
+
 
 class ChatSessionCreate(BaseModel):
     """创建会话请求。
@@ -18,7 +23,7 @@ class ChatSessionCreate(BaseModel):
     author: sunshengxian
     """
 
-    title: str = "新的数据问答"
+    title: str = DEFAULT_CHAT_SESSION_TITLE
 
 
 class ChatSessionResponse(OrmModel):

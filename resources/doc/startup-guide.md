@@ -24,7 +24,9 @@ cd /Users/salty/codeProject/ai/coding/stock-ah-premium-ai
 - Node.js：支持 Vite 5 的版本。
 - MySQL：本机 MySQL 5.7，连接说明见 `/Users/salty/codeProject/ai/doc/mysqluse.md`。
 - Tushare：使用 Python `tushare` SDK，默认中转地址 `https://tt.xiaodefa.cn`，同步接口运行时优先读取本机文件 `/Users/salty/codeProject/ai/doc/tushare-token.txt`，环境变量 `TUSHARE_TOKEN` 作为兜底。
-- LLM：运行智能问答时默认接入 DeepSeek OpenAI-compatible API，优先读取本机文件 `/Users/salty/codeProject/ai/doc/deepseek-apikey.txt`，环境变量 `LLM_API_KEY` 作为兜底，默认 API 模型 `deepseek-v4-flash`；页面可切换 DeepSeek Pro `deepseek-v4-pro` 或阿里 Qwen `qwen3.6-flash`，Qwen Key 优先读取 `/Users/salty/codeProject/ai/doc/qwen-apikey.txt`；项目级外部模型调用默认日限额为 `LLM_DAILY_CALL_LIMIT=100`。
+- LLM：智能问答采用 Agent 引擎（LLM 通过 function calling 自主编排工具），默认模型 `AGENT_MODEL=deepseek-v4-pro`（工具调用准确性优先），优先读取本机文件 `/Users/salty/codeProject/ai/doc/deepseek-apikey.txt`，环境变量 `LLM_API_KEY` 作为兜底；主端点临时不可用时自动回落阿里 Qwen `qwen3.6-flash`，Qwen Key 优先读取 `/Users/salty/codeProject/ai/doc/qwen-apikey.txt`。两层配额：用户可感知配额 `CHAT_DAILY_ROUND_LIMIT=50`（问答轮数/天），内部安全网 `LLM_DAILY_CALL_LIMIT=100`（外部模型调用次数/天，计入 `agent_iteration` 与 `answer_stream`）。
+- 联网搜索：博查 Bocha API，Key 优先读取 `/Users/salty/codeProject/ai/doc/博查-apikey.txt`，环境变量 `BOCHA_API_KEY` 兜底；缺失或日配额 `AGENT_WEB_SEARCH_DAILY_LIMIT=100` 用尽时自动降级为无联网能力。仅时效性问题（最新政策、新闻、海外市场）才联网，本地数据能答的禁止联网。
+- Python 沙箱：`run_python` 在 subprocess 沙箱执行 pandas/numpy 计算（无网络、隔离临时目录、rlimit + 审计钩子约束、墙钟超时 `PY_SANDBOX_WALL_TIMEOUT_SECONDS=20`）；本轮已查数据自动挂载沙箱 `data/` 目录。日配额 `AGENT_RUN_PYTHON_DAILY_LIMIT=100`。
 - 文生图：默认接入 86GameStore OpenAI Images 兼容接口，优先读取本机文件 `/Users/salty/codeProject/ai/doc/86gamestore-image-apikey.txt`，环境变量 `IMAGE_GEN_API_KEY` 作为兜底；图片生产环境保存到阿里 OSS 私有 Bucket，后端鉴权后返回 1 天有效签名 URL。
 
 启动 MySQL：
@@ -108,7 +110,7 @@ APP_CORS_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
 
 不要把真实 Token、数据库密码、LLM Key 或文生图 Key 写入仓库。若 shell 中残留旧 `TUSHARE_TOKEN`，项目仍会优先使用 `TUSHARE_TOKEN_FILE` 指向的文件，避免误用旧 token；DeepSeek、Qwen 和文生图 Key 同理优先使用本机文件。文生图参考图会在后端压缩并转成 JPEG 后保存到 OSS，`IMAGE_GEN_TIMEOUT_SECONDS` 默认 500 秒用于覆盖参考图编辑的长尾耗时。
 
-智能问答仅面向投资研究问题。后端会先用 `deepseek-v4-flash` 做单次 JSON 前置路由，同时判断是否可答、是否需要结构化数据、是否需要按需补充市场数据，再为选定问答模型注入专业金融投资分析顾问角色、最近会话上下文、页面上下文、数据摘要和按需补数结果；前端只展示报告和数据摘要表格，不展示 SQL 或底层查询过程。若历史环境中仍配置 `deepseek-v4-pro[1m]`，后端会在请求 DeepSeek 时自动归一化为 API 支持的 `deepseek-v4-pro`；当前不额外传 `reasoning_effort`。
+智能问答仅面向投资研究问题。后端采用 Agent 引擎：在受控边界内由模型自主决定查库（`query_database`，SqlGuard 白名单只读 SQL）、按需补数（`get_stock_data`）、联网搜索（`web_search`/`fetch_url`）、沙箱计算（`run_python`）、出图（`render_chart`）与阈值推荐（`recommend_threshold`），不再有固定前置路由与关键词表。每轮在迭代上限（`AGENT_MAX_ITERATIONS=8`）内调用工具并最终流式作答；前端展示真实执行时间线（每步工具的动作/结果/耗时）、Markdown 回答与内嵌 ECharts 图表，不暴露 SQL 或底层查询过程。系统提示词集中承载角色、工具策略、业务规则（投资推荐三段式、分红再投口径、拒答边界）与输出契约，版本号 `agent-v1` 落入 `llm_call_metric.prompt_version` 便于迭代对比。若历史环境配置 `deepseek-v4-pro[1m]`，后端请求时自动归一化为 `deepseek-v4-pro`。
 
 Tushare 中转服务文档见 `https://tt.xiaodefa.cn/docs`。项目后端已按其 SDK 方式设置。文档示例使用 `ts.set_token(token)`，项目实现采用 `ts.pro_api(token, timeout=...)` 直接传入 token，避免 SDK 把 token 额外写到用户目录缓存文件：
 
@@ -485,7 +487,7 @@ QWEN_API_KEY=
 QWEN_QUESTION_ROUTER_MODEL=deepseek-v4-flash
 ```
 
-问答页面使用流式响应，输入框按 Enter 发送，Shift+Enter 换行，并支持选择 `deepseek-v4-flash`、`deepseek-v4-pro` 或 `qwen3.6-flash`，默认 DeepSeek Flash；预设问题点击后会直接发送。空会话展示结构化投研场景预设问题，便于直接触发数据路由和按需补数。外部模型主调用会按项目维度做日限流，默认每天 100 次，统计范围包括 DeepSeek Flash 前置路由、SQL 生成/修复和最终回答调用，不包含首包耗时、SQL 执行和总耗时等内部指标。若页面一直没有响应，先确认后端 `/api/health` 正常，再查看后端日志中是否有 LLM 日限流、生成 SQL 字段名、前置路由或数据库执行错误。
+问答页面使用流式响应，输入框按 Enter 发送，Shift+Enter 换行；模型由后端统一使用 `AGENT_MODEL`（默认 `deepseek-v4-pro`），页面不再提供模型选择。预设问题点击后直接发送，空会话展示结构化投研场景预设问题。回答区实时展示 Agent 的工具执行时间线（查库/补数/搜索/计算/出图每步的动作、结果与耗时），完成后折叠为"本轮执行 N 步"可展开摘要，回答正文按 `{{chart:cN}}` 占位符内嵌 ECharts 图表。两层配额：用户按 `CHAT_DAILY_ROUND_LIMIT`（默认 50 轮/天）感知，超限返回 429"今日问答次数已达上限"；内部 `LLM_DAILY_CALL_LIMIT`（默认 100 次/天）作安全网，统计 `agent_iteration` 与 `answer_stream`。流式并发受 `CHAT_STREAM_MAX_CONCURRENCY`（默认 8）限制，超限返回 503 繁忙。若页面无响应，先确认后端 `/api/health` 正常，再查后端日志是否有 LLM 日限流、轮数超限、工具执行（SQL 字段名/沙箱/搜索）或数据库错误。
 
 AH 溢价、折价和套利相关问题可按前置路由补充本地候选池、市场分布和自选机会，避免只基于单行 SQL 结果作答。项目已移除自动静态投研材料注入链路和旧材料目录；银行/非银、个股报告、宏观地产金融推演等回答只基于会话历史、页面上下文、结构化市场观察、按需补数结果和模型自身金融知识组织。回答提示词要求 LLM 给出评级口径、配置倾向、优先级、仓位思路、阈值和触发条件，并避免输出模板化免责句。
 

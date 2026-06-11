@@ -5,19 +5,21 @@ import logging
 import queue
 import threading
 from collections.abc import Iterator
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Annotated
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from fastapi.responses import StreamingResponse
-from sqlalchemy import desc, select
+from sqlalchemy import desc, func, select
 from sqlalchemy.orm import Session
 
 from app.api.deps_auth import CurrentUser
+from app.core.config import get_settings
 from app.db.models.chat import LlmChatMessage, LlmChatSession
 from app.db.session import SessionLocal, get_db
 from app.schemas.chat import (
+    DEFAULT_CHAT_SESSION_TITLE,
     ChatMessageCreate,
     ChatMessageResponse,
     ChatSessionBatchDelete,
@@ -34,6 +36,9 @@ DbSession = Annotated[Session, Depends(get_db)]
 logger = logging.getLogger(__name__)
 CHAT_TIMEZONE = ZoneInfo("Asia/Shanghai")
 CHAT_STREAM_DONE = object()
+# 流式并发名额信号量（旧评审 R5）：进程级共享，按配置上限初始化，
+# 每个流式请求获取一个名额、worker 结束释放，防止后台线程无上限耗尽连接池。
+_STREAM_SEMAPHORE = threading.BoundedSemaphore(get_settings().chat_stream_max_concurrency)
 
 
 def _json_line(payload: dict[str, object]) -> str:
@@ -77,7 +82,40 @@ def _session_title(question: str) -> str:
     """
 
     title = " ".join(question.strip().split())
-    return title[:48] or "新的投资问答"
+    # 兜底标题统一引用默认会话标题常量（E5）：避免"新的投资问答"等多份魔法字符串漂移。
+    return title[:48] or DEFAULT_CHAT_SESSION_TITLE
+
+
+def _enforce_daily_round_limit(db: Session, user_id: int) -> None:
+    """校验用户当日问答轮数是否超过可感知配额（阶段 5 / 旧评审 R1）。
+
+    口径：按"用户消息条数"统计当日（东八区自然日）轮数；这是用户能直接理解的
+    配额单位，区别于 llm_daily_call_limit 的内部 LLM 调用硬上限。超限抛 429。
+
+    创建日期：2026-06-12
+    author: claude
+    """
+
+    limit = get_settings().chat_daily_round_limit
+    if limit <= 0:
+        return
+    now = _now_east8()
+    today_start = datetime.combine(now.date(), datetime.min.time())
+    tomorrow_start = today_start + timedelta(days=1)
+    statement = (
+        select(func.count(LlmChatMessage.id))
+        .join(LlmChatSession, LlmChatSession.id == LlmChatMessage.session_id)
+        .where(LlmChatSession.user_id == user_id)
+        .where(LlmChatMessage.role == "user")
+        .where(LlmChatMessage.created_at >= today_start)
+        .where(LlmChatMessage.created_at < tomorrow_start)
+    )
+    used = int(db.scalar(statement) or 0)
+    if used >= limit:
+        raise HTTPException(
+            status_code=429,
+            detail=f"今日问答次数已达上限 {limit} 轮，请明天再试。",
+        )
 
 
 def _visible_question(payload: ChatMessageCreate) -> str:
@@ -173,7 +211,7 @@ def _touch_session(session: LlmChatSession, question: str, has_history: bool) ->
     author: sunshengxian
     """
 
-    if not has_history and session.title == "新的数据问答":
+    if not has_history and session.title == DEFAULT_CHAT_SESSION_TITLE:
         session.title = _session_title(question)
     session.updated_at = _now_east8()
 
@@ -278,6 +316,9 @@ def _run_chat_stream_worker(
                 {"type": "error", "message_id": message_id, "answer": CHAT_FAILURE_MESSAGE}
             )
     finally:
+        # 释放流式并发名额（R5）：无论成功/失败/异常，worker 结束必须归还信号量，
+        # 否则名额泄漏会逐步耗尽并发额度。
+        _STREAM_SEMAPHORE.release()
         # 结束标记只通知仍在线的前端停止读取；后台线程不会因浏览器断开而提前退出。
         event_queue.put(CHAT_STREAM_DONE)
 
@@ -431,6 +472,8 @@ def create_message(
     """
 
     session = _active_session_or_404(db, session_id, current_user.id)
+    # 按轮配额校验在落库用户消息前做：超限直接 429，不产生孤立提问（R1）。
+    _enforce_daily_round_limit(db, current_user.id)
     history = _recent_history(db, session_id, current_user.id)
     now = _now_east8()
     visible_question = _visible_question(payload)
@@ -504,37 +547,50 @@ def create_message_stream(
     """
 
     session = _active_session_or_404(db, session_id, current_user.id)
-    history = _recent_history(db, session_id, current_user.id)
-    now = _now_east8()
-    visible_question = _visible_question(payload)
-    user_message = LlmChatMessage(
-        session_id=session_id,
-        role="user",
-        content=visible_question,
-        created_at=now,
-        updated_at=now,
-    )
-    db.add(user_message)
-    _touch_session(session, visible_question, has_history=bool(history))
-    db.commit()
-    context = payload.model_dump(
-        exclude={"question", "display_question", "llm_model"},
-        exclude_none=True,
-    )
-    context["user_id"] = current_user.id
-    context["session_id"] = session_id
-    context["_metric_question"] = visible_question
-    context["_metric_user_name"] = _display_user_name(current_user)
-    context["conversation_history"] = history
+    # 按轮配额校验在落库用户消息前做：超限直接 429，不产生孤立提问（R1）。
+    _enforce_daily_round_limit(db, current_user.id)
+    # 流式并发名额（R5）：限时获取信号量，拿不到则返回 503 繁忙提示而非无限制起线程，
+    # 避免后台 worker 线程数失控耗尽数据库连接池。
+    settings = get_settings()
+    if not _STREAM_SEMAPHORE.acquire(timeout=settings.chat_stream_acquire_timeout_seconds):
+        raise HTTPException(status_code=503, detail="问答服务繁忙，请稍后重试。")
+    # 名额已持有：此后任何提前返回路径都必须释放，否则名额泄漏。
+    try:
+        history = _recent_history(db, session_id, current_user.id)
+        now = _now_east8()
+        visible_question = _visible_question(payload)
+        user_message = LlmChatMessage(
+            session_id=session_id,
+            role="user",
+            content=visible_question,
+            created_at=now,
+            updated_at=now,
+        )
+        db.add(user_message)
+        _touch_session(session, visible_question, has_history=bool(history))
+        db.commit()
+        context = payload.model_dump(
+            exclude={"question", "display_question", "llm_model"},
+            exclude_none=True,
+        )
+        context["user_id"] = current_user.id
+        context["session_id"] = session_id
+        context["_metric_question"] = visible_question
+        context["_metric_user_name"] = _display_user_name(current_user)
+        context["conversation_history"] = history
 
-    event_queue: queue.Queue[dict[str, object] | object] = queue.Queue()
-    worker = threading.Thread(
-        target=_run_chat_stream_worker,
-        args=(session_id, payload, context, visible_question, event_queue),
-        name=f"chat-stream-session-{session_id}",
-        daemon=True,
-    )
-    worker.start()
+        event_queue: queue.Queue[dict[str, object] | object] = queue.Queue()
+        worker = threading.Thread(
+            target=_run_chat_stream_worker,
+            args=(session_id, payload, context, visible_question, event_queue),
+            name=f"chat-stream-session-{session_id}",
+            daemon=True,
+        )
+        # worker 启动成功后由其 finally 释放名额；启动前的异常在 except 里释放。
+        worker.start()
+    except Exception:
+        _STREAM_SEMAPHORE.release()
+        raise
 
     def stream() -> Iterator[str]:
         # StreamingResponse 的生成器会随浏览器断开而关闭；这里只读取后台队列，

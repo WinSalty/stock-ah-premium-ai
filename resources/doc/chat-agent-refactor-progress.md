@@ -10,10 +10,10 @@
 | 准备 | 基线修复（存量 lint / 失败测试）+ `pre-agent-refactor` tag | 已完成 | 9998d61 |
 | 阶段 0 | 前置解耦与基线（llm_client 抽取 / 金标集 / 配置骨架） | 已完成 | 6da8df7 |
 | 阶段 1 | Agent 引擎替换与旧链路退役（S1-1~S1-7） | 已完成 | a3d2f01 / 5187240 / 本节提交 |
-| 阶段 2 | 联网搜索（博查 web_search / fetch_url / 注入防护） | 未开始 | - |
-| 阶段 3 | Python 沙箱执行（sandbox_runner / run_python） | 未开始 | - |
-| 阶段 4 | 图表呈现（Chart DSL → ECharts） | 未开始 | - |
-| 阶段 5 | 治理收尾（配额口径 / 并发 / 指标治理 / 文档同步） | 未开始 | - |
+| 阶段 2 | 联网搜索（博查 web_search / fetch_url / 注入防护） | 已完成 | 本节提交 |
+| 阶段 3 | Python 沙箱执行（sandbox_runner / run_python） | 已完成 | 本节提交 |
+| 阶段 4 | 图表呈现（Chart DSL → ECharts） | 已完成 | 本节提交 |
+| 阶段 5 | 治理收尾（配额口径 / 并发 / 指标治理 / 文档同步） | 已完成 | 本节提交 |
 
 ## 准备阶段：基线修复与文档评审（2026-06-12）
 
@@ -81,18 +81,37 @@
 - 金标集全量基线/回归跑批仍由使用者择机执行（费用与日限额约束，见 v3 修订 10）。
 - 一轮典型消耗 2~5 次外部 LLM 调用（实测简单取数问题 3 次），与设计预估一致。
 
-## 阶段 2：联网搜索
+## 阶段 2：联网搜索（2026-06-12 交付）
 
-（待交付时补充）
+- **S2-1 web_search**（`tools/web_search.py`）：博查 Bocha API（httpx 15s 超时、失败重试 1 次）；结果包 `<external_content>` 数据块；进程内 LRU+TTL（128/10 分钟）缓存；key 缺失或当日配额（`agent_web_search_daily_limit`，计数基准 phase=tool_web_search/tool_fetch_url）用尽时 web 工具整体从目录降级移除，系统提示词能力声明同步收敛为"无联网能力"。
+- **S2-2 fetch_url**：标准库 HTMLParser 正文抽取（丢弃 script/style/nav）；SSRF 防护 `_assert_public_http_url`——DNS 解析后拒绝私网/回环/链路本地/保留地址，仅 80/443，重定向禁自动跟随、逐跳重新校验。
+- **S2-3 注入防护**：三层——`<external_content>` 数据块包裹 + `sanitize_external_text` 转义协议词（`{{chart:`、`</external_content>`）+ 系统提示词"外部内容安全规则"段（仅联网开启时注入）声明块内文字是数据非指令。
+- 测试：`test_agent_web_search.py` 22 用例（主路径/缓存/重试/转义/SSRF 5 段网段/重定向防护/正文抽取/配额降级/提示词）。
+- 已知项（个人项目可接受，记入阶段 5 跟踪）：DNS rebinding TOCTOU（校验与建连各解析一次 DNS）；外部数据双引号未转义（数据在正文行非属性内，风险低）；配额时区依赖 DB 服务器时钟（与 created_at 的 server_default 口径需在阶段 5 统一）。
 
-## 阶段 3：Python 沙箱执行
+## 阶段 3：Python 沙箱执行（2026-06-12 交付）
 
-（待交付时补充）
+- **S3-1 SandboxExecutor + sandbox_runner**：`sandbox_runner.py` 是自包含独立脚本（不 import 项目模块），以 `{venv_python} -I sandbox_runner.py main.py {cpu} {mem}` 启动；四层约束——隔离子进程（-I + 环境白名单仅 PATH/LANG + 临时 cwd + start_new_session）、rlimit（CPU/AS/FSIZE，macOS 上 RLIMIT_AS 设置失败容错降级，v3 修订 11）、audit hook（禁 socket/subprocess/os.exec*/fork/ctypes.dlopen、禁工作目录外写）、父进程墙钟超时整组 SIGKILL。关键修复：装钩子前预热 pandas/numpy，避免合法 C 扩展加载被"禁动态加载"误杀。
+- **S3-2 run_python 工具**：本轮 query_database/get_stock_data 完整结果写入沙箱 `data/` 目录 + manifest.json 回填；stdout/stderr 截断；非零退出模型可修正重试。
+- **S3-3 审计与配额**：代码与输出经引擎统一写 `llm_call_metric`（phase=tool_run_python）；日配额 `agent_run_python_daily_limit` 用尽当日降级。
+- 测试：`test_agent_sandbox.py` 14 通过 + 1 跳过（真实子进程：合法 pandas 计算/死循环 CPU 杀/墙钟超时/socket/subprocess/os.system/越界写/目录内写/非零退出/stdout 截断/manifest/配额；超内存用例 macOS 跳过）。真实端到端：g080"画 A/H 溢价走势图"完整经过 4 次取数→2 次沙箱计算→render_chart。
 
-## 阶段 4：图表呈现
+## 阶段 4：图表呈现（2026-06-12 交付）
 
-（待交付时补充）
+- **S4-1 Chart DSL + render_chart**：`chart_schema.py` pydantic 模型同步导出 JSON Schema 作工具参数；按 chart_type 联动校验（line/bar/scatter 标量等长、kline 四元组、pie 扇区名等长、dual_axis 左右轴齐全），消除 list[float] 与四元组类型矛盾（v3 修订 4）；`render_chart` 校验通过→自增 chart_id→登记 turn_state→返回 `{{chart:cN}}` 占位符，引擎据 extra 下发 chart 事件；轮内 4 张配额。
+- **S4-2/S4-3 前端渲染**：`ChatChart.tsx` 把 ChartSpec 映射为 ECharts option（统一色板、6 图型、双轴、移动端自适应、空数据占位、note 数据来源）；ChatPage 按 `{{chart:id}}` 正则分段交替渲染文本与图表，未引用图表末尾兜底，未知 id 渲染为空；Word 导出占位符降级为"【图表】标题 + 数据表格"。
+- **S4-4 出图策略**：提示词补充"图表确实比文字更有助理解时才出图，单值不出图"，与计算/搜索策略统一调版。
+- 测试：`test_agent_chart.py` 13 用例（6 图型 × 合法/非法校验矩阵 + 占位符登记 + 配额）；前端 `npm run build` 通过。
 
-## 阶段 5：治理收尾
+## 阶段 5：治理收尾（2026-06-12 交付）
 
-（待交付时补充）
+- **S5-1 配额按轮计费（R1）**：`_enforce_daily_round_limit` 按当日（东八区）用户消息条数校验 `chat_daily_round_limit`（默认 50），在落库用户消息前校验，超限返回 429"今日问答次数已达上限 N 轮"，不产生孤立提问；流式与非流式入口均接入。内部 `llm_daily_call_limit` 继续作安全网。
+- **S5-2 流式并发上限（R5）+ 指标治理（R4）**：进程级 `BoundedSemaphore(chat_stream_max_concurrency=8)`，流式请求限时获取名额（`chat_stream_acquire_timeout_seconds=15`），拿不到返回 503 繁忙；worker `finally` 释放，启动前异常路径也释放，无名额泄漏。指标保留期清理 `llm_metric_maintenance.cleanup_expired_metrics`（分批删除早于 `llm_metric_retention_days=90` 天的记录）+ `scripts/cleanup-llm-metrics.sh`（手动/cron 触发，不挂主进程调度）。
+- **S5-3 魔法字符串治理（E5）**：默认会话标题统一为 `schemas/chat.py` 的 `DEFAULT_CHAT_SESSION_TITLE` 常量，schema 默认值、`_session_title` 兜底、`_touch_session` 改名判定三处后端引用同一常量（修正此前"新的数据问答"/"新的投资问答"不一致）。E6（前端 turn 配对）已在 S1-5 提前修复。
+- **S5-4 文档同步**：`startup-guide.md`（智能问答改为 Agent 引擎说明、联网/沙箱/两层配额/并发/无模型选择器）、`database-schema.md`（llm_chat_message 新增列、llm_call_metric 的 phase 维度与 prompt_version、保留期清理）、本进度文档与设计文档状态同步更新。
+- 测试：`test_chat_governance.py` 6 用例（按轮限额阻断/放行/非流式接入、信号量获取释放平衡、指标清理删旧留新/关闭不删）。
+- 已知后续项（非阻塞，记录备查）：联网搜索的 DNS rebinding TOCTOU 与外部数据双引号转义、配额时区与 DB 服务器时钟口径统一、指标 payload 成功采样（当前全量存储，留 `LLM_METRIC_RETENTION_DAYS` 清理控膨胀）——个人项目当前规模可接受，列为后续增强。
+
+## 重构完成总结
+
+七个阶段（准备 + 阶段 0~5）全部交付：旧的固定流水线问答已彻底替换为 LLM 通过 function calling 自主编排工具的 Agent 引擎，新增联网搜索、Python 沙箱计算、受控图表三类能力，前端从假进度升级为真实执行时间线与内嵌图表。后端 294 passed + 1 skipped（macOS 平台跳过），前端 `npm run build` 通过，全程 `scripts/check.sh` 口径绿。旧链路删除为独立 commit，回滚 tag `pre-agent-refactor` 可用，DB 变更全为增列无损。金标集（58 用例）与跑批器就位，全量回归/基线跑批因真实 LLM 费用由使用者按需触发。

@@ -2,6 +2,7 @@
 
 - 创建日期：2026-06-11
 - 更新日期：2026-06-12（v3：实施前对照代码现状全面评审，新增第八节评审修订；v2：迁移策略由"灰度共存"改为"直接彻底替换"；补全开发落地细节）
+- **实施状态：全部七阶段已交付（2026-06-12）。落地进度、验证结果与已知后续项见 `chat-agent-refactor-progress.md`。**
 - 关联文档：`chat-module-code-review-and-optimization-plan.md`（2026-06-10 代码评审）
 - 已确认选型：
   - 联网搜索：博查 Bocha API（key 文件 `/Users/salty/codeProject/ai/doc/博查-apikey.txt`）

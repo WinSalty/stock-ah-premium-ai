@@ -157,6 +157,23 @@ class Settings(BaseSettings):
         default=8000,
         alias="PY_SANDBOX_OUTPUT_MAX_CHARS",
     )
+    # ---- 问答治理（阶段 5）----
+    # 流式问答同时活跃的后台 worker 上限（旧评审 R5）：每个流式请求起一个独立
+    # SessionLocal 的 daemon 线程，无上限会耗尽数据库连接池；超限时友好排队/拒绝。
+    chat_stream_max_concurrency: int = Field(
+        default=8,
+        alias="CHAT_STREAM_MAX_CONCURRENCY",
+    )
+    # 获取流式并发名额的最长等待秒数：超时仍拿不到名额则返回繁忙提示，避免请求挂死。
+    chat_stream_acquire_timeout_seconds: float = Field(
+        default=15.0,
+        alias="CHAT_STREAM_ACQUIRE_TIMEOUT_SECONDS",
+    )
+    # 指标保留天数（旧评审 R4）：清理脚本删除早于该天数的 llm_call_metric，<=0 表示不清理。
+    llm_metric_retention_days: int = Field(
+        default=90,
+        alias="LLM_METRIC_RETENTION_DAYS",
+    )
     auth_secret_key: str = Field(default="stock-ah-premium-local-secret", alias="AUTH_SECRET_KEY")
     auth_token_expire_hours: int = Field(default=168, alias="AUTH_TOKEN_EXPIRE_HOURS")
     auth_remember_login_expire_days: int = Field(
