@@ -47,7 +47,9 @@ def test_orchestrator_uses_cache_for_recent_quote_package(monkeypatch) -> None:
 
     db = _session()
     db.add(AStockBasic(ts_code="600036.SH", symbol="600036", name="招商银行", list_status="L"))
-    db.add(ADailyBasic(ts_code="600036.SH", trade_date=date(2026, 6, 1), close=1))
+    # 行情估值包的新鲜度窗口是 7 天，必须用相对当天的动态日期造数；
+    # 写死历史日期会随真实时间漂移出窗口，导致用例在未来某天开始误报。
+    db.add(ADailyBasic(ts_code="600036.SH", trade_date=date.today(), close=1))
     db.commit()
     fetcher = RecordingFetcher()
     service = MarketDataOrchestrator(db, fetcher=fetcher)  # type: ignore[arg-type]

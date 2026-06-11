@@ -209,7 +209,14 @@ KPL_FIELDS = (
     "lu_limit_order",
 )
 DAILY_FIELDS = ("ts_code", "trade_date", "open", "high", "low", "close", "pct_chg", "vol", "amount")
-DAILY_BASIC_FIELDS = ("ts_code", "trade_date", "turnover_rate", "volume_ratio", "total_mv", "circ_mv")
+DAILY_BASIC_FIELDS = (
+    "ts_code",
+    "trade_date",
+    "turnover_rate",
+    "volume_ratio",
+    "total_mv",
+    "circ_mv",
+)
 CYQ_PERF_FIELDS = (
     "ts_code",
     "trade_date",
@@ -319,7 +326,10 @@ class LimitUpPushService:
         if existing is not None:
             if existing.status == ANALYSIS_STATUS_READY:
                 return existing
-            if existing.status == ANALYSIS_STATUS_GENERATING and not self._is_generating_stale(existing):
+            if (
+                existing.status == ANALYSIS_STATUS_GENERATING
+                and not self._is_generating_stale(existing)
+            ):
                 return existing
             analysis = existing
             self._reset_analysis_for_retry(analysis, trade_date, context, data_quality)
@@ -347,7 +357,10 @@ class LimitUpPushService:
                     raise
                 if analysis.status == ANALYSIS_STATUS_READY:
                     return analysis
-                if analysis.status == ANALYSIS_STATUS_GENERATING and not self._is_generating_stale(analysis):
+                if (
+                    analysis.status == ANALYSIS_STATUS_GENERATING
+                    and not self._is_generating_stale(analysis)
+                ):
                     return analysis
                 self._reset_analysis_for_retry(analysis, trade_date, context, data_quality)
         try:
@@ -386,11 +399,16 @@ class LimitUpPushService:
         """
 
         analysis = self.db.get(LimitUpAnalysisCache, analysis_id)
-        if analysis is None or analysis.status != ANALYSIS_STATUS_READY or not analysis.content_html:
+        if (
+            analysis is None
+            or analysis.status != ANALYSIS_STATUS_READY
+            or not analysis.content_html
+        ):
             raise LimitUpPushError("报告不存在或尚未生成完成")
         recipients = self._enabled_recipients(
             target_user_ids,
-            require_weekend_replay=scheduled_kind in {DELIVERY_KIND_SATURDAY_REPLAY, DELIVERY_KIND_SUNDAY_REPLAY},
+            require_weekend_replay=scheduled_kind
+            in {DELIVERY_KIND_SATURDAY_REPLAY, DELIVERY_KIND_SUNDAY_REPLAY},
         )
         if target_user_ids is not None and not recipients:
             raise LimitUpPushError("请选择已配置且启用的接收人")
@@ -445,8 +463,12 @@ class LimitUpPushService:
             analysis = self.ensure_analysis_for_trade_date(friday)
         if analysis is None or analysis.status != ANALYSIS_STATUS_READY:
             return analysis, 0
-        kind = DELIVERY_KIND_SATURDAY_REPLAY if today.weekday() == 5 else DELIVERY_KIND_SUNDAY_REPLAY
-        return analysis, self.push_report(analysis.id, kind, self._weekend_replay_scheduled_at(today))
+        kind = (
+            DELIVERY_KIND_SATURDAY_REPLAY if today.weekday() == 5 else DELIVERY_KIND_SUNDAY_REPLAY
+        )
+        return analysis, self.push_report(
+            analysis.id, kind, self._weekend_replay_scheduled_at(today)
+        )
 
     def list_reports(
         self,
@@ -480,7 +502,9 @@ class LimitUpPushService:
             statement = statement.where(LimitUpAnalysisCache.trade_date == trade_date)
         # 报告列表搜索只走报告标题、正文和质量摘要，避免把完整上下文 JSON 作为默认搜索对象拖慢页面。
         rows = self.db.scalars(
-            statement.order_by(desc(LimitUpAnalysisCache.trade_date), desc(LimitUpAnalysisCache.id)).limit(limit)
+            statement.order_by(
+                desc(LimitUpAnalysisCache.trade_date), desc(LimitUpAnalysisCache.id)
+            ).limit(limit)
         ).all()
         return [self._report_list_item(row) for row in rows]
 
@@ -503,7 +527,9 @@ class LimitUpPushService:
             content_markdown=report.content_markdown,
             context=context,
             data_quality=self._json_loads_list(report.data_quality_json),
-            stage_quality=self._json_loads_list(self._json_dumps(pipeline.get("stage_quality") or [])),
+            stage_quality=self._json_loads_list(
+                self._json_dumps(pipeline.get("stage_quality") or [])
+            ),
             selected_chain_stocks=list(pipeline.get("selected_chain_stocks") or []),
             selected_high_board_stocks=list(pipeline.get("selected_high_board_stocks") or []),
         )
@@ -519,10 +545,14 @@ class LimitUpPushService:
             item.user_id: item
             for item in self.db.scalars(select(LimitUpPushRecipient)).all()
         }
-        users = self.db.scalars(select(AppUser).where(AppUser.is_active.is_(True)).order_by(AppUser.id)).all()
+        users = self.db.scalars(
+            select(AppUser).where(AppUser.is_active.is_(True)).order_by(AppUser.id)
+        ).all()
         return [self._recipient_item(user, configs.get(user.id)) for user in users]
 
-    def update_recipients(self, payload: LimitUpRecipientUpdateRequest, operator: AppUser) -> list[LimitUpRecipientItem]:
+    def update_recipients(
+        self, payload: LimitUpRecipientUpdateRequest, operator: AppUser
+    ) -> list[LimitUpRecipientItem]:
         """保存管理员维护的系统用户接收人配置。
 
         创建日期：2026-05-08
@@ -532,13 +562,17 @@ class LimitUpPushService:
         requested = {item.user_id: item for item in payload.recipients}
         users = {
             user.id: user
-            for user in self.db.scalars(select(AppUser).where(AppUser.id.in_(requested.keys()))).all()
+            for user in self.db.scalars(
+                select(AppUser).where(AppUser.id.in_(requested.keys()))
+            ).all()
         } if requested else {}
         for user_id, item in requested.items():
             user = users.get(user_id)
             if user is None or not user.is_active:
                 raise LimitUpPushError(f"接收用户不存在或已停用：{user_id}")
-            config = self.db.scalar(select(LimitUpPushRecipient).where(LimitUpPushRecipient.user_id == user_id))
+            config = self.db.scalar(
+                select(LimitUpPushRecipient).where(LimitUpPushRecipient.user_id == user_id)
+            )
             if config is None:
                 config = LimitUpPushRecipient(
                     user_id=user_id,
@@ -570,8 +604,11 @@ class LimitUpPushService:
         """
 
         report = self._get_shareable_report(report_id)
-        # expires_in_hours 为空表示永久链接；有限期链接使用 UTC-naive 时间入库，保持与项目其它时间字段一致。
-        expires_at = self._now_naive() + timedelta(hours=expires_in_hours) if expires_in_hours else None
+        # expires_in_hours 为空表示永久链接；
+        # 有限期链接使用 UTC-naive 时间入库，保持与项目其它时间字段一致。
+        expires_at = (
+            self._now_naive() + timedelta(hours=expires_in_hours) if expires_in_hours else None
+        )
         token = self._new_share_token()
         share = LimitUpReportShare(
             analysis_id=report.id,
@@ -660,7 +697,8 @@ class LimitUpPushService:
         share, report = row
         if not report.content_html:
             raise LimitUpPushError("分享报告内容为空")
-        # 公开查看只记录访问次数和最近访问时间，不要求登录；该统计用于管理员判断临时分享是否仍被使用。
+        # 公开查看只记录访问次数和最近访问时间，不要求登录；
+        # 该统计用于管理员判断临时分享是否仍被使用。
         share.view_count += 1
         share.last_viewed_at = now
         self.db.commit()
@@ -787,14 +825,18 @@ class LimitUpPushService:
         ] if prev_trade_date is not None else []
         for api_name, extra_params, fields in OPTIONAL_APIS:
             params = {"trade_date": trade_date_str, **extra_params}
-            optional_payload[api_name] = self._safe_query(api_name, params, fields, quality, required=False)
+            optional_payload[api_name] = self._safe_query(
+                api_name, params, fields, quality, required=False
+            )
         focus_codes = self._focus_ts_codes(kpl_rows, optional_payload)
         technical = self._technical_indicators(focus_codes, trade_date, quality)
         prev_quotes = self._daily_quotes_for_codes(
             [str(row.get("ts_code") or "") for row in optional_payload.get("prev_kpl_list", [])],
             trade_date,
         )
-        context = self._assemble_context(trade_date, kpl_rows, optional_payload, technical, quality, prev_quotes)
+        context = self._assemble_context(
+            trade_date, kpl_rows, optional_payload, technical, quality, prev_quotes
+        )
         return {"data_ready": True, "context": context, "data_quality": quality}
 
     def _safe_query(
@@ -847,7 +889,9 @@ class LimitUpPushService:
             .limit(1)
         )
 
-    def _daily_quotes_for_codes(self, ts_codes: list[str], trade_date: date) -> dict[str, dict[str, Any]]:
+    def _daily_quotes_for_codes(
+        self, ts_codes: list[str], trade_date: date
+    ) -> dict[str, dict[str, Any]]:
         """批量读取昨日涨停股在报告交易日的行情。
 
         创建日期：2026-06-10
@@ -860,7 +904,9 @@ class LimitUpPushService:
         # 昨日涨停溢价只需要当日开盘和涨跌幅，本地日线表有缺口时返回空映射，
         # 情绪指标会标记样本数不足而不会阻断报告生成。
         rows = self.db.scalars(
-            select(ADailyQuote).where(ADailyQuote.ts_code.in_(codes), ADailyQuote.trade_date == trade_date)
+            select(ADailyQuote).where(
+                ADailyQuote.ts_code.in_(codes), ADailyQuote.trade_date == trade_date
+            )
         ).all()
         return {
             row.ts_code: {
@@ -883,7 +929,9 @@ class LimitUpPushService:
         indicators: dict[str, dict[str, Any]] = {}
         daily_missing: list[str] = []
         error_count = 0
-        start_date = trade_date - timedelta(days=max(20, self.settings.limit_up_push_indicator_days))
+        start_date = trade_date - timedelta(
+            days=max(20, self.settings.limit_up_push_indicator_days)
+        )
         local_daily = self._local_daily_rows_by_code(limited_codes, start_date, trade_date)
         latest_basic = self._latest_daily_basic_by_code(limited_codes, trade_date, quality)
         for ts_code in limited_codes:
@@ -908,7 +956,8 @@ class LimitUpPushService:
                 "daily",
                 "OK" if local_daily or len(daily_missing) < len(limited_codes) else "EMPTY",
                 len(local_daily),
-                f"local_rows={sum(len(rows) for rows in local_daily.values())}; fallback_codes={len(daily_missing)}; errors={error_count}",
+                f"local_rows={sum(len(rows) for rows in local_daily.values())}; "
+                f"fallback_codes={len(daily_missing)}; errors={error_count}",
             ).to_dict()
         )
         return indicators
@@ -971,7 +1020,9 @@ class LimitUpPushService:
             quality.append(DataQualityItem("daily_basic", "EMPTY", 0, "no_focus_codes").to_dict())
             return {}
         local_rows = self.db.scalars(
-            select(ADailyBasic).where(ADailyBasic.ts_code.in_(ts_codes), ADailyBasic.trade_date == trade_date)
+            select(ADailyBasic).where(
+                ADailyBasic.ts_code.in_(ts_codes), ADailyBasic.trade_date == trade_date
+            )
         ).all()
         grouped = {
             row.ts_code: {
@@ -985,7 +1036,9 @@ class LimitUpPushService:
             for row in local_rows
         }
         if len(grouped) >= len(ts_codes):
-            quality.append(DataQualityItem("daily_basic", "OK", len(grouped), "source=local").to_dict())
+            quality.append(
+                DataQualityItem("daily_basic", "OK", len(grouped), "source=local").to_dict()
+            )
             return grouped
         # daily_basic 本地库可能尚未完整同步；按交易日批量拉一次全市场最新估值指标，
         # 再只保留关注股票，避免逐股请求造成调度延迟和接口压力。
@@ -995,7 +1048,11 @@ class LimitUpPushService:
             DAILY_BASIC_FIELDS,
         )
         if rows is None:
-            quality.append(DataQualityItem("daily_basic", "FAILED", len(grouped), "batch_query_failed").to_dict())
+            quality.append(
+                DataQualityItem(
+                    "daily_basic", "FAILED", len(grouped), "batch_query_failed"
+                ).to_dict()
+            )
             return grouped
         focus_set = set(ts_codes)
         for row in rows:
@@ -1022,7 +1079,9 @@ class LimitUpPushService:
         try:
             result = self.tushare_client.query(api_name, params=params, fields=list(fields))
         except Exception:
-            logger.info("打板技术指标接口暂不可用 api=%s ts_code=%s", api_name, params.get("ts_code"))
+            logger.info(
+                "打板技术指标接口暂不可用 api=%s ts_code=%s", api_name, params.get("ts_code")
+            )
             return None
         return [self._normalize_api_row(row) for row in result.rows]
 
@@ -1034,10 +1093,22 @@ class LimitUpPushService:
         # Tushare 日线通常按日期倒序返回，这里统一升序计算均线和短期涨幅；
         # 行数不足时只返回已有字段，避免为了指标完整性阻断整份报告。
         rows = sorted(daily_rows, key=lambda item: str(item.get("trade_date") or ""))
-        closes = [to_decimal(row.get("close")) for row in rows if to_decimal(row.get("close")) is not None]
-        amounts = [to_decimal(row.get("amount")) for row in rows if to_decimal(row.get("amount")) is not None]
+        closes = [
+            to_decimal(row.get("close"))
+            for row in rows
+            if to_decimal(row.get("close")) is not None
+        ]
+        amounts = [
+            to_decimal(row.get("amount"))
+            for row in rows
+            if to_decimal(row.get("amount")) is not None
+        ]
         latest = rows[-1] if rows else {}
-        latest_basic = sorted(basic_rows, key=lambda item: str(item.get("trade_date") or ""))[-1] if basic_rows else {}
+        latest_basic = (
+            sorted(basic_rows, key=lambda item: str(item.get("trade_date") or ""))[-1]
+            if basic_rows
+            else {}
+        )
         latest_close = to_decimal(latest.get("close"))
         return {
             "close": self._decimal_to_float(latest_close),
@@ -1104,14 +1175,18 @@ class LimitUpPushService:
         }
         context["chain_board_context"] = {
             "stocks": self._stocks_by_board_level(compact_rows, levels={2, 3}),
-            "stocks_by_limit_type": self._stocks_by_limit_type(self._stocks_by_board_level(compact_rows, levels={2, 3})),
+            "stocks_by_limit_type": self._stocks_by_limit_type(
+                self._stocks_by_board_level(compact_rows, levels={2, 3})
+            ),
             "capital_signals": capital_signals,
             "themes": themes,
             "market_emotion": market_emotion,
         }
         context["high_board_context"] = {
             "stocks": self._stocks_by_board_level(compact_rows, min_level=4),
-            "stocks_by_limit_type": self._stocks_by_limit_type(self._stocks_by_board_level(compact_rows, min_level=4)),
+            "stocks_by_limit_type": self._stocks_by_limit_type(
+                self._stocks_by_board_level(compact_rows, min_level=4)
+            ),
             "capital_signals": capital_signals,
             "themes": themes,
             "market_emotion": market_emotion,
@@ -1159,7 +1234,13 @@ class LimitUpPushService:
         author: sunshengxian
         """
 
-        status = str(row.get("status") or row.get("tag") or row.get("board_status") or row.get("up_stat") or "")
+        status = str(
+            row.get("status")
+            or row.get("tag")
+            or row.get("board_status")
+            or row.get("up_stat")
+            or ""
+        )
         day_board_match = re.search(r"\d+\s*天\s*(\d+)\s*板", status)
         if day_board_match:
             return int(day_board_match.group(1))
@@ -1185,11 +1266,16 @@ class LimitUpPushService:
             grouped.setdefault(key, []).append(row)
         return grouped
 
-    def _focus_ts_codes(self, kpl_rows: list[dict[str, Any]], optional_payload: dict[str, list[dict[str, Any]]]) -> list[str]:
+    def _focus_ts_codes(
+        self,
+        kpl_rows: list[dict[str, Any]],
+        optional_payload: dict[str, list[dict[str, Any]]],
+    ) -> list[str]:
         seen: set[str] = set()
         codes: list[str] = []
         for row in kpl_rows:
-            # 技术指标补数与分层上下文共用 _board_level 口径，避免“N天M板”进了候选池却缺少 technical。
+            # 技术指标补数与分层上下文共用 _board_level 口径，
+            # 避免“N天M板”进了候选池却缺少 technical。
             if self._board_level(row) >= 1:
                 code = str(row.get("ts_code") or "").strip()
                 if code and code not in seen:
@@ -1215,7 +1301,9 @@ class LimitUpPushService:
             for row in rows[:LIMIT_UP_CONTEXT_FOCUS_STOCK_LIMIT]
         ]
 
-    def _compact_stock_row(self, row: dict[str, Any], indicator: dict[str, Any] | None) -> dict[str, Any]:
+    def _compact_stock_row(
+        self, row: dict[str, Any], indicator: dict[str, Any] | None
+    ) -> dict[str, Any]:
         """压缩单只涨停股字段并补充封流比等衍生指标。
 
         创建日期：2026-06-10
@@ -1224,7 +1312,9 @@ class LimitUpPushService:
 
         indicator = indicator or {}
         limit_order = to_decimal(row.get("limit_order") or row.get("fd_amount"))
-        free_float = to_decimal(row.get("free_float") or row.get("float_mv") or indicator.get("circ_mv"))
+        free_float = to_decimal(
+            row.get("free_float") or row.get("float_mv") or indicator.get("circ_mv")
+        )
         seal_ratio = self._safe_pct_ratio(limit_order, free_float)
         compact = {
             "ts_code": row.get("ts_code"),
@@ -1258,12 +1348,21 @@ class LimitUpPushService:
         }
         return compact
 
-    def _theme_summary(self, kpl_rows: list[dict[str, Any]], cpt_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    def _theme_summary(
+        self, kpl_rows: list[dict[str, Any]], cpt_rows: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
         counter: dict[str, dict[str, Any]] = {}
         for row in kpl_rows:
-            themes = [item.strip() for item in re.split(r"[,，;；/、]", str(row.get("theme") or "")) if item.strip()]
+            themes = [
+                item.strip()
+                for item in re.split(r"[,，;；/、]", str(row.get("theme") or ""))
+                if item.strip()
+            ]
             for theme in themes or ["未标注题材"]:
-                bucket = counter.setdefault(theme, {"theme": theme, "stock_count": 0, "stocks": [], "reasons": [], "ladder": []})
+                bucket = counter.setdefault(
+                    theme,
+                    {"theme": theme, "stock_count": 0, "stocks": [], "reasons": [], "ladder": []},
+                )
                 bucket["stock_count"] += 1
                 if len(bucket["stocks"]) < 12:
                     bucket["stocks"].append(row.get("name") or row.get("ts_code"))
@@ -1285,13 +1384,18 @@ class LimitUpPushService:
             # 题材内梯队只保留前 5 个高辨识度位置，帮助模型判断龙一、龙二和补位关系。
             item["ladder"] = sorted(
                 item["ladder"],
-                key=lambda stock: (int(stock.get("board_level") or 0), float(stock.get("seal_ratio_pct") or 0)),
+                key=lambda stock: (
+                    int(stock.get("board_level") or 0),
+                    float(stock.get("seal_ratio_pct") or 0),
+                ),
                 reverse=True,
             )[:5]
             item["board_stats"] = cpt_by_name.get(item["theme"], {})
         return themes[:LIMIT_UP_CONTEXT_THEME_LIMIT]
 
-    def _capital_signals(self, kpl_rows: list[dict[str, Any]], top_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    def _capital_signals(
+        self, kpl_rows: list[dict[str, Any]], top_rows: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
         top_by_code = {str(row.get("ts_code") or ""): row for row in top_rows}
         signals: list[dict[str, Any]] = []
         for row in kpl_rows:
@@ -1392,7 +1496,9 @@ class LimitUpPushService:
         prev_levels = {str(row.get("ts_code") or ""): self._board_level(row) for row in prev_rows}
         advancement: dict[str, dict[str, Any]] = {}
         for base_level in (1, 2, 3):
-            prev_codes = {code for code, level in prev_levels.items() if code and level == base_level}
+            prev_codes = {
+                code for code, level in prev_levels.items() if code and level == base_level
+            }
             advanced = [code for code in prev_codes if today_levels.get(code) == base_level + 1]
             advancement[f"{base_level}进{base_level + 1}"] = {
                 "prev_count": len(prev_codes),
@@ -1406,9 +1512,13 @@ class LimitUpPushService:
         broken_codes = self._row_code_set(broken_rows)
         broken_only_codes = broken_codes - today_codes
         denominator_codes = today_codes | broken_codes
-        denominator_count = len(denominator_codes) if denominator_codes else len(today_rows) + len(broken_rows)
+        denominator_count = (
+            len(denominator_codes) if denominator_codes else len(today_rows) + len(broken_rows)
+        )
         broken_numerator_count = len(broken_only_codes) if broken_codes else 0
-        broken_rate = self._safe_pct_ratio(Decimal(broken_numerator_count), Decimal(denominator_count))
+        broken_rate = self._safe_pct_ratio(
+            Decimal(broken_numerator_count), Decimal(denominator_count)
+        )
         return {
             "prev_trade_date": prev_trade_date,
             "broken_board_count": len(broken_rows),
@@ -1430,7 +1540,11 @@ class LimitUpPushService:
         """
 
         # Tushare 多个 KPL tag 池可能存在回封股票交集；情绪指标按代码集合去重，避免重复计数。
-        return {str(row.get("ts_code") or "").strip() for row in rows if str(row.get("ts_code") or "").strip()}
+        return {
+            str(row.get("ts_code") or "").strip()
+            for row in rows
+            if str(row.get("ts_code") or "").strip()
+        }
 
     def _prev_limit_up_premium_metrics(
         self,
@@ -1446,7 +1560,9 @@ class LimitUpPushService:
         pct_values: list[Decimal] = []
         high_open_count = 0
         sample_count = 0
-        prev_codes = sorted({str(row.get("ts_code") or "") for row in prev_rows if row.get("ts_code")})
+        prev_codes = sorted(
+            {str(row.get("ts_code") or "") for row in prev_rows if row.get("ts_code")}
+        )
         for code in prev_codes:
             quote = prev_quotes.get(code)
             if not quote:
@@ -1470,7 +1586,9 @@ class LimitUpPushService:
             ),
         }
 
-    def _highest_chain_change(self, today_rows: list[dict[str, Any]], prev_rows: list[dict[str, Any]]) -> dict[str, Any]:
+    def _highest_chain_change(
+        self, today_rows: list[dict[str, Any]], prev_rows: list[dict[str, Any]]
+    ) -> dict[str, Any]:
         """比较今日和昨日最高连板高度变化。
 
         创建日期：2026-06-10
@@ -1479,10 +1597,14 @@ class LimitUpPushService:
 
         today_high = max([self._board_level(row) for row in today_rows], default=0) or None
         prev_high = max([self._board_level(row) for row in prev_rows], default=0) or None
-        change = today_high - prev_high if today_high is not None and prev_high is not None else None
+        change = (
+            today_high - prev_high if today_high is not None and prev_high is not None else None
+        )
         return {"today": today_high, "previous": prev_high, "change": change}
 
-    def _safe_pct_ratio(self, numerator: Decimal | None, denominator: Decimal | None) -> Decimal | None:
+    def _safe_pct_ratio(
+        self, numerator: Decimal | None, denominator: Decimal | None
+    ) -> Decimal | None:
         """把两个金额或数量安全转换为百分比。
 
         创建日期：2026-06-10
@@ -1618,7 +1740,9 @@ class LimitUpPushService:
             "market_context": context.get("market_context") or {},
             "first_board": first_board,
             "selected_chain_stocks": self._stocks_for_final_prompt(selected_chain, supplement_map),
-            "selected_high_board_stocks": self._stocks_for_final_prompt(selected_high, supplement_map),
+            "selected_high_board_stocks": self._stocks_for_final_prompt(
+                selected_high, supplement_map
+            ),
             "chain_focus_html": chain_focus.get("html_fragment"),
             "high_board_focus_html": high_focus.get("html_fragment"),
         }
@@ -1663,22 +1787,38 @@ class LimitUpPushService:
             stage_quality.append(self._stage_quality_item(stage_key, "CACHE_HIT", "复用阶段缓存"))
             return cached
         try:
-            content = self._chat_completion_with_reasoning(user_prompt, system_prompt, json_mode=True)
+            content = self._chat_completion_with_reasoning(
+                user_prompt, system_prompt, json_mode=True
+            )
             payload = self._extract_json_payload(content)
             if payload is None:
                 payload = fallback_payload
                 payload["parse_fallback"] = True
-                stage_quality.append(self._stage_quality_item(stage_key, "PARSE_FALLBACK", "LLM JSON 解析失败，使用确定性兜底"))
+                stage_quality.append(
+                    self._stage_quality_item(
+                        stage_key, "PARSE_FALLBACK", "LLM JSON 解析失败，使用确定性兜底"
+                    )
+                )
             else:
-                stage_quality.append(self._stage_quality_item(stage_key, "OK", "阶段 LLM 输出已解析"))
+                stage_quality.append(
+                    self._stage_quality_item(stage_key, "OK", "阶段 LLM 输出已解析")
+                )
             payload.setdefault("raw_content", content)
             self._save_stage_cache(stage_key, stage_input, payload, payload.get("html_fragment"))
             return payload
         except Exception as exc:
             fallback_payload["error_fallback"] = True
             fallback_payload["error_message"] = str(exc)[:300]
-            stage_quality.append(self._stage_quality_item(stage_key, "FAILED_FALLBACK", str(exc)[:300]))
-            self._save_stage_cache(stage_key, stage_input, fallback_payload, fallback_payload.get("html_fragment"), failed=True)
+            stage_quality.append(
+                self._stage_quality_item(stage_key, "FAILED_FALLBACK", str(exc)[:300])
+            )
+            self._save_stage_cache(
+                stage_key,
+                stage_input,
+                fallback_payload,
+                fallback_payload.get("html_fragment"),
+                failed=True,
+            )
             return fallback_payload
 
     def _run_text_stage(
@@ -1705,48 +1845,78 @@ class LimitUpPushService:
             if stage_key not in {LIMIT_UP_STAGE_CHAIN_FOCUS, LIMIT_UP_STAGE_HIGH_BOARD_FOCUS}:
                 raise
             payload = self._fallback_text_stage(stage_key, stage_input, str(exc)[:300])
-            stage_quality.append(self._stage_quality_item(stage_key, "FAILED_FALLBACK", str(exc)[:300]))
-            self._save_stage_cache(stage_key, stage_input, payload, payload["html_fragment"], failed=True)
+            stage_quality.append(
+                self._stage_quality_item(stage_key, "FAILED_FALLBACK", str(exc)[:300])
+            )
+            self._save_stage_cache(
+                stage_key, stage_input, payload, payload["html_fragment"], failed=True
+            )
             return payload
         payload = {"content": content, "html_fragment": self._html_fragment(content)}
         stage_quality.append(self._stage_quality_item(stage_key, "OK", "阶段 HTML 已生成"))
         self._save_stage_cache(stage_key, stage_input, payload, payload["html_fragment"])
         return payload
 
-    def _fallback_text_stage(self, stage_key: str, stage_input: dict[str, Any], error_message: str) -> dict[str, Any]:
+    def _fallback_text_stage(
+        self, stage_key: str, stage_input: dict[str, Any], error_message: str
+    ) -> dict[str, Any]:
         """构造重点分析文本阶段的确定性降级 HTML。
 
         创建日期：2026-06-10
         author: sunshengxian
         """
 
-        rows = stage_input.get("selected_chain_stocks") or stage_input.get("selected_high_board_stocks") or []
-        title = "两连三连重点接力" if stage_key == LIMIT_UP_STAGE_CHAIN_FOCUS else "高连板与龙头观察"
+        rows = (
+            stage_input.get("selected_chain_stocks")
+            or stage_input.get("selected_high_board_stocks")
+            or []
+        )
+        title = (
+            "两连三连重点接力" if stage_key == LIMIT_UP_STAGE_CHAIN_FOCUS else "高连板与龙头观察"
+        )
         table_rows = []
         for row in rows:
             selection = row.get("selection") if isinstance(row.get("selection"), dict) else {}
             code = str(row.get("ts_code") or "")
-            supplement = (stage_input.get("supplements") or {}).get(code, {}) if isinstance(stage_input.get("supplements"), dict) else {}
+            supplement = (
+                (stage_input.get("supplements") or {}).get(code, {})
+                if isinstance(stage_input.get("supplements"), dict)
+                else {}
+            )
             cyq_summary = supplement.get("cyq_summary") if isinstance(supplement, dict) else {}
+            reason_text = str(
+                selection.get("selection_reason")
+                or selection.get("leader_role")
+                or "按确定性规则保留观察"
+            )
+            premium_text = str((cyq_summary or {}).get("next_day_premium_bias") or "缺失")
             table_rows.append(
                 "<tr>"
                 f"<td>{html.escape(str(row.get('name') or code))}</td>"
                 f"<td>{html.escape(str(row.get('status') or '未识别'))}</td>"
                 f"<td>{html.escape(str(row.get('theme') or '未标注'))}</td>"
-                f"<td>{html.escape(str(selection.get('selection_reason') or selection.get('leader_role') or '按确定性规则保留观察'))}</td>"
-                f"<td>{html.escape(str((cyq_summary or {}).get('next_day_premium_bias') or '缺失'))}</td>"
+                f"<td>{html.escape(reason_text)}</td>"
+                f"<td>{html.escape(premium_text)}</td>"
                 "</tr>"
             )
         body = "".join(table_rows) or "<tr><td colspan=\"5\">暂无入选标的</td></tr>"
         fragment = (
             f"<h3>{title}</h3>"
-            f"<p>LLM 重点分析不可用，已按入选理由、连板状态和筹码摘要生成降级观察表。错误摘要：{html.escape(error_message)}</p>"
+            "<p>LLM 重点分析不可用，已按入选理由、连板状态和筹码摘要生成降级观察表。"
+            f"错误摘要：{html.escape(error_message)}</p>"
             "<table><thead><tr><th>股票</th><th>状态</th><th>题材</th><th>保留原因</th><th>筹码溢价</th></tr></thead><tbody>"
             f"{body}</tbody></table>"
         )
-        return {"content": fragment, "html_fragment": fragment, "error_fallback": True, "error_message": error_message}
+        return {
+            "content": fragment,
+            "html_fragment": fragment,
+            "error_fallback": True,
+            "error_message": error_message,
+        }
 
-    def _stage_cache_payload(self, stage_key: str, stage_input: dict[str, Any]) -> dict[str, Any] | None:
+    def _stage_cache_payload(
+        self, stage_key: str, stage_input: dict[str, Any]
+    ) -> dict[str, Any] | None:
         """按阶段输入哈希读取 READY 缓存。
 
         创建日期：2026-06-05
@@ -1843,12 +2013,16 @@ class LimitUpPushService:
         author: sunshengxian
         """
 
+        stage_input = {
+            "first_board_context": context.get("first_board_context"),
+            "market_context": context.get("market_context"),
+        }
         return (
             "请只分析首板题材发酵价值，不要逐股长篇展开。输出严格 JSON："
             "{\"html_fragment\":\"HTML片段\",\"theme_candidates\":[{\"theme\":\"题材\","
             "\"representative_stocks\":[\"股票\"],\"fermentation_value\":\"强/中/弱\","
             "\"reason\":\"理由\"}],\"risk_flags\":[\"风险\"]}。\n\n"
-            f"输入数据：\n{self._json_dumps({'first_board_context': context.get('first_board_context'), 'market_context': context.get('market_context')})}"
+            f"输入数据：\n{self._json_dumps(stage_input)}"
         )
 
     def _chain_selection_prompt(self, context: dict[str, Any]) -> str:
@@ -1881,7 +2055,8 @@ class LimitUpPushService:
         limit = self.settings.limit_up_push_high_board_focus_stock_limit
         return (
             f"请从四连及以上、空间板、题材龙头和高辨识度股票中挑选最多 {limit} 只高连板重点标的。"
-            "必须同时判断空间地位、题材带动性、高位风险、20cm/10cm制度差异和首封时间质量。输出严格 JSON："
+            "必须同时判断空间地位、题材带动性、高位风险、20cm/10cm制度差异和首封时间质量。"
+            "输出严格 JSON："
             "{\"selected_stocks\":[{\"ts_code\":\"代码\",\"name\":\"名称\",\"board_status\":\"5连板\","
             "\"theme\":\"题材\",\"leader_role\":\"空间板/题材龙头/高辨识度\","
             "\"score_detail\":{\"space_status\":\"强/中/弱\",\"theme_leadership\":\"强/中/弱\",\"seal_quality\":\"强/中/弱\",\"risk_control\":\"强/中/弱\"},"
@@ -1902,13 +2077,18 @@ class LimitUpPushService:
         author: sunshengxian
         """
 
+        stage_input = {
+            "selected_chain_stocks": selected_chain,
+            "supplements": supplements,
+            "market_context": context.get("market_context"),
+        }
         return (
             "请重点分析入选的两连、三连股票，每只不超过 150 字，禁止复述输入原文。"
             "分别覆盖晋级三板/四板可能性、下一个交易日溢价可能性、触发条件、失败条件、筹码压力和风险提示。"
             "必须输出次日竞价观察清单：给出竞价弱于多少放弃、合理高开区间、过高开警惕点。"
             "20cm 标的要提示更深断板回撤，尾盘首封或多次开板要降级。"
             "输出 HTML 片段，使用 h3、p、ul、table、strong，不要输出 html/body。\n\n"
-            f"输入数据：\n{self._json_dumps({'selected_chain_stocks': selected_chain, 'supplements': supplements, 'market_context': context.get('market_context')})}"
+            f"输入数据：\n{self._json_dumps(stage_input)}"
         )
 
     def _high_board_focus_prompt(
@@ -1923,13 +2103,19 @@ class LimitUpPushService:
         author: sunshengxian
         """
 
+        stage_input = {
+            "selected_high_board_stocks": selected_high,
+            "supplements": supplements,
+            "market_context": context.get("market_context"),
+        }
         return (
-            "请分析入选高连板和龙头标的，每只不超过 150 字，允许给出重点观察、谨慎观察、放弃观察分层，"
+            "请分析入选高连板和龙头标的，每只不超过 150 字，"
+            "允许给出重点观察、谨慎观察、放弃观察分层，"
             "但必须显著提示高位接力、断板、回撤和流动性风险。重点判断空间板地位、"
             "题材带动性、分歧承接和下一个交易日溢价/冲高可能性。"
             "必须输出次日竞价观察清单，并用 emotion_cycle 约束高位接力口径。输出 HTML 片段，"
             "不要输出 html/body。\n\n"
-            f"输入数据：\n{self._json_dumps({'selected_high_board_stocks': selected_high, 'supplements': supplements, 'market_context': context.get('market_context')})}"
+            f"输入数据：\n{self._json_dumps(stage_input)}"
         )
 
     def _final_report_prompt(self, final_input: dict[str, Any]) -> str:
@@ -1968,7 +2154,10 @@ class LimitUpPushService:
             if isinstance(item, dict)
         ]
         return {
-            "html_fragment": "<h3>首板题材发酵</h3><p>首板阶段使用题材聚合兜底，重点观察涨停数量靠前的题材是否继续扩散。</p>",
+            "html_fragment": (
+                "<h3>首板题材发酵</h3>"
+                "<p>首板阶段使用题材聚合兜底，重点观察涨停数量靠前的题材是否继续扩散。</p>"
+            ),
             "theme_candidates": rows,
             "risk_flags": ["首板题材仅代表当日发酵线索，不代表次日延续。"],
         }
@@ -2051,7 +2240,9 @@ class LimitUpPushService:
         # 兜底排序偏向更高连板、更强封单和更活跃量能，保证 LLM JSON 失败时仍能产出可解释候选池。
         return sorted(rows, key=score, reverse=True)[: max(limit, 1)]
 
-    def _stocks_for_final_prompt(self, rows: list[dict[str, Any]], supplements: dict[str, Any]) -> list[dict[str, Any]]:
+    def _stocks_for_final_prompt(
+        self, rows: list[dict[str, Any]], supplements: dict[str, Any]
+    ) -> list[dict[str, Any]]:
         """压缩最终合成阶段所需的入选股票字段。
 
         创建日期：2026-06-10
@@ -2078,7 +2269,9 @@ class LimitUpPushService:
                     "open_times": row.get("open_times"),
                     "cyq_summary": {
                         "next_day_premium_bias": (cyq_summary or {}).get("next_day_premium_bias"),
-                        "upper_chip_pressure_pct": (cyq_summary or {}).get("upper_chip_pressure_pct"),
+                        "upper_chip_pressure_pct": (cyq_summary or {}).get(
+                            "upper_chip_pressure_pct"
+                        ),
                     },
                 }
             )
@@ -2136,7 +2329,9 @@ class LimitUpPushService:
         """
 
         code = str(row.get("ts_code") or "")
-        start_date = trade_date - timedelta(days=max(self.settings.limit_up_push_cyq_lookback_days, 1))
+        start_date = trade_date - timedelta(
+            days=max(self.settings.limit_up_push_cyq_lookback_days, 1)
+        )
         cached = self.db.scalar(
             select(LimitUpStockSupplementCache)
             .where(
@@ -2147,7 +2342,10 @@ class LimitUpPushService:
             )
             .limit(1)
         )
-        if cached is not None and cached.status in {LIMIT_UP_SUPPLEMENT_STATUS_READY, LIMIT_UP_SUPPLEMENT_STATUS_PARTIAL}:
+        if cached is not None and cached.status in {
+            LIMIT_UP_SUPPLEMENT_STATUS_READY,
+            LIMIT_UP_SUPPLEMENT_STATUS_PARTIAL,
+        }:
             return {
                 "status": cached.status,
                 "cyq_perf": self._json_loads_list(cached.cyq_perf_json),
@@ -2155,11 +2353,21 @@ class LimitUpPushService:
                 "data_quality": self._json_loads_list(cached.data_quality_json),
             }
         quality: list[dict[str, Any]] = []
-        perf_rows = self._query_cyq_api("cyq_perf", code, start_date, trade_date, CYQ_PERF_FIELDS, quality)
-        chips_rows = self._query_cyq_api("cyq_chips", code, start_date, trade_date, CYQ_CHIPS_FIELDS, quality)
+        perf_rows = self._query_cyq_api(
+            "cyq_perf", code, start_date, trade_date, CYQ_PERF_FIELDS, quality
+        )
+        chips_rows = self._query_cyq_api(
+            "cyq_chips", code, start_date, trade_date, CYQ_CHIPS_FIELDS, quality
+        )
         summary = self._cyq_summary(row, perf_rows, chips_rows)
-        status = LIMIT_UP_SUPPLEMENT_STATUS_READY if perf_rows and chips_rows else (
-            LIMIT_UP_SUPPLEMENT_STATUS_PARTIAL if perf_rows or chips_rows else LIMIT_UP_SUPPLEMENT_STATUS_FAILED
+        status = (
+            LIMIT_UP_SUPPLEMENT_STATUS_READY
+            if perf_rows and chips_rows
+            else (
+                LIMIT_UP_SUPPLEMENT_STATUS_PARTIAL
+                if perf_rows or chips_rows
+                else LIMIT_UP_SUPPLEMENT_STATUS_FAILED
+            )
         )
         cache = cached or LimitUpStockSupplementCache(
             trade_date=trade_date,
@@ -2173,7 +2381,11 @@ class LimitUpPushService:
         cache.cyq_chips_summary_json = self._json_dumps(summary)
         cache.data_quality_json = self._json_dumps(quality)
         cache.status = status
-        cache.error_message = None if status != LIMIT_UP_SUPPLEMENT_STATUS_FAILED else "cyq_perf 与 cyq_chips 均无可用数据"
+        cache.error_message = (
+            None
+            if status != LIMIT_UP_SUPPLEMENT_STATUS_FAILED
+            else "cyq_perf 与 cyq_chips 均无可用数据"
+        )
         self.db.commit()
         return {
             "status": status,
@@ -2229,13 +2441,17 @@ class LimitUpPushService:
         sorted_perf = sorted(perf_rows, key=lambda item: str(item.get("trade_date") or ""))
         latest_perf = sorted_perf[-1] if sorted_perf else {}
         first_perf = sorted_perf[0] if sorted_perf else {}
-        technical = stock_row.get("technical") if isinstance(stock_row.get("technical"), dict) else {}
+        technical = (
+            stock_row.get("technical") if isinstance(stock_row.get("technical"), dict) else {}
+        )
         close = to_decimal(technical.get("close") or stock_row.get("close"))
         weight_avg = to_decimal(latest_perf.get("weight_avg"))
         winner_latest = to_decimal(latest_perf.get("winner_rate"))
         winner_first = to_decimal(first_perf.get("winner_rate"))
         latest_chip_date = max((str(row.get("trade_date") or "") for row in chips_rows), default="")
-        latest_chips = [row for row in chips_rows if str(row.get("trade_date") or "") == latest_chip_date]
+        latest_chips = [
+            row for row in chips_rows if str(row.get("trade_date") or "") == latest_chip_date
+        ]
         upper_pressure = self._chip_percent_sum(latest_chips, close, above=True)
         top3_percent = sorted(
             [to_decimal(row.get("percent")) or Decimal("0") for row in latest_chips],
@@ -2245,11 +2461,17 @@ class LimitUpPushService:
         if close and weight_avg:
             close_to_weight_avg = (close / weight_avg - Decimal("1")) * Decimal("100")
         if winner_latest is not None and winner_first is not None:
-            winner_trend = "上升" if winner_latest > winner_first else "下降" if winner_latest < winner_first else "稳定"
+            winner_trend = (
+                "上升"
+                if winner_latest > winner_first
+                else "下降" if winner_latest < winner_first else "稳定"
+            )
         else:
             winner_trend = "缺失"
         concentration_total = sum(top3_percent, Decimal("0"))
-        concentration = "集中" if concentration_total >= Decimal("50") else "分散" if latest_chips else "缺失"
+        concentration = (
+            "集中" if concentration_total >= Decimal("50") else "分散" if latest_chips else "缺失"
+        )
         if upper_pressure is None:
             premium_bias = "缺失"
         elif upper_pressure <= Decimal("25"):
@@ -2326,7 +2548,9 @@ class LimitUpPushService:
         stripped = re.sub(r"\s*```$", "", stripped)
         if "<" in stripped and ">" in stripped:
             return stripped
-        return "<p>" + html.escape(stripped).replace("\n\n", "</p><p>").replace("\n", "<br>") + "</p>"
+        return (
+            "<p>" + html.escape(stripped).replace("\n\n", "</p><p>").replace("\n", "<br>") + "</p>"
+        )
 
     def _stage_quality_item(self, stage_key: str, status: str, message: str) -> dict[str, Any]:
         """生成阶段质量记录。
@@ -2372,7 +2596,9 @@ class LimitUpPushService:
         return self._today_local()
 
 
-    def _chat_completion_with_reasoning(self, prompt: str, system_prompt: str, json_mode: bool = False) -> str:
+    def _chat_completion_with_reasoning(
+        self, prompt: str, system_prompt: str, json_mode: bool = False
+    ) -> str:
         # 打板报告使用独立配置模型，不影响项目当前默认问答模型；
         # reasoning_effort 随 payload 透传给兼容接口，便于 DeepSeek Pro 用更强推理预算生成复盘。
         api_key = self.settings.resolve_llm_api_key()
@@ -2463,27 +2689,33 @@ class LimitUpPushService:
         author: sunshengxian
         """
 
-        return """
-你是专注 A 股打板、连板生态和短线题材周期的复盘分析师。
-你会阅读系统提供的结构化数据，输出适合 PushPlus 长 HTML 展示的完整中文报告。
-
-要求：
-1. 你正在合成多轮分析结果：首板题材发酵、两连三连候选、筹码补数、高连板候选和最终重点分析。
-2. 重点分析涨停质量、题材强度、市场情绪周期、个股地位、二连三连晋级可能性、高连板龙头地位、资金接力、筹码压力、下一个交易日溢价可能性和失败信号。
-3. 必须分别列出“两连板”“三连板”表格，
-   表格至少包含股票、题材/原因、封板或连板状态、强弱观察字段；
-   若某类数据为空，也要保留小节并说明缺失原因或不确定性。
-4. 两连板、三连板都必须在表格后做重点分析：
-   两连板关注晋级三板条件，三连板关注空间板地位、分歧承接和断板风险。
-   首板可根据题材发酵价值简述，不强制输出表格。
-5. 高连板部分允许给出重点观察、谨慎观察和放弃观察分层，但必须显著提示高位接力、断板、回撤和流动性风险。
-6. 如果输入包含 cyq_perf 或 cyq_chips 筹码摘要，要把获利盘、成本中枢、上方筹码压力和次日溢价阻力纳入判断。
-7. 必须先根据 emotion_cycle（炸板率、晋级率、昨日涨停溢价、最高板变化）定位启动期/发酵期/高潮期/分歧期/退潮期/冰点期，并让个股观察与周期定位一致。
-8. 可以自由组织报告结构，不需要机械打分；但必须给出清晰的后续观察条件、反证条件和风险点。
-9. 不编造材料中没有的精确数值；数据缺失时说明不确定性，不要假装已经看到。
-10. 输出纯 HTML 片段，不要 Markdown 代码块，不要包裹 html/body 标签。
-11. HTML 需要适合微信阅读：使用 h2/h3、p、ul、ol、table、strong，避免脚本和外链样式。
-""".strip()
+        return (
+            "你是专注 A 股打板、连板生态和短线题材周期的复盘分析师。\n"
+            "你会阅读系统提供的结构化数据，输出适合 PushPlus 长 HTML 展示的完整中文报告。\n"
+            "\n"
+            "要求：\n"
+            "1. 你正在合成多轮分析结果：首板题材发酵、两连三连候选、筹码补数、"
+            "高连板候选和最终重点分析。\n"
+            "2. 重点分析涨停质量、题材强度、市场情绪周期、个股地位、二连三连晋级可能性、"
+            "高连板龙头地位、资金接力、筹码压力、下一个交易日溢价可能性和失败信号。\n"
+            "3. 必须分别列出“两连板”“三连板”表格，\n"
+            "   表格至少包含股票、题材/原因、封板或连板状态、强弱观察字段；\n"
+            "   若某类数据为空，也要保留小节并说明缺失原因或不确定性。\n"
+            "4. 两连板、三连板都必须在表格后做重点分析：\n"
+            "   两连板关注晋级三板条件，三连板关注空间板地位、分歧承接和断板风险。\n"
+            "   首板可根据题材发酵价值简述，不强制输出表格。\n"
+            "5. 高连板部分允许给出重点观察、谨慎观察和放弃观察分层，"
+            "但必须显著提示高位接力、断板、回撤和流动性风险。\n"
+            "6. 如果输入包含 cyq_perf 或 cyq_chips 筹码摘要，"
+            "要把获利盘、成本中枢、上方筹码压力和次日溢价阻力纳入判断。\n"
+            "7. 必须先根据 emotion_cycle（炸板率、晋级率、昨日涨停溢价、最高板变化）"
+            "定位启动期/发酵期/高潮期/分歧期/退潮期/冰点期，并让个股观察与周期定位一致。\n"
+            "8. 可以自由组织报告结构，不需要机械打分；"
+            "但必须给出清晰的后续观察条件、反证条件和风险点。\n"
+            "9. 不编造材料中没有的精确数值；数据缺失时说明不确定性，不要假装已经看到。\n"
+            "10. 输出纯 HTML 片段，不要 Markdown 代码块，不要包裹 html/body 标签。\n"
+            "11. HTML 需要适合微信阅读：使用 h2/h3、p、ul、ol、table、strong，避免脚本和外链样式。"
+        )
 
     def _normalize_report_html(self, content: str) -> str:
         stripped = content.strip()
@@ -2491,7 +2723,9 @@ class LimitUpPushService:
         stripped = re.sub(r"\s*```$", "", stripped)
         if "<" in stripped and ">" in stripped:
             return self._wrap_html(stripped)
-        return self._wrap_html("<p>" + html.escape(stripped).replace("\n\n", "</p><p>").replace("\n", "<br>") + "</p>")
+        return self._wrap_html(
+            "<p>" + html.escape(stripped).replace("\n\n", "</p><p>").replace("\n", "<br>") + "</p>"
+        )
 
     def _wrap_html(self, body: str) -> str:
         return (
@@ -2725,7 +2959,9 @@ class LimitUpPushService:
         scheduled_kind: str,
         scheduled_at: datetime,
     ) -> LimitUpPushDelivery:
-        existing_plan = self._delivery_for_business_plan(analysis, user_id, scheduled_kind, scheduled_at)
+        existing_plan = self._delivery_for_business_plan(
+            analysis, user_id, scheduled_kind, scheduled_at
+        )
         if existing_plan is not None:
             return existing_plan
         delivery = LimitUpPushDelivery(
@@ -2759,20 +2995,32 @@ class LimitUpPushService:
 
         log = self.db.scalar(
             select(PushplusMessageLog.id)
-            .where(PushplusMessageLog.user_id == user_id, PushplusMessageLog.push_message_id == message_id)
+            .where(
+                PushplusMessageLog.user_id == user_id,
+                PushplusMessageLog.push_message_id == message_id,
+            )
             .order_by(desc(PushplusMessageLog.id))
             .limit(1)
         )
         return log
 
-    def _recipient_item(self, user: AppUser, config: LimitUpPushRecipient | None) -> LimitUpRecipientItem:
+    def _recipient_item(
+        self, user: AppUser, config: LimitUpPushRecipient | None
+    ) -> LimitUpRecipientItem:
         binding = self.db.scalar(
-            select(PushplusBinding).where(PushplusBinding.user_id == user.id, PushplusBinding.is_active.is_(True))
+            select(PushplusBinding).where(
+                PushplusBinding.user_id == user.id, PushplusBinding.is_active.is_(True)
+            )
         )
-        can_push = binding is not None or self.notification_service.can_send_pushplus_to_user(user.id)
+        can_push = (
+            binding is not None
+            or self.notification_service.can_send_pushplus_to_user(user.id)
+        )
         binding_name = None
         if binding is not None:
-            binding_name = binding.friend_remark or binding.friend_nick_name or f"好友 {binding.friend_id}"
+            binding_name = (
+                binding.friend_remark or binding.friend_nick_name or f"好友 {binding.friend_id}"
+            )
         elif can_push:
             binding_name = "默认管理员个人通道"
         return LimitUpRecipientItem(
@@ -2780,7 +3028,9 @@ class LimitUpPushService:
             username=user.username,
             display_name=user.display_name,
             enabled=bool(config.enabled) if config is not None else False,
-            weekend_replay_enabled=bool(config.weekend_replay_enabled) if config is not None else True,
+            weekend_replay_enabled=(
+                bool(config.weekend_replay_enabled) if config is not None else True
+            ),
             can_push=can_push,
             binding_name=binding_name,
         )
@@ -2836,7 +3086,9 @@ class LimitUpPushService:
         while True:
             token = secrets.token_urlsafe(24)
             exists = self.db.scalar(
-                select(LimitUpReportShare.id).where(LimitUpReportShare.share_token == token).limit(1)
+                select(LimitUpReportShare.id)
+                .where(LimitUpReportShare.share_token == token)
+                .limit(1)
             )
             if exists is None:
                 return token
@@ -2869,7 +3121,10 @@ class LimitUpPushService:
         pipeline = context.get("pipeline") if isinstance(context, dict) else None
         pipeline = pipeline if isinstance(pipeline, dict) else {}
         stage_quality = pipeline.get("stage_quality") or []
-        return any(isinstance(item, dict) and item.get("status") == "FAILED_FALLBACK" for item in stage_quality)
+        return any(
+            isinstance(item, dict) and item.get("status") == "FAILED_FALLBACK"
+            for item in stage_quality
+        )
 
     def _normalize_api_row(self, row: dict[str, Any]) -> dict[str, Any]:
         normalized: dict[str, Any] = {}
@@ -2884,7 +3139,9 @@ class LimitUpPushService:
                 normalized[key] = value
         if "trade_date" in normalized:
             parsed = parse_tushare_date(normalized.get("trade_date"))
-            normalized["trade_date"] = parsed.isoformat() if parsed else normalized.get("trade_date")
+            normalized["trade_date"] = (
+                parsed.isoformat() if parsed else normalized.get("trade_date")
+            )
         return normalized
 
     def _is_st_stock_row(self, row: dict[str, Any]) -> bool:
@@ -2901,7 +3158,9 @@ class LimitUpPushService:
         return "ST" in name
 
     def _snapshot_hash(self, context: dict[str, Any]) -> str:
-        return hashlib.sha256(self._json_dumps(self._canonicalize_for_hash(context)).encode("utf-8")).hexdigest()
+        return hashlib.sha256(
+            self._json_dumps(self._canonicalize_for_hash(context)).encode("utf-8")
+        ).hexdigest()
 
     def _canonicalize_for_hash(self, value: Any) -> Any:
         """递归规范化快照对象，避免列表行序扰动哈希。

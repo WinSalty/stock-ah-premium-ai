@@ -62,7 +62,12 @@ def generate_and_push_limit_up_job() -> None:
     with SessionLocal() as db:
         analysis, pushed = LimitUpPushService(db).ensure_latest_analysis_and_push()
         if analysis is not None:
-            logger.info("打板报告检查完成 report_id=%s status=%s pushed=%s", analysis.id, analysis.status, pushed)
+            logger.info(
+                "打板报告检查完成 report_id=%s status=%s pushed=%s",
+                analysis.id,
+                analysis.status,
+                pushed,
+            )
 
 
 def weekend_replay_limit_up_job() -> None:

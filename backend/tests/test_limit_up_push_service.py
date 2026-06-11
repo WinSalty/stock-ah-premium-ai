@@ -11,7 +11,7 @@ from app.core.config import Settings
 from app.db.base import Base
 from app.db.models.auth import AppUser
 from app.db.models.chat import LlmCallMetric
-from app.db.models.market import ADailyQuote, ATradeCalendar
+from app.db.models.market import ATradeCalendar
 from app.db.models.notification import (
     LimitUpAnalysisCache,
     LimitUpPushRecipient,
@@ -68,7 +68,9 @@ class FakeNotificationService:
     def can_send_pushplus_to_user(self, user_id: int) -> bool:
         return True
 
-    def send_pushplus_message(self, user_id: int, title: str, content: str, alert_event_id: int | None = None) -> str:
+    def send_pushplus_message(
+        self, user_id: int, title: str, content: str, alert_event_id: int | None = None
+    ) -> str:
         self.sent.append((user_id, title, content))
         return f"msg-{len(self.sent)}"
 
@@ -132,7 +134,12 @@ def test_latest_trade_date_uses_previous_trade_day_for_kpl() -> None:
     db.commit()
     service = LimitUpPushService(
         db,
-        settings=Settings(llm_api_key=None, llm_api_key_file=None, tushare_token="token", tushare_token_file=None),
+        settings=Settings(
+            llm_api_key=None,
+            llm_api_key_file=None,
+            tushare_token="token",
+            tushare_token_file=None,
+        ),
         tushare_client=FakeTushareClient({}),
         notification_service=FakeNotificationService(),
     )
@@ -152,7 +159,12 @@ def test_limit_up_analysis_waits_for_kpl_data() -> None:
     db.commit()
     service = LimitUpPushService(
         db,
-        settings=Settings(llm_api_key=None, llm_api_key_file=None, tushare_token="token", tushare_token_file=None),
+        settings=Settings(
+            llm_api_key=None,
+            llm_api_key_file=None,
+            tushare_token="token",
+            tushare_token_file=None,
+        ),
         tushare_client=FakeTushareClient({}),
         notification_service=FakeNotificationService(),
     )
@@ -280,7 +292,12 @@ def test_limit_up_snapshot_hash_is_stable_for_row_order() -> None:
     db = make_db()
     service = LimitUpPushService(
         db,
-        settings=Settings(llm_api_key="key", llm_api_key_file=None, tushare_token="token", tushare_token_file=None),
+        settings=Settings(
+            llm_api_key="key",
+            llm_api_key_file=None,
+            tushare_token="token",
+            tushare_token_file=None,
+        ),
         tushare_client=FakeTushareClient({}),
         notification_service=FakeNotificationService(),
     )
@@ -317,14 +334,31 @@ def test_limit_up_report_cache_reuses_ready_when_snapshot_order_changes(monkeypa
     fake_client = FakeTushareClient(
         {
             "kpl_list": [
-                {"ts_code": "000002.SZ", "name": "测试乙", "trade_date": "20260508", "status": "2连板", "tag": "涨停"},
-                {"ts_code": "000001.SZ", "name": "测试甲", "trade_date": "20260508", "status": "首板", "tag": "涨停"},
+                {
+                    "ts_code": "000002.SZ",
+                    "name": "测试乙",
+                    "trade_date": "20260508",
+                    "status": "2连板",
+                    "tag": "涨停",
+                },
+                {
+                    "ts_code": "000001.SZ",
+                    "name": "测试甲",
+                    "trade_date": "20260508",
+                    "status": "首板",
+                    "tag": "涨停",
+                },
             ]
         }
     )
     service = LimitUpPushService(
         db,
-        settings=Settings(llm_api_key="key", llm_api_key_file=None, tushare_token="token", tushare_token_file=None),
+        settings=Settings(
+            llm_api_key="key",
+            llm_api_key_file=None,
+            tushare_token="token",
+            tushare_token_file=None,
+        ),
         tushare_client=fake_client,
         notification_service=fake_notification,
     )
@@ -372,7 +406,13 @@ def test_limit_up_stale_generating_snapshot_retries(monkeypatch) -> None:
         tushare_client=FakeTushareClient(
             {
                 "kpl_list": [
-                    {"ts_code": "000001.SZ", "name": "测试股份", "trade_date": "20260508", "status": "2连板", "tag": "涨停"}
+                    {
+                        "ts_code": "000001.SZ",
+                        "name": "测试股份",
+                        "trade_date": "20260508",
+                        "status": "2连板",
+                        "tag": "涨停",
+                    }
                 ]
             }
         ),
@@ -382,7 +422,9 @@ def test_limit_up_stale_generating_snapshot_retries(monkeypatch) -> None:
         trade_date=date(2026, 5, 8),
         model="deepseek-v4-pro",
         prompt_version="limit-up-v1",
-        data_snapshot_hash=service._snapshot_hash(service._build_context_snapshot(date(2026, 5, 8))["context"]),
+        data_snapshot_hash=service._snapshot_hash(
+            service._build_context_snapshot(date(2026, 5, 8))["context"]
+        ),
         status="GENERATING",
         title="旧报告",
     )
@@ -422,7 +464,13 @@ def test_limit_up_recent_generating_snapshot_is_not_reset(monkeypatch) -> None:
         tushare_client=FakeTushareClient(
             {
                 "kpl_list": [
-                    {"ts_code": "000001.SZ", "name": "测试股份", "trade_date": "20260508", "status": "2连板", "tag": "涨停"}
+                    {
+                        "ts_code": "000001.SZ",
+                        "name": "测试股份",
+                        "trade_date": "20260508",
+                        "status": "2连板",
+                        "tag": "涨停",
+                    }
                 ]
             }
         ),
@@ -442,7 +490,11 @@ def test_limit_up_recent_generating_snapshot_is_not_reset(monkeypatch) -> None:
     db.commit()
     db.refresh(generating)
     monkeypatch.setattr(service, "_now_naive", lambda: datetime(2026, 5, 8, 0, 40, 0))
-    monkeypatch.setattr(service, "_generate_llm_report", lambda context: (_ for _ in ()).throw(AssertionError("不应重跑")))
+    monkeypatch.setattr(
+        service,
+        "_generate_llm_report",
+        lambda context: (_ for _ in ()).throw(AssertionError("不应重跑")),
+    )
 
     current = service.ensure_analysis_for_trade_date(date(2026, 5, 8))
 
@@ -461,7 +513,12 @@ def test_limit_up_market_emotion_uses_explicit_levels_and_cycle_metrics() -> Non
     db = make_db()
     service = LimitUpPushService(
         db,
-        settings=Settings(llm_api_key="key", llm_api_key_file=None, tushare_token="token", tushare_token_file=None),
+        settings=Settings(
+            llm_api_key="key",
+            llm_api_key_file=None,
+            tushare_token="token",
+            tushare_token_file=None,
+        ),
         tushare_client=FakeTushareClient({}),
         notification_service=FakeNotificationService(),
     )
@@ -519,7 +576,12 @@ def test_limit_up_json_stage_requests_json_mode(monkeypatch) -> None:
     captured: list[bool] = []
     service = LimitUpPushService(
         db,
-        settings=Settings(llm_api_key="key", llm_api_key_file=None, tushare_token="token", tushare_token_file=None),
+        settings=Settings(
+            llm_api_key="key",
+            llm_api_key_file=None,
+            tushare_token="token",
+            tushare_token_file=None,
+        ),
         tushare_client=FakeTushareClient({}),
         notification_service=FakeNotificationService(),
     )
@@ -529,7 +591,14 @@ def test_limit_up_json_stage_requests_json_mode(monkeypatch) -> None:
         return '{"selected_stocks": []}'
 
     monkeypatch.setattr(service, "_chat_completion_with_reasoning", fake_chat)
-    service._run_json_stage("CHAIN_SELECTION", {"trade_date": "2026-05-08"}, "system", "user", {"selected_stocks": []}, [])
+    service._run_json_stage(
+        "CHAIN_SELECTION",
+        {"trade_date": "2026-05-08"},
+        "system",
+        "user",
+        {"selected_stocks": []},
+        [],
+    )
 
     assert captured == [True]
 
@@ -544,11 +613,20 @@ def test_limit_up_focus_text_stage_falls_back_on_llm_error(monkeypatch) -> None:
     db = make_db()
     service = LimitUpPushService(
         db,
-        settings=Settings(llm_api_key="key", llm_api_key_file=None, tushare_token="token", tushare_token_file=None),
+        settings=Settings(
+            llm_api_key="key",
+            llm_api_key_file=None,
+            tushare_token="token",
+            tushare_token_file=None,
+        ),
         tushare_client=FakeTushareClient({}),
         notification_service=FakeNotificationService(),
     )
-    monkeypatch.setattr(service, "_chat_completion_with_reasoning", lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("模型异常")))
+    monkeypatch.setattr(
+        service,
+        "_chat_completion_with_reasoning",
+        lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("模型异常")),
+    )
     stage_quality: list[dict[str, object]] = []
 
     payload = service._run_text_stage(
@@ -586,7 +664,12 @@ def test_limit_up_focus_codes_use_board_level_for_multi_day_board() -> None:
     db = make_db()
     service = LimitUpPushService(
         db,
-        settings=Settings(llm_api_key="key", llm_api_key_file=None, tushare_token="token", tushare_token_file=None),
+        settings=Settings(
+            llm_api_key="key",
+            llm_api_key_file=None,
+            tushare_token="token",
+            tushare_token_file=None,
+        ),
         tushare_client=FakeTushareClient({}),
         notification_service=FakeNotificationService(),
     )
@@ -626,7 +709,12 @@ def test_limit_up_report_list_marks_stage_fallback() -> None:
     db.commit()
     service = LimitUpPushService(
         db,
-        settings=Settings(llm_api_key="key", llm_api_key_file=None, tushare_token="token", tushare_token_file=None),
+        settings=Settings(
+            llm_api_key="key",
+            llm_api_key_file=None,
+            tushare_token="token",
+            tushare_token_file=None,
+        ),
         tushare_client=FakeTushareClient({}),
         notification_service=FakeNotificationService(),
     )
@@ -716,7 +804,12 @@ def test_limit_up_context_filters_st_stocks(monkeypatch) -> None:
     db = make_db()
     service = LimitUpPushService(
         db,
-        settings=Settings(llm_api_key="key", llm_api_key_file=None, tushare_token="token", tushare_token_file=None),
+        settings=Settings(
+            llm_api_key="key",
+            llm_api_key_file=None,
+            tushare_token="token",
+            tushare_token_file=None,
+        ),
         tushare_client=FakeTushareClient(
             {
                 "kpl_list": [
@@ -797,7 +890,12 @@ def test_limit_up_push_uses_enabled_system_users(monkeypatch) -> None:
     fake_notification = FakeNotificationService()
     service = LimitUpPushService(
         db,
-        settings=Settings(llm_api_key="key", llm_api_key_file=None, tushare_token="token", tushare_token_file=None),
+        settings=Settings(
+            llm_api_key="key",
+            llm_api_key_file=None,
+            tushare_token="token",
+            tushare_token_file=None,
+        ),
         tushare_client=FakeTushareClient({}),
         notification_service=fake_notification,
     )
@@ -831,10 +929,14 @@ def test_weekend_replay_respects_recipient_preference(monkeypatch) -> None:
 
     db = make_db()
     enabled_user = add_user(db)
-    disabled_user = AppUser(username="weekend-off", password_hash="hash", role="USER", is_active=True)
+    disabled_user = AppUser(
+        username="weekend-off", password_hash="hash", role="USER", is_active=True
+    )
     db.add(disabled_user)
     db.flush()
-    db.add(LimitUpPushRecipient(user_id=disabled_user.id, enabled=True, weekend_replay_enabled=False))
+    db.add(
+        LimitUpPushRecipient(user_id=disabled_user.id, enabled=True, weekend_replay_enabled=False)
+    )
     analysis = LimitUpAnalysisCache(
         trade_date=date(2026, 5, 8),
         model="deepseek-v4-pro",
@@ -850,7 +952,12 @@ def test_weekend_replay_respects_recipient_preference(monkeypatch) -> None:
     fake_notification = FakeNotificationService()
     service = LimitUpPushService(
         db,
-        settings=Settings(llm_api_key="key", llm_api_key_file=None, tushare_token="token", tushare_token_file=None),
+        settings=Settings(
+            llm_api_key="key",
+            llm_api_key_file=None,
+            tushare_token="token",
+            tushare_token_file=None,
+        ),
         tushare_client=FakeTushareClient({}),
         notification_service=fake_notification,
     )
@@ -891,7 +998,12 @@ def test_limit_up_push_only_targets_configured_recipients(monkeypatch) -> None:
     db.refresh(analysis)
     service = LimitUpPushService(
         db,
-        settings=Settings(llm_api_key="key", llm_api_key_file=None, tushare_token="token", tushare_token_file=None),
+        settings=Settings(
+            llm_api_key="key",
+            llm_api_key_file=None,
+            tushare_token="token",
+            tushare_token_file=None,
+        ),
         tushare_client=FakeTushareClient({}),
         notification_service=fake_notification,
     )
@@ -929,14 +1041,23 @@ def test_update_recipients_syncs_limit_up_menu_permission() -> None:
     db.refresh(user)
     service = LimitUpPushService(
         db,
-        settings=Settings(llm_api_key="key", llm_api_key_file=None, tushare_token="token", tushare_token_file=None),
+        settings=Settings(
+            llm_api_key="key",
+            llm_api_key_file=None,
+            tushare_token="token",
+            tushare_token_file=None,
+        ),
         tushare_client=FakeTushareClient({}),
         notification_service=FakeNotificationService(),
     )
 
     service.update_recipients(
         LimitUpRecipientUpdateRequest(
-            recipients=[LimitUpRecipientUpdateItem(user_id=user.id, enabled=True, weekend_replay_enabled=False)]
+            recipients=[
+                LimitUpRecipientUpdateItem(
+                    user_id=user.id, enabled=True, weekend_replay_enabled=False
+                )
+            ]
         ),
         admin,
     )
@@ -947,7 +1068,9 @@ def test_update_recipients_syncs_limit_up_menu_permission() -> None:
     assert "limit_up_push" in AuthService(db).get_user_permissions(user)
 
     service.update_recipients(
-        LimitUpRecipientUpdateRequest(recipients=[LimitUpRecipientUpdateItem(user_id=user.id, enabled=False)]),
+        LimitUpRecipientUpdateRequest(
+            recipients=[LimitUpRecipientUpdateItem(user_id=user.id, enabled=False)]
+        ),
         admin,
     )
     db.refresh(user)
@@ -979,7 +1102,12 @@ def test_limit_up_report_share_allows_temporary_public_view() -> None:
     db.refresh(analysis)
     service = LimitUpPushService(
         db,
-        settings=Settings(llm_api_key="key", llm_api_key_file=None, tushare_token="token", tushare_token_file=None),
+        settings=Settings(
+            llm_api_key="key",
+            llm_api_key_file=None,
+            tushare_token="token",
+            tushare_token_file=None,
+        ),
         tushare_client=FakeTushareClient({}),
         notification_service=FakeNotificationService(),
     )
@@ -987,7 +1115,9 @@ def test_limit_up_report_share_allows_temporary_public_view() -> None:
     share = service.create_report_share(analysis.id, 24, admin, "http://localhost:5173")
     public_report = service.get_public_report(share.token)
 
-    stored_share = db.scalar(select(LimitUpReportShare).where(LimitUpReportShare.share_token == share.token))
+    stored_share = db.scalar(
+        select(LimitUpReportShare).where(LimitUpReportShare.share_token == share.token)
+    )
     assert public_report.title == "可分享报告"
     assert public_report.content_html == "<h2>报告</h2>"
     assert share.share_url == f"http://localhost:5173/limit-up-share/{share.token}"
@@ -1026,7 +1156,12 @@ def test_limit_up_report_share_rejects_expired_token() -> None:
     db.commit()
     service = LimitUpPushService(
         db,
-        settings=Settings(llm_api_key="key", llm_api_key_file=None, tushare_token="token", tushare_token_file=None),
+        settings=Settings(
+            llm_api_key="key",
+            llm_api_key_file=None,
+            tushare_token="token",
+            tushare_token_file=None,
+        ),
         tushare_client=FakeTushareClient({}),
         notification_service=FakeNotificationService(),
     )
@@ -1064,7 +1199,12 @@ def test_limit_up_report_share_supports_permanent_link() -> None:
     db.refresh(analysis)
     service = LimitUpPushService(
         db,
-        settings=Settings(llm_api_key="key", llm_api_key_file=None, tushare_token="token", tushare_token_file=None),
+        settings=Settings(
+            llm_api_key="key",
+            llm_api_key_file=None,
+            tushare_token="token",
+            tushare_token_file=None,
+        ),
         tushare_client=FakeTushareClient({}),
         notification_service=FakeNotificationService(),
     )
@@ -1104,7 +1244,12 @@ def test_limit_up_report_share_can_be_listed_and_revoked() -> None:
     db.refresh(analysis)
     service = LimitUpPushService(
         db,
-        settings=Settings(llm_api_key="key", llm_api_key_file=None, tushare_token="token", tushare_token_file=None),
+        settings=Settings(
+            llm_api_key="key",
+            llm_api_key_file=None,
+            tushare_token="token",
+            tushare_token_file=None,
+        ),
         tushare_client=FakeTushareClient({}),
         notification_service=FakeNotificationService(),
     )
@@ -1138,7 +1283,12 @@ def test_latest_analysis_push_is_idempotent_across_polling(monkeypatch) -> None:
     fake_notification = FakeNotificationService()
     service = LimitUpPushService(
         db,
-        settings=Settings(llm_api_key="key", llm_api_key_file=None, tushare_token="token", tushare_token_file=None),
+        settings=Settings(
+            llm_api_key="key",
+            llm_api_key_file=None,
+            tushare_token="token",
+            tushare_token_file=None,
+        ),
         tushare_client=FakeTushareClient(
             {
                 "kpl_list": [
@@ -1180,7 +1330,12 @@ def test_limit_up_chain_selection_is_limited_to_twenty() -> None:
     db = make_db()
     service = LimitUpPushService(
         db,
-        settings=Settings(llm_api_key="key", llm_api_key_file=None, tushare_token="token", tushare_token_file=None),
+        settings=Settings(
+            llm_api_key="key",
+            llm_api_key_file=None,
+            tushare_token="token",
+            tushare_token_file=None,
+        ),
         tushare_client=FakeTushareClient({}),
         notification_service=FakeNotificationService(),
     )
@@ -1240,7 +1395,12 @@ def test_multi_stage_pipeline_supplements_only_selected_stocks(monkeypatch) -> N
     )
     service = LimitUpPushService(
         db,
-        settings=Settings(llm_api_key="key", llm_api_key_file=None, tushare_token="token", tushare_token_file=None),
+        settings=Settings(
+            llm_api_key="key",
+            llm_api_key_file=None,
+            tushare_token="token",
+            tushare_token_file=None,
+        ),
         tushare_client=fake_client,
         notification_service=FakeNotificationService(),
     )

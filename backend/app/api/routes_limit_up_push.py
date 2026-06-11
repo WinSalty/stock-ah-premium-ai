@@ -120,7 +120,9 @@ def generate_latest_limit_up_report(
     except LimitUpPushError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     if analysis is None:
-        return LimitUpActionResponse(ok=False, message="最新交易日 KPL 数据尚未同步", report_id=None)
+        return LimitUpActionResponse(
+            ok=False, message="最新交易日 KPL 数据尚未同步", report_id=None
+        )
     return LimitUpActionResponse(ok=True, message="报告已生成或已命中缓存", report_id=analysis.id)
 
 
@@ -148,7 +150,9 @@ def push_limit_up_report(
         )
     except LimitUpPushError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return LimitUpActionResponse(ok=True, message="手动推送已执行", report_id=report_id, delivery_count=pushed)
+    return LimitUpActionResponse(
+        ok=True, message="手动推送已执行", report_id=report_id, delivery_count=pushed
+    )
 
 
 @router.post("/limit-up-push/reports/{report_id}/shares", response_model=LimitUpShareResponse)

@@ -395,7 +395,10 @@ class XueqiuPublishService:
             return None
         mode = XUEQIU_MODE_PUBLISH if setting.auto_publish else XUEQIU_MODE_DRAFT
         existing = self._latest_record_for_mode(analysis.id, mode)
-        if existing is not None and existing.status in {XUEQIU_STATUS_DRAFTED, XUEQIU_STATUS_PUBLISHED}:
+        if existing is not None and existing.status in {
+            XUEQIU_STATUS_DRAFTED,
+            XUEQIU_STATUS_PUBLISHED,
+        }:
             # 到点后补发会让调度器每分钟继续检查；若当天目标报告已经成功保存或发布，
             # 这里直接静默跳过，避免重复记录“任务完成”日志或再次请求雪球接口。
             return None

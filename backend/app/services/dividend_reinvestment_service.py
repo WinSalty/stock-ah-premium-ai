@@ -1355,8 +1355,10 @@ class DividendReinvestmentDataLandingService:
                 select(DividendReinvestmentBacktestSummary)
                 .where(*filters)
                 .order_by(
-                    # 可空指标先按“是否为空”升序排序，保证 PE、ROE 等补数不足字段在升序和降序下都稳定置底；
-                    # 再按用户选择的指标方向、综合分和股票代码排序，避免分页时同值或空值记录跨页跳动。
+                    # 可空指标先按“是否为空”升序排序，
+                    # 保证 PE、ROE 等补数不足字段在升序和降序下都稳定置底；
+                    # 再按用户选择的指标方向、综合分和股票代码排序，
+                    # 避免分页时同值或空值记录跨页跳动。
                     asc(sort_column.is_(None)),
                     # 榜单排序只开放收益指标，避免前端传入任意字段造成不可控 SQL 排序。
                     sort_direction(sort_column),

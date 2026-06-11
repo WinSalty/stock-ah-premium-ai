@@ -9,7 +9,12 @@ from app.core.config import Settings
 from app.db.base import Base
 from app.db.models.auth import AppUser
 from app.schemas.auth import OverviewChartSettings, ProfileUpdateRequest, UserUpdateRequest
-from app.services.auth_service import ROLE_ADMIN, ROLE_USER, AuthService
+from app.services.auth_service import (
+    DEFAULT_ROLE_PERMISSIONS,
+    ROLE_ADMIN,
+    ROLE_USER,
+    AuthService,
+)
 
 
 def test_user_permissions_are_stored_per_user() -> None:
@@ -90,7 +95,8 @@ def test_profile_update_only_changes_basic_fields() -> None:
         assert response.email == "bob@example.com"
         assert response.phone == "13800138000"
         assert response.role == ROLE_USER
-    assert response.permissions == ["overview", "premium", "chat", "image_generation", "profile"]
+    # 断言对齐角色默认权限单点定义：避免默认权限清单每次扩展（如新增分红再投菜单）都把本用例打挂。
+    assert response.permissions == DEFAULT_ROLE_PERMISSIONS[ROLE_USER]
 
 
 def test_overview_chart_settings_are_stored_per_user() -> None:
