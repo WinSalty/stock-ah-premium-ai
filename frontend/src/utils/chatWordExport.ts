@@ -15,7 +15,7 @@ import {
   WidthType
 } from 'docx';
 import { saveAs } from 'file-saver';
-import type { ChatTurnExportItem } from '../types/domain';
+import type { ChartSpec, ChatTurnExportItem } from '../types/domain';
 
 const SAFE_FILENAME_PATTERN = /[\\/:*?"<>|]/g;
 const LANDSCAPE_A4_WIDTH_TWIP = 16838;
@@ -69,9 +69,13 @@ export async function exportChatAnswersToWord(title: string, turns: ChatTurnExpo
   saveAs(blob, `${safeFilename(title || '智能问答回答')}.docx`);
 }
 
+// 匹配回答正文中的图表占位符 {{chart:cN}}，捕获 chart_id；与前端渲染口径一致。
+const CHART_PLACEHOLDER_PATTERN = /\{\{chart:([a-zA-Z0-9_-]+)\}\}/g;
+
 /**
  * 构造单轮问答导出块，问题、回答分区展示，避免多轮回答混在同一段里。
  * 创建日期：2026-05-07
+ * 更新日期：2026-06-12（回答正文按 {{chart:id}} 占位符将图表降级为「【图表】标题 + 数据表格」）
  * author: sunshengxian
  */
 function buildTurnBlocks(turn: ChatTurnExportItem, index: number) {
@@ -90,8 +94,158 @@ function buildTurnBlocks(turn: ChatTurnExportItem, index: number) {
       heading: HeadingLevel.HEADING_2,
       spacing: { before: 80, after: 120 }
     }),
-    ...markdownToBlocks(turn.answer)
+    ...answerWithChartsToBlocks(turn.answer, turn.charts)
   ];
+}
+
+/**
+ * 把回答正文按 {{chart:id}} 占位符切分：文本段走原有 markdownToBlocks，
+ * 图表段按 chart_id 找到对应 spec 降级输出「【图表】标题 + 数据表格」；
+ * 正文未引用的图表追加在末尾（与前端兜底渲染口径一致）。
+ * 占位符引用但找不到对应 spec 的，丢弃残留占位符文本不输出。
+ * 创建日期：2026-06-12
+ * author: sunshengxian
+ */
+function answerWithChartsToBlocks(answer: string, charts: ChartSpec[] | undefined) {
+  const chartList = charts || [];
+  // 无图表时退化为原有纯 Markdown 导出路径，保持既有行为不变。
+  if (!chartList.length) {
+    return markdownToBlocks(answer);
+  }
+  const chartMap = new Map<string, ChartSpec>();
+  chartList.forEach((spec) => {
+    if (spec.chart_id) {
+      chartMap.set(spec.chart_id, spec);
+    }
+  });
+  const blocks: Array<Paragraph | Table> = [];
+  const referencedIds = new Set<string>();
+  let lastIndex = 0;
+  CHART_PLACEHOLDER_PATTERN.lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = CHART_PLACEHOLDER_PATTERN.exec(answer)) !== null) {
+    const chartId = match[1];
+    // 占位符之前的文本段先按 Markdown 转块。
+    const textBefore = answer.slice(lastIndex, match.index);
+    if (textBefore.trim()) {
+      blocks.push(...markdownToBlocks(textBefore));
+    }
+    referencedIds.add(chartId);
+    const spec = chartMap.get(chartId);
+    if (spec) {
+      blocks.push(...chartToBlocks(spec));
+    }
+    // 未命中：不输出任何内容，丢弃残留 {{chart:x}} 文本。
+    lastIndex = match.index + match[0].length;
+  }
+  const tail = answer.slice(lastIndex);
+  if (tail.trim()) {
+    blocks.push(...markdownToBlocks(tail));
+  }
+  // 兜底：正文未引用的图表追加在末尾。
+  chartList.forEach((spec) => {
+    if (!spec.chart_id || !referencedIds.has(spec.chart_id)) {
+      blocks.push(...chartToBlocks(spec));
+    }
+  });
+  return blocks.length ? blocks : [new Paragraph({ text: answer })];
+}
+
+/**
+ * 把单个 ChartSpec 降级为 Word 块：「【图表】标题」标题段 + 由 spec 还原的数据表格 + note 说明。
+ * 还原口径：
+ * - line/bar/scatter/dual_axis：x_axis.values 作首列（类目），各 series 作一列（标量）；
+ * - pie：取 series[0]，x_axis.values 作「类别」列，数值作「数值」列；
+ * - kline：x_axis.values 作首列，四元组拆为「开/收/低/高」四列。
+ * 数据不足以成表时仅保留标题段，避免空表。
+ * 创建日期：2026-06-12
+ * author: sunshengxian
+ */
+function chartToBlocks(spec: ChartSpec): Array<Paragraph | Table> {
+  const blocks: Array<Paragraph | Table> = [
+    new Paragraph({
+      children: [new TextRun({ text: `【图表】${spec.title || '未命名图表'}`, bold: true })],
+      spacing: { before: 160, after: 100 }
+    })
+  ];
+  const table = chartSpecToTable(spec);
+  if (table) {
+    blocks.push(table);
+  }
+  if (spec.note) {
+    blocks.push(
+      new Paragraph({
+        children: [new TextRun({ text: spec.note, color: '64748B', size: 18 })],
+        spacing: { before: 60, after: 140 }
+      })
+    );
+  }
+  return blocks;
+}
+
+/**
+ * 由 ChartSpec 还原一个 Word 数据表格（复用 markdownTableToDocx 的固定布局表格）。
+ * 数值为 null 时输出空串。无法构表（无类目、无系列）返回 null。
+ * 创建日期：2026-06-12
+ * author: sunshengxian
+ */
+function chartSpecToTable(spec: ChartSpec): Table | null {
+  const categories = spec.x_axis?.values || [];
+  const series = spec.series || [];
+  if (!series.length) {
+    return null;
+  }
+
+  // pie：取首系列，「类别 / 数值」两列。
+  if (spec.chart_type === 'pie') {
+    const values = series[0].values as (number | null)[];
+    if (!categories.length) {
+      return null;
+    }
+    const header = ['类别', series[0].name || '数值'];
+    const rows = categories.map((name, index) => [name, formatCell(values[index])]);
+    return buildSpecTable([header, ...rows]);
+  }
+
+  // kline：四元组拆为「开盘 / 收盘 / 最低 / 最高」四列，首列为类目。
+  if (spec.chart_type === 'kline') {
+    const quad = series[0].values as number[][];
+    if (!Array.isArray(quad) || !quad.length) {
+      return null;
+    }
+    const header = [spec.x_axis?.label || '时间', '开盘', '收盘', '最低', '最高'];
+    const rows = quad.map((item, index) => [
+      categories[index] ?? String(index + 1),
+      formatCell(item?.[0]),
+      formatCell(item?.[1]),
+      formatCell(item?.[2]),
+      formatCell(item?.[3])
+    ]);
+    return buildSpecTable([header, ...rows]);
+  }
+
+  // line/bar/scatter/dual_axis：首列类目，每个 series 一列（标量）。
+  if (!categories.length) {
+    return null;
+  }
+  const header = [spec.x_axis?.label || '类目', ...series.map((item) => item.name || '系列')];
+  const rows = categories.map((name, index) => [
+    name,
+    ...series.map((item) => formatCell((item.values as (number | null)[])[index]))
+  ]);
+  return buildSpecTable([header, ...rows]);
+}
+
+/**
+ * 把数值单元格格式化为字符串：null/非数字输出空串，数字原样（保留至多 2 位小数）。
+ * 创建日期：2026-06-12
+ * author: sunshengxian
+ */
+function formatCell(value: number | null | undefined): string {
+  if (value === null || value === undefined || typeof value !== 'number' || Number.isNaN(value)) {
+    return '';
+  }
+  return String(Math.round(value * 100) / 100);
 }
 
 /**
@@ -271,6 +425,17 @@ function markdownTableToDocx(lines: string[]) {
     .filter((_, index) => index !== 1)
     .map(splitMarkdownTableRow)
     .filter((cells) => cells.length);
+  return buildSpecTable(parsedRows);
+}
+
+/**
+ * 由二维字符串数组（含表头行）构造固定布局 Word 表格，显式写入列宽与重复表头。
+ * 从 markdownTableToDocx 抽出公共建表逻辑，供 Markdown 表格与图表降级表格共用。
+ * 行数为空或列数为 0 时返回 null。
+ * 创建日期：2026-06-12
+ * author: sunshengxian
+ */
+function buildSpecTable(parsedRows: string[][]) {
   const columnCount = Math.max(...parsedRows.map((row) => row.length), 0);
   if (!parsedRows.length || columnCount === 0) {
     return null;

@@ -552,15 +552,62 @@ export interface ToolTraceItem {
 }
 
 /**
- * 图表规格（Agent render_chart 工具登记的 spec）。
- * 本阶段仅做存储透传不渲染，故定义为宽松类型；阶段 4 接入 ECharts 时再细化字段约束。
+ * 图表类型联合（与后端 chart_schema.py 的 ChartType 对齐）。
  * 创建日期：2026-06-12
  * author: sunshengxian
  */
+export type ChartType = 'line' | 'bar' | 'pie' | 'scatter' | 'kline' | 'dual_axis';
+
+/**
+ * 图表 X 轴（类目轴）：label 为轴标题，values 为类目标签数组；pie 用 values 作扇区名。
+ * 创建日期：2026-06-12
+ * author: sunshengxian
+ */
+export interface ChartAxis {
+  label?: string;
+  values: string[];
+}
+
+/**
+ * 图表数据系列。
+ * values 联动 chart_type：kline 为四元组列表 [[open, close, low, high], ...]，
+ * 其余图型为标量列表 [number | null, ...]；y_axis 仅 dual_axis 区分左右轴。
+ * 创建日期：2026-06-12
+ * author: sunshengxian
+ */
+export interface ChartSeries {
+  name: string;
+  values: (number | null)[] | number[][];
+  y_axis?: 'left' | 'right';
+}
+
+/**
+ * 图表纵轴：双轴图区分左右轴标签，unit 用于数值轴与 tooltip 的格式化（含「%」走百分号）。
+ * 创建日期：2026-06-12
+ * author: sunshengxian
+ */
+export interface ChartYAxis {
+  left_label?: string;
+  right_label?: string;
+  unit?: string;
+}
+
+/**
+ * 受控图表规格（Agent render_chart 工具登记的 spec，与后端 chart_schema.py 的 ChartSpec 对齐）。
+ * chart_id 为后端落库时写入的轮内自增标识（c1/c2/...），前端按它与正文 {{chart:cN}} 占位符配对渲染；
+ * 流式 chart 事件与 done.charts/历史 charts 均携带该字段。
+ * 创建日期：2026-06-12
+ * 更新日期：2026-06-12（阶段 4：从宽松类型细化为与后端对齐的精确类型）
+ * author: sunshengxian
+ */
 export interface ChartSpec {
-  chart_type: string;
+  chart_id?: string;
+  chart_type: ChartType;
   title: string;
-  [key: string]: unknown;
+  x_axis?: ChartAxis;
+  series: ChartSeries[];
+  y_axis?: ChartYAxis;
+  note?: string;
 }
 
 export interface ChatStoredMessage {
@@ -625,6 +672,8 @@ export interface ChatMessageResponse {
 export interface ChatTurnExportItem {
   question: string;
   answer: string;
+  // 本轮登记的图表 spec；Word 导出遇 {{chart:id}} 占位符时按 chart_id 找到对应 spec 降级为表格。
+  charts?: ChartSpec[];
 }
 
 export type ChatModel = 'deepseek-v4-flash' | 'deepseek-v4-pro' | 'qwen3.6-flash';

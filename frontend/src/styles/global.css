@@ -2571,6 +2571,49 @@ pre.llm-payload-viewer,
   white-space: normal;
 }
 
+/* 智能问答内嵌图表（ChatChart）：与回答区表格视觉风格统一，宽度自适应 */
+.chat-chart {
+  margin: 14px 0;
+  padding: 12px 12px 8px;
+  border: 1px solid #dbe4ef;
+  border-radius: 6px;
+  background: #ffffff;
+}
+
+.chat-chart-title {
+  margin-bottom: 6px;
+  color: #1e293b;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.5;
+}
+
+.chat-chart-note {
+  margin: 6px 0 0;
+  color: #94a3b8;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+/* 空数据 / 未知类型 / 映射失败的占位态 */
+.chat-chart-empty .chat-chart-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 120px;
+  color: #94a3b8;
+  font-size: 13px;
+  background: #fbfcfe;
+  border: 1px dashed #e2e8f0;
+  border-radius: 6px;
+}
+
+@media (max-width: 768px) {
+  .chat-chart {
+    padding: 10px 8px 6px;
+  }
+}
+
 .sql-preview {
   overflow: auto;
   max-width: 100%;

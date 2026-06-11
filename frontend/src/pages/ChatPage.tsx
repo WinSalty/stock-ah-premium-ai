@@ -12,9 +12,11 @@ import {
 } from 'lucide-react';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import type { ReactNode } from 'react';
 import { useEffect, useRef, useState } from 'react';
 import PageHeader from '../components/PageHeader';
 import LlmProgressNote from '../components/LlmProgressNote';
+import ChatChart from '../components/ChatChart';
 import {
   batchDeleteChatSessions,
   createChatSession,
@@ -49,7 +51,7 @@ interface ChatTurn {
   toolTrace: ToolTraceItem[];
   /** 正在执行中的工具步骤；Agent 主循环为串行执行，同一时刻最多一个进行中步骤。 */
   activeTool?: { tool: string; summary: string };
-  /** 本轮登记的图表 spec：本阶段仅存储不渲染，阶段 4 接入 ECharts 后启用。 */
+  /** 本轮登记的图表 spec（含后端写入的 chart_id）：正文按 {{chart:id}} 占位符配对渲染 ChatChart。 */
   charts?: ChartSpec[];
 }
 
@@ -193,6 +195,87 @@ function renderToolTimeline(turn: ChatTurn) {
       ]}
     />
   );
+}
+
+// 匹配回答正文中的图表占位符 {{chart:cN}}，捕获组取出 chart_id。
+// 全局 + 多次匹配，用于按占位符把正文切分为「文本段 / 图表段」交替序列。
+const CHART_PLACEHOLDER_PATTERN = /\{\{chart:([a-zA-Z0-9_-]+)\}\}/g;
+
+/**
+ * 渲染一段回答正文 Markdown（复用自定义的 table 组件，保证分段后表格样式一致）。
+ * 空文本不渲染，避免占位符相邻时产生多余空段落。
+ * 创建日期：2026-06-12
+ * author: sunshengxian
+ */
+function renderMarkdownSegment(text: string, key: string) {
+  if (!text.trim()) {
+    return null;
+  }
+  return (
+    <ReactMarkdown key={key} remarkPlugins={[remarkGfm]} components={markdownComponents}>
+      {text}
+    </ReactMarkdown>
+  );
+}
+
+/**
+ * 按 {{chart:id}} 占位符把回答正文切分为 [文本段, 图表, 文本段, ...] 交替渲染：
+ * - 文本段走 ReactMarkdown（复用 markdownComponents 的 table 渲染）；
+ * - 图表段按 chart_id 从 charts 中查找对应 ChartSpec 渲染 <ChatChart>；
+ * - 占位符引用了但 charts 里找不到对应 id 的，渲染为空（不显示残留的 {{chart:x}} 文本）；
+ * - charts 中未被正文任何占位符引用的图表，追加渲染在回答末尾（兜底，设计 3.5）。
+ * 流式与历史回放复用同一逻辑（均以 answer 文本 + turn.charts 为输入）。
+ * 创建日期：2026-06-12
+ * author: sunshengxian
+ */
+function renderAnswerWithCharts(answer: string, charts: ChartSpec[] | undefined, turnId: string) {
+  const chartList = charts || [];
+  // 建立 chart_id -> spec 映射，便于占位符按 id 取图；无 chart_id 的 spec 不参与占位匹配。
+  const chartMap = new Map<string, ChartSpec>();
+  chartList.forEach((spec) => {
+    if (spec.chart_id) {
+      chartMap.set(spec.chart_id, spec);
+    }
+  });
+
+  const nodes: ReactNode[] = [];
+  // 记录正文已引用的 chart_id，用于末尾兜底渲染未引用图表。
+  const referencedIds = new Set<string>();
+  let lastIndex = 0;
+  let matchSeq = 0;
+  // 重置全局正则的 lastIndex，避免跨调用状态污染。
+  CHART_PLACEHOLDER_PATTERN.lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = CHART_PLACEHOLDER_PATTERN.exec(answer)) !== null) {
+    const chartId = match[1];
+    // 占位符之前的文本段先作为 Markdown 渲染。
+    const textBefore = answer.slice(lastIndex, match.index);
+    const textNode = renderMarkdownSegment(textBefore, `${turnId}-text-${matchSeq}`);
+    if (textNode) {
+      nodes.push(textNode);
+    }
+    referencedIds.add(chartId);
+    const spec = chartMap.get(chartId);
+    if (spec) {
+      // 命中已登记图表：渲染对应 ChatChart。
+      nodes.push(<ChatChart key={`${turnId}-chart-${chartId}-${matchSeq}`} spec={spec} />);
+    }
+    // 未命中（占位符引用了不存在的 id）：不渲染任何内容，丢弃残留占位符文本。
+    lastIndex = match.index + match[0].length;
+    matchSeq += 1;
+  }
+  // 最后一个占位符之后的剩余文本段。
+  const tailNode = renderMarkdownSegment(answer.slice(lastIndex), `${turnId}-text-tail`);
+  if (tailNode) {
+    nodes.push(tailNode);
+  }
+  // 兜底：charts 里存在但正文从未引用的图表，按登记顺序追加在回答末尾。
+  chartList.forEach((spec, index) => {
+    if (!spec.chart_id || !referencedIds.has(spec.chart_id)) {
+      nodes.push(<ChatChart key={`${turnId}-extra-${spec.chart_id || index}`} spec={spec} />);
+    }
+  });
+  return nodes;
 }
 
 /**
@@ -508,7 +591,8 @@ function ChatPage({ currentUser }: ChatPageProps) {
             );
           },
           onChart: (event) => {
-            // 本阶段仅累积图表 spec 供 done 前占位存储，不做渲染（阶段 4 接入 ECharts）。
+            // 流式累积图表 spec（event.spec 含后端写入的 chart_id），供正文 {{chart:id}} 占位渲染；
+            // done 事件以全量 charts 覆盖。ChatChart 已接入 ECharts，图表登记即可先于正文占位渲染。
             setTurns((items) =>
               items.map((item) =>
                 item.id === turnId ? { ...item, charts: [...(item.charts || []), event.spec] } : item
@@ -587,7 +671,9 @@ function ChatPage({ currentUser }: ChatPageProps) {
       title,
       answeredTurns.map((turn) => ({
         question: turn.question,
-        answer: turn.response?.answer || ''
+        answer: turn.response?.answer || '',
+        // 携带本轮图表 spec，供 Word 导出对 {{chart:id}} 占位符降级为数据表格。
+        charts: turn.charts
       }))
     );
     message.success('Word 文档已下载');
@@ -824,12 +910,9 @@ function ChatPage({ currentUser }: ChatPageProps) {
                       </div>
                       {renderToolTimeline(turn)}
                       <div className="markdown-answer">
-                        <ReactMarkdown
-                          remarkPlugins={[remarkGfm]}
-                          components={markdownComponents}
-                        >
-                          {turn.response?.answer || ''}
-                        </ReactMarkdown>
+                        {/* 按 {{chart:id}} 占位符分段渲染：文本段走 Markdown，图表段渲染 ChatChart；
+                            未被正文引用的图表追加在末尾（流式与历史回放复用同一逻辑）。 */}
+                        {renderAnswerWithCharts(turn.response?.answer || '', turn.charts, turn.id)}
                         {turn.streaming &&
                         !turn.response?.answer &&
                         !turn.toolTrace.length &&
