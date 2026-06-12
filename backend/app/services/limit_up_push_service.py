@@ -591,6 +591,9 @@ class LimitUpPushService:
                 self._investment_advice_prompt(advice_input, from_report_fallback),
                 stage_quality,
                 llm_phase=LIMIT_UP_ADVICE_LLM_PHASE,
+                # force 重生成必须真正重调 LLM：同输入哈希的 READY 阶段缓存若不跳过，
+                # 质量不满意场景会原样返回旧内容，端点回复"已重新生成"即构成误导。
+                skip_cache=force,
             )
             raw_advice = str(payload.get("content") or payload.get("html_fragment") or "")
             if not raw_advice.strip():
@@ -634,12 +637,18 @@ class LimitUpPushService:
         """
 
         current_status = analysis.advice_status or ADVICE_STATUS_PENDING
+        conditions = [
+            LimitUpAnalysisCache.id == analysis.id,
+            LimitUpAnalysisCache.advice_status == current_status,
+        ]
+        if current_status == ADVICE_STATUS_GENERATING:
+            # 僵死接管/force 场景的比较值与目标值同为 GENERATING，单纯状态比较会让
+            # 所有并发接管方 rowcount 都为 1（同值更新也算匹配）；附加旧 updated_at
+            # 比较后，先抢到的一方改写 updated_at，其余方条件失配即抢占失败。
+            conditions.append(LimitUpAnalysisCache.updated_at == analysis.updated_at)
         result = self.db.execute(
             update(LimitUpAnalysisCache)
-            .where(
-                LimitUpAnalysisCache.id == analysis.id,
-                LimitUpAnalysisCache.advice_status == current_status,
-            )
+            .where(*conditions)
             .values(advice_status=ADVICE_STATUS_GENERATING, updated_at=self._now_naive())
         )
         self.db.commit()
@@ -2231,14 +2240,18 @@ class LimitUpPushService:
         user_prompt: str,
         stage_quality: list[dict[str, Any]],
         llm_phase: str = LIMIT_UP_LLM_PHASE,
+        skip_cache: bool = False,
     ) -> dict[str, Any]:
         """执行 HTML 或自然语言输出阶段。
+
+        skip_cache=True 时跳过缓存读取强制重调 LLM（管理员对建议质量不满意的重生成场景），
+        新结果仍写回同键缓存行覆盖旧内容。
 
         创建日期：2026-06-05
         author: sunshengxian
         """
 
-        cached = self._stage_cache_payload(stage_key, stage_input)
+        cached = None if skip_cache else self._stage_cache_payload(stage_key, stage_input)
         if cached is not None:
             stage_quality.append(self._stage_quality_item(stage_key, "CACHE_HIT", "复用阶段缓存"))
             return cached
@@ -2700,6 +2713,14 @@ class LimitUpPushService:
                 break
         if selected:
             return selected
+        # LLM 成功输出且显式给出空名单（如首板"宁缺毋滥"、弱市日无可选标的）必须被尊重，
+        # 让报告与建议的"当日无候选"分支可达；只有解析失败/调用异常的兜底 payload，
+        # 或返回的代码全部无法映射回原始行（疑似幻觉代码）时才走确定性排序兜底。
+        is_fallback_payload = bool(
+            payload.get("parse_fallback") or payload.get("error_fallback")
+        )
+        if payload.get("selected_stocks") == [] and not is_fallback_payload:
+            return []
         return self._fallback_rank_stocks(source_rows, limit)
 
     def _fallback_rank_stocks(self, rows: list[dict[str, Any]], limit: int) -> list[dict[str, Any]]:

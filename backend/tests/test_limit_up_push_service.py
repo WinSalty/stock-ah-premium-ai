@@ -2209,3 +2209,60 @@ def test_weekend_replay_uses_cached_advice_without_llm(monkeypatch) -> None:
     _, title, content = fake_notification.sent[0]
     assert "打板投资建议" in title
     assert content == "<div>周五建议</div>"
+
+def test_select_stage_stocks_respects_legal_empty_selection() -> None:
+    """确认 LLM 合法空选不被强制兜底，仅失败 payload 或幻觉代码才兜底排序。
+
+    创建日期：2026-06-12
+    author: claude
+    """
+
+    db = make_db()
+    service = _make_advice_service(db)
+    source_rows = [
+        {"ts_code": "000010.SZ", "name": "首板A", "status": "首板", "theme": "AI"},
+        {"ts_code": "000011.SZ", "name": "首板B", "status": "首板", "theme": "机器人"},
+    ]
+
+    # 合法空选（键存在且为空列表）：尊重"宁缺毋滥"，返回空名单。
+    assert service._select_stage_stocks({"selected_stocks": []}, source_rows, 5) == []
+    # 解析失败兜底 payload：仍走确定性排序兜底。
+    fallback = service._select_stage_stocks(
+        {"selected_stocks": [], "parse_fallback": True}, source_rows, 5
+    )
+    assert len(fallback) == 2
+    # 全部为无法映射的幻觉代码：视为异常输出，走确定性兜底。
+    hallucinated = service._select_stage_stocks(
+        {"selected_stocks": [{"ts_code": "999999.SZ"}]}, source_rows, 5
+    )
+    assert len(hallucinated) == 2
+
+
+def test_force_regenerate_bypasses_stage_cache(monkeypatch) -> None:
+    """确认 force 重生成跳过阶段缓存真正重调 LLM 并覆盖建议内容。
+
+    创建日期：2026-06-12
+    author: claude
+    """
+
+    db = make_db()
+    service = _make_advice_service(db)
+    analysis = _make_ready_analysis(db, service)
+    calls = {"count": 0}
+
+    def fake_chat(
+        prompt: str, system_prompt: str, json_mode: bool = False, phase: str = "limit_up_analysis"
+    ) -> str:
+        calls["count"] += 1
+        return f"<h2>风险提示</h2><p>第{calls['count']}版建议</p>"
+
+    monkeypatch.setattr(service, "_chat_completion_with_reasoning", fake_chat)
+
+    first = service.ensure_advice_for_analysis(analysis)
+    assert calls["count"] == 1
+    assert "第1版建议" in (first.advice_markdown or "")
+
+    # 同输入哈希已有 READY 阶段缓存：force 必须绕过缓存重调 LLM 并覆盖旧内容。
+    regenerated = service.ensure_advice_for_analysis(analysis, force=True)
+    assert calls["count"] == 2
+    assert "第2版建议" in (regenerated.advice_markdown or "")
