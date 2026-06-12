@@ -24,15 +24,15 @@ TOOL_MESSAGE_MAX_CHARS = 12000
 
 # ---- 轮内工具调用配额（设计 3.2"执行约束"）----
 # query_database 与 get_stock_data 共享"取数"配额组，避免模型在两者间来回刷次数。
-# 取数组上限 8（2026-06-12 试用反馈调整：原 6 在个股全景分析场景下频繁触顶——
-# get_stock_data 1 次 + 多视图查询很快用完，触顶后时间线出现大量失败步骤）。
+# 取数组上限 16（2026-06-12 试用反馈两次上调：6→8→16，个股全景分析+出图场景
+# 需要多视图取数；本地取数成本低，成本安全网由 LLM 日限额与迭代上限承担）。
 DATA_QUOTA_GROUP = "data_fetch"
 PER_TURN_TOOL_LIMITS: dict[str, int] = {
     "web_search": 3,
     "fetch_url": 3,
     "run_python": 3,
     "render_chart": 4,
-    DATA_QUOTA_GROUP: 8,
+    DATA_QUOTA_GROUP: 16,
 }
 # 工具名到配额组的映射：未列出的工具按工具名独立计数。
 TOOL_QUOTA_GROUPS: dict[str, str] = {

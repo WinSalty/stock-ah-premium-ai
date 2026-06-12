@@ -185,6 +185,9 @@ function buildCategoryOption(spec: ChartSpec, xAxis: ChartAxis, formatValue: (v:
     yAxis: {
       type: 'value',
       name: spec.y_axis?.left_label || '',
+      // 数值轴按数据范围缩放（试用反馈：汇率 6.8 在 0 起点轴上是一条平线，
+      // 趋势完全不可见）。bar 例外：柱状图的高度编码必须从 0 开始才不误导。
+      scale: spec.chart_type !== 'bar',
       axisLabel: { formatter: (value: number) => formatValue(value) }
     },
     series: spec.series.map((series, index) => ({
@@ -193,6 +196,15 @@ function buildCategoryOption(spec: ChartSpec, xAxis: ChartAxis, formatValue: (v:
       // line 适度平滑（smooth:0.2），点小一些；bar/scatter 不平滑。
       ...(echartsType === 'line' ? { smooth: 0.2, symbolSize: 6 } : {}),
       ...(echartsType === 'scatter' ? { symbolSize: 10 } : {}),
+      // 单系列折线加轻渐变面积，强化趋势的视觉占位；多系列叠加会互相遮挡不加。
+      ...(echartsType === 'line' && spec.series.length === 1
+        ? {
+            areaStyle: {
+              opacity: 0.12,
+              color: CHAT_CHART_PALETTE[index % CHAT_CHART_PALETTE.length]
+            }
+          }
+        : {}),
       data: (series.values as (number | null)[]).map((v) =>
         typeof v === 'number' ? v : null
       ),
@@ -312,12 +324,15 @@ function buildDualAxisOption(
         type: 'value',
         name: yAxis.left_label || '',
         position: 'left',
+        // 双轴图同样按数据范围缩放，否则量纲差异大时一侧趋势被压平。
+        scale: true,
         axisLabel: { formatter: (value: number) => formatValue(value) }
       },
       {
         type: 'value',
         name: yAxis.right_label || '',
         position: 'right',
+        scale: true,
         axisLabel: { formatter: (value: number) => formatValue(value) }
       }
     ],

@@ -20,9 +20,10 @@ from app.core.config import Settings
 from app.services.agent.data_catalog import schema_catalog_text
 from app.services.agent.tool_registry import ToolRegistry
 
-# v2（2026-06-12 试用反馈修订）：移植旧链路个股研究方法论（财务数据为主材料、
-# 回测表限定场景）；声明图表占位符仅当轮有效。
-PROMPT_VERSION = "agent-v2"
+# v3（2026-06-12 第三轮试用反馈）：个股方法论定位为"分析口径而非输出模板"，
+# 鼓励个股分析图文结合出趋势图；新增按数据特征选图型的出图策略。
+# v2：移植旧链路个股研究方法论；声明图表占位符仅当轮有效。
+PROMPT_VERSION = "agent-v3"
 
 # ① 角色定位：平移旧 INVESTMENT_ADVISOR_SYSTEM_PROMPT 的人设与边界基调。
 _ROLE_SECTION = (
@@ -71,8 +72,12 @@ _STOCK_RESEARCH_SECTION = (
     "10. 事实、推断、假设分清楚；材料未覆盖的指标列为数据缺口，给出最该跟踪的"
     "3 到 6 个指标和推翻当前判断的反证条件。\n"
     "11. 拿到多期财务数据时必须先横向看完整覆盖期的收入、利润、ROE、现金流、负债与"
-    "分红趋势，再单独点评最近两年；个股报告的第二个二级标题先输出关键财务趋势表"
-    "（优先选收入、归母/扣非利润、经营现金流、ROE、负债率、估值等可用列）。\n"
+    "分红趋势，再单独点评最近两年。\n"
+    "以上 11 条是分析口径，不是输出模板：报告结构、小节顺序与详略由问题和数据特征"
+    "决定，不要每次套同一份大纲。多期趋势优先用图表呈现（render_chart 可用时，"
+    "个股分析建议出 1 到 3 张关键图，如营收/利润多年趋势、价格与估值走势、"
+    "主营构成占比），图下配两三句趋势解读；表格用于精确数值对照，图与表不要"
+    "重复表达同一组数据。\n"
     "不要机械套模板，也不要因为表面估值低就自动给乐观结论。"
 )
 
@@ -154,6 +159,15 @@ def build_system_prompt(registry: ToolRegistry, settings: Settings) -> str:
         tool_policy += (
             "\n6. 多步数值计算（相关性、年化、波动率、回测统计、组合指标）必须用 "
             "run_python 在沙箱中算，不要心算；单值的求和/排序/取最新用 SQL 聚合即可。"
+        )
+    if registry.get("render_chart") is not None:
+        # 出图策略（第三轮试用反馈）：按数据特征选图型，趋势数据优先图示而非纯表格。
+        tool_policy += (
+            "\n7. 出图策略：时间序列趋势（价格、溢价、营收利润逐期）优先用 line 或"
+            " dual_axis（两个量纲时）；类别对比（多股指标对比、单股多指标）用 bar；"
+            "构成占比（主营构成、持股结构）用 pie；两变量关系或分布用 scatter；"
+            "行情 K 线用 kline。数据超过 3 期/3 项且趋势或对比是回答重点时，"
+            "优先出图并配文字解读，不要只给长表格；单个数值不出图。"
         )
     sections = [
         _ROLE_SECTION,

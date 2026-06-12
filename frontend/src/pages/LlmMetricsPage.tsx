@@ -128,7 +128,7 @@ const modelOptions = [
  */
 const roundFieldDescriptions: Record<string, string> = {
   started_at: '本轮最早阶段的开始时间，页面按东八区展示；列表按轮开始时间倒序排列。',
-  question_id: '单轮问答唯一追踪 ID，仅展示前 8 位，点击复制按钮可复制完整 ID 用于精确检索。',
+  question_id: '单轮问答唯一追踪 ID，缩略展示头尾各 6 位，悬停查看完整值，点击复制按钮可复制完整 ID。',
   phase_count: '轮内全部阶段记录数，包含路由、SQL、回答、工具执行与汇总等所有阶段。',
   llm_call_count: '外部 LLM 调用数（Agent 迭代 + 流式收尾），不含首包派生记录与工具执行。',
   tool_call_count: '轮内工具执行次数。',
@@ -355,11 +355,15 @@ function RoundMetricsTab({ onOpenViewer }: { onOpenViewer: (viewer: MetricViewer
       {
         title: <HelpTitle label="追踪 ID" help={roundFieldDescriptions.question_id} />,
         dataIndex: 'question_id',
-        width: 140,
+        width: 190,
         render: (value: string) => (
           <Space size={4}>
             <Tooltip title={value}>
-              <Typography.Text>{value.slice(0, 8)}</Typography.Text>
+              {/* 头尾各 6 位中间省略（试用反馈：仅显示前缀难以分辨相邻轮次），
+                  悬停 Tooltip 展示完整 ID。 */}
+              <Typography.Text style={{ fontFamily: 'monospace' }}>
+                {formatTraceId(value)}
+              </Typography.Text>
             </Tooltip>
             <Tooltip title="复制完整追踪 ID">
               <Button type="text" size="small" icon={<Copy size={13} />} onClick={() => copyQuestionId(value)} />
@@ -1110,7 +1114,20 @@ function formatSeconds(value?: number | null) {
 }
 
 /**
- * 一键复制完整追踪 ID：列表内只截断展示前 8 位，复制时写入完整值，便于粘贴到筛选框或日志检索。
+ * 追踪 ID 缩略展示：头 6 位 + 省略号 + 尾 6 位（试用反馈：只显示前缀时
+ * 同一批次相邻轮次前缀近似难以分辨，头尾结合更易肉眼区分），完整值走 Tooltip。
+ * 创建日期：2026-06-12
+ * author: sunshengxian
+ */
+function formatTraceId(value: string) {
+  if (!value || value.length <= 14) {
+    return value;
+  }
+  return `${value.slice(0, 6)}…${value.slice(-6)}`;
+}
+
+/**
+ * 一键复制完整追踪 ID：列表内缩略展示，复制时写入完整值，便于粘贴到筛选框或日志检索。
  * 剪贴板写入失败（如非安全上下文）时给出错误提示，不中断页面操作。
  */
 function copyQuestionId(value: string) {
