@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from app.api.deps_auth import DbSession, require_permission
 from app.db.models.auth import AppUser
+from app.db.models.notification import LimitUpAnalysisCache
 from app.schemas.limit_up_push import (
     LimitUpActionResponse,
     LimitUpDeliveryItem,
@@ -22,6 +23,8 @@ from app.schemas.limit_up_push import (
 )
 from app.services.auth_service import ROLE_ADMIN
 from app.services.limit_up_push_service import (
+    ADVICE_STATUS_READY,
+    ANALYSIS_STATUS_READY,
     DELIVERY_KIND_MANUAL,
     LimitUpPushError,
     LimitUpPushService,
@@ -124,6 +127,41 @@ def generate_latest_limit_up_report(
             ok=False, message="最新交易日 KPL 数据尚未同步", report_id=None
         )
     return LimitUpActionResponse(ok=True, message="报告已生成或已命中缓存", report_id=analysis.id)
+
+
+@router.post(
+    "/limit-up-push/reports/{report_id}/advice/regenerate",
+    response_model=LimitUpActionResponse,
+)
+def regenerate_limit_up_advice(
+    report_id: int,
+    db: DbSession,
+    current_user: LimitUpPushUser,
+) -> LimitUpActionResponse:
+    """管理员强制重新生成指定报告的投资建议。
+
+    建议 FAILED 或质量不满意时的人工恢复通道：force 绕过 READY 幂等与 FAILED 冷却；
+    仅 READY 报告可生成建议，未就绪报告返回 400。
+
+    创建日期：2026-06-12
+    author: claude
+    """
+
+    require_limit_up_admin(current_user)
+    service = LimitUpPushService(db)
+    analysis = service.db.get(LimitUpAnalysisCache, report_id)
+    if analysis is None:
+        raise HTTPException(status_code=404, detail="报告不存在")
+    if analysis.status != ANALYSIS_STATUS_READY or not analysis.content_html:
+        raise HTTPException(status_code=400, detail="报告尚未生成完成，无法生成建议")
+    analysis = service.ensure_advice_for_analysis(analysis, force=True)
+    if analysis.advice_status != ADVICE_STATUS_READY:
+        return LimitUpActionResponse(
+            ok=False,
+            message=f"建议生成失败：{analysis.advice_error or '未知错误'}",
+            report_id=report_id,
+        )
+    return LimitUpActionResponse(ok=True, message="投资建议已重新生成", report_id=report_id)
 
 
 @router.post("/limit-up-push/reports/{report_id}/push", response_model=LimitUpActionResponse)

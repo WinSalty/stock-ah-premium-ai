@@ -423,6 +423,19 @@ class LimitUpPushService:
             or not analysis.content_html
         ):
             raise LimitUpPushError("报告不存在或尚未生成完成")
+        # 内容模式收口：建议回填下沉到这里而非各调度入口，
+        # 定时、周末复推、手动推送、历史报告补推走同一条回填与降级路径。
+        resolved_content = self._resolve_push_content(analysis, scheduled_kind)
+        if resolved_content is None:
+            # 定时入口本轮跳过（建议生成中或失败且降级关闭），不建流水，下轮轮询重试。
+            logger.info(
+                "打板推送本轮跳过：建议未就绪 analysis_id=%s advice_status=%s kind=%s",
+                analysis.id,
+                analysis.advice_status,
+                scheduled_kind,
+            )
+            return 0
+        push_title, push_content = resolved_content
         recipients = self._enabled_recipients(
             target_user_ids,
             require_weekend_replay=scheduled_kind
@@ -448,8 +461,8 @@ class LimitUpPushService:
             try:
                 message_id = self.notification_service.send_pushplus_message(
                     recipient.user_id,
-                    analysis.title,
-                    analysis.content_html,
+                    push_title,
+                    push_content,
                 )
                 log_id = self._latest_pushplus_log_id(recipient.user_id, message_id)
             except Exception as exc:
@@ -464,6 +477,49 @@ class LimitUpPushService:
             self.db.commit()
             pushed += 1
         return pushed
+
+    def _resolve_push_content(
+        self,
+        analysis: LimitUpAnalysisCache,
+        scheduled_kind: str,
+    ) -> tuple[str, str] | None:
+        """按内容模式解析推送标题与正文，必要时同步回填建议。
+
+        返回 None 表示定时入口本轮跳过（不建流水，下轮轮询重试）；
+        MANUAL 入口不静默跳过，未就绪场景直接抛出明确错误供管理员处置。
+        REPORT 模式是严格回滚通道：不触发建议生成、不写建议列，与重构前行为一致。
+
+        创建日期：2026-06-12
+        author: claude
+        """
+
+        mode = (self.settings.limit_up_push_content_mode or "ADVICE").strip().upper()
+        if mode != "ADVICE":
+            return analysis.title, str(analysis.content_html or "")
+        is_manual = scheduled_kind == DELIVERY_KIND_MANUAL
+        if analysis.advice_status != ADVICE_STATUS_READY or not analysis.advice_html:
+            if is_manual:
+                # MANUAL：PENDING 现场回填（含存量历史报告）；FAILED 不自动重试，
+                # 由管理员经重生成端点修复后再推，避免手动重复推送触发重复 LLM 调用。
+                if analysis.advice_status == ADVICE_STATUS_PENDING:
+                    self.ensure_advice_for_analysis(analysis)
+            else:
+                # 定时入口：PENDING 回填、FAILED 冷却重试、僵死 GENERATING 接管，
+                # 全部由 ensure_advice_for_analysis 内部裁决，这里不重复判断。
+                self.ensure_advice_for_analysis(analysis)
+        if analysis.advice_status == ADVICE_STATUS_READY and analysis.advice_html:
+            return self._advice_title(analysis.trade_date), analysis.advice_html
+        if analysis.advice_status == ADVICE_STATUS_FAILED:
+            if self.settings.limit_up_push_advice_fallback_to_report:
+                # 降级保交付：建议失败时退回整报，流水照常推进，降级痕迹由
+                # pipeline.stage_quality 的 FAILED_FALLBACK 质量项承载。
+                return analysis.title, str(analysis.content_html or "")
+            if is_manual:
+                raise LimitUpPushError("投资建议生成失败且降级推送已关闭，请先重新生成建议")
+            return None
+        if is_manual:
+            raise LimitUpPushError("投资建议正在生成中，请稍后重试")
+        return None
 
     def push_weekend_replay(self) -> tuple[LimitUpAnalysisCache | None, int]:
         """周六和周日复推最近一个周五交易日的缓存报告。

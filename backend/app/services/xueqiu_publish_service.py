@@ -34,7 +34,13 @@ from app.schemas.xueqiu_publish import (
     XueqiuPublishSettingRequest,
     XueqiuPublishSettingSummary,
 )
-from app.services.limit_up_push_service import ANALYSIS_STATUS_READY, LimitUpPushService
+from app.services.limit_up_push_service import (
+    ADVICE_STATUS_FAILED,
+    ADVICE_STATUS_PENDING,
+    ADVICE_STATUS_READY,
+    ANALYSIS_STATUS_READY,
+    LimitUpPushService,
+)
 from app.services.llm_client import LlmCallTrace, LlmClient
 from app.services.notification_service import NotificationError, NotificationService
 
@@ -43,6 +49,9 @@ logger = logging.getLogger(__name__)
 XUEQIU_MODE_DRAFT = "DRAFT"
 XUEQIU_MODE_PUBLISH = "PUBLISH"
 XUEQIU_SOURCE_LIMIT_UP_REPORT = "LIMIT_UP_REPORT"
+# 投资建议长文流水：与整报流水按 source_type 区分；自动链路的防双发总闸
+# 仍按 (analysis_id, publish_mode) 跨 source_type 查重，避免同源内容当日重复发文。
+XUEQIU_SOURCE_LIMIT_UP_ADVICE = "LIMIT_UP_ADVICE"
 XUEQIU_SOURCE_NINE_TURN_REPORT = "NINE_TURN_REPORT"
 XUEQIU_SOURCE_CHAT_ANSWER = "CHAT_ANSWER"
 XUEQIU_STATUS_PENDING = "PENDING"
@@ -236,7 +245,9 @@ class XueqiuPublishService:
         """
 
         analysis = self._resolve_analysis(analysis_id)
-        title, content_html = self._build_article(analysis)
+        # 预览同样走建议回填收口：管理员可在发布前直接看到将要发出的建议稿。
+        self._ensure_limit_up_advice_if_needed(analysis)
+        title, content_html, _source_type = self._build_article(analysis)
         return XueqiuDraftPreview(
             analysis_id=analysis.id,
             trade_date=analysis.trade_date,
@@ -262,13 +273,18 @@ class XueqiuPublishService:
 
         credential = self._enabled_credential()
         analysis = self._resolve_analysis(analysis_id)
+        # 手动发布也走建议回填收口（PENDING 现场补生成）；未就绪时
+        # _build_article 抛出明确错误，管理员据此先修复建议再发布。
+        self._ensure_limit_up_advice_if_needed(analysis)
         mode = XUEQIU_MODE_PUBLISH if publish else XUEQIU_MODE_DRAFT
         record = self._get_or_create_record(analysis, mode, cover_pic, user, force=force)
         if record.status in {XUEQIU_STATUS_DRAFTED, XUEQIU_STATUS_PUBLISHED} and not force:
             return record
-        title, content_html = self._build_article(analysis)
+        title, content_html, source_type = self._build_article(analysis)
         record.title = title
         record.content_html = content_html
+        # 流水 source_type 跟随实际内容刷新：复用旧流水重试时可能从整报切换为建议。
+        record.source_type = source_type
         record.cover_pic = self._normalize_cover_pic(cover_pic)
         record.status = XUEQIU_STATUS_PENDING
         record.error_message = None
@@ -405,6 +421,11 @@ class XueqiuPublishService:
         ):
             # 定时发布只认当前东八区日期推导出的最新 T-1 交易日报告；
             # 任何空报告、未生成完成或交易日错配都跳过，等待下一分钟/下次调度重试。
+            return None
+        # ADVICE 模式：PENDING 建议现场回填；建议未就绪（生成中或失败且降级关）
+        # 静默跳过本分钟，由下一分钟调度或推送侧重生成端点恢复，不触发 FAILED 重试。
+        self._ensure_limit_up_advice_if_needed(analysis)
+        if not self._limit_up_article_ready(analysis):
             return None
         mode = XUEQIU_MODE_PUBLISH if setting.auto_publish else XUEQIU_MODE_DRAFT
         existing = self._latest_record_for_mode(analysis.id, mode)
@@ -778,13 +799,16 @@ class XueqiuPublishService:
         force: bool = False,
     ) -> XueqiuPublishRecord:
         if not force:
+            # 防双发总闸：同一报告同一发布模式下不区分 source_type 复用最近流水，
+            # 避免"降级发过整报、建议补好后又追发一篇建议"的同源重复公开发文；
+            # 如需改发建议，管理员在雪球网页端删除旧文后走 force 通道新建流水。
             existing = self._latest_record_for_mode(analysis.id, mode)
             if existing is not None:
                 return existing
-        title, content_html = self._build_article(analysis)
+        title, content_html, source_type = self._build_article(analysis)
         record = XueqiuPublishRecord(
             analysis_id=analysis.id,
-            source_type=XUEQIU_SOURCE_LIMIT_UP_REPORT,
+            source_type=source_type,
             publish_mode=mode,
             status=XUEQIU_STATUS_PENDING,
             title=title,
@@ -932,14 +956,82 @@ class XueqiuPublishService:
             .limit(1)
         )
 
-    def _build_article(self, analysis: LimitUpAnalysisCache) -> tuple[str, str]:
+    def _ensure_limit_up_advice_if_needed(
+        self, analysis: LimitUpAnalysisCache
+    ) -> LimitUpAnalysisCache:
+        """ADVICE 模式下为 PENDING 建议同步回填（定时/手动/预览共用收口）。
+
+        只在 PENDING 时触发生成：FAILED 不在雪球链路自动重试——
+        定时任务每分钟触发且到点后全天补发，自动重试会被放大为无界重试；
+        FAILED 的恢复通道是打板推送侧的管理员重生成端点。
+
+        创建日期：2026-06-12
+        author: claude
+        """
+
+        mode = (self.settings.xueqiu_limit_up_content_mode or "ADVICE").strip().upper()
+        if mode != "ADVICE":
+            return analysis
+        if analysis.advice_status == ADVICE_STATUS_PENDING:
+            LimitUpPushService(self.db, self.settings).ensure_advice_for_analysis(analysis)
+        return analysis
+
+    def _limit_up_article_ready(self, analysis: LimitUpAnalysisCache) -> bool:
+        """判断当前内容模式下打板长文素材是否就绪（定时任务静默跳过的依据）。
+
+        创建日期：2026-06-12
+        author: claude
+        """
+
+        mode = (self.settings.xueqiu_limit_up_content_mode or "ADVICE").strip().upper()
+        if mode != "ADVICE":
+            return True
+        if analysis.advice_status == ADVICE_STATUS_READY and analysis.advice_html:
+            return True
+        # 建议失败时是否退回整报由雪球独立降级开关决定（默认关：公开平台宁可当日不发）。
+        return bool(
+            analysis.advice_status == ADVICE_STATUS_FAILED
+            and self.settings.xueqiu_limit_up_advice_fallback_to_report
+        )
+
+    def _build_article(self, analysis: LimitUpAnalysisCache) -> tuple[str, str, str]:
+        """构造打板长文标题、正文与流水 source_type（按内容模式分支）。
+
+        返回的 source_type 反映实际使用的内容：建议正文记 LIMIT_UP_ADVICE，
+        整报正文（REPORT 模式或降级）记 LIMIT_UP_REPORT；
+        两种模式都保留发布层免责段——平台合规口径，与建议内容层"禁模板免责句"不冲突。
+
+        创建日期：2026-05-10
+        author: sunshengxian
+        """
+
+        mode = (self.settings.xueqiu_limit_up_content_mode or "ADVICE").strip().upper()
+        if mode == "ADVICE":
+            if not self._limit_up_article_ready(analysis):
+                # 手动发布与预览路径到达这里时给出明确错误；定时任务在调用前
+                # 已用 _limit_up_article_ready 静默跳过，不会触发本异常。
+                raise XueqiuPublishError(
+                    "投资建议未就绪（生成中或失败且未开启降级），暂不可发布"
+                )
+            if analysis.advice_status == ADVICE_STATUS_READY and analysis.advice_html:
+                title = self._normalize_xueqiu_title(
+                    f"{analysis.trade_date:%Y-%m-%d} 打板观察与投资建议（高风险）"
+                )
+                body = self._unwrap_report_body(analysis.advice_html or "")
+                disclaimer = (
+                    "<p><strong>风险提示：</strong>本文为基于公开数据和模型整理的短线观察，"
+                    "不构成任何投资建议。打板接力波动剧烈、失败风险高，"
+                    "请结合自身风险承受能力独立判断。</p>"
+                )
+                return title, f"{body}{disclaimer}", XUEQIU_SOURCE_LIMIT_UP_ADVICE
+            # FAILED + 降级开：继续走整报分支。
         title = f"{analysis.trade_date:%Y-%m-%d} 打板复盘：涨停生态、题材强度与次日观察"
         body = self._unwrap_report_body(analysis.content_html or "")
         disclaimer = (
             "<p><strong>风险提示：</strong>本文为基于公开数据和模型整理的市场复盘，"
             "不构成任何投资建议。短线打板波动剧烈，请结合自身风险承受能力独立判断。</p>"
         )
-        return title, f"{body}{disclaimer}"
+        return title, f"{body}{disclaimer}", XUEQIU_SOURCE_LIMIT_UP_REPORT
 
     def _build_nine_turn_article(self, analysis: NineTurnAnalysisCache) -> tuple[str, str]:
         """构造神奇九转报告的雪球标题和正文，按用户要求不带封面图。

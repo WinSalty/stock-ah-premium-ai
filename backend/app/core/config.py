@@ -249,6 +249,17 @@ class Settings(BaseSettings):
         default=30,
         alias="LIMIT_UP_PUSH_GENERATING_STALE_MINUTES",
     )
+    # 推送内容模式：ADVICE=推送投资建议（重构后默认）；REPORT=推送完整报告，
+    # 严格回滚通道——REPORT 模式不触发建议生成、不写建议列，行为与重构前一致。
+    limit_up_push_content_mode: str = Field(
+        default="ADVICE",
+        alias="LIMIT_UP_PUSH_CONTENT_MODE",
+    )
+    # PushPlus 渠道：建议生成失败时是否降级推送完整报告（默认开，保障早盘交付）。
+    limit_up_push_advice_fallback_to_report: bool = Field(
+        default=True,
+        alias="LIMIT_UP_PUSH_ADVICE_FALLBACK_TO_REPORT",
+    )
     nine_turn_push_scheduler_enabled: bool = Field(
         default=False,
         alias="NINE_TURN_PUSH_SCHEDULER_ENABLED",
@@ -293,6 +304,17 @@ class Settings(BaseSettings):
             "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
         ),
         alias="XUEQIU_PUBLISH_DEFAULT_USER_AGENT",
+    )
+    # 雪球发布内容模式：独立于 PushPlus，两渠道受众不同允许分别回滚。
+    xueqiu_limit_up_content_mode: str = Field(
+        default="ADVICE",
+        alias="XUEQIU_LIMIT_UP_CONTENT_MODE",
+    )
+    # 雪球渠道建议失败降级开关：默认关——公开平台宁可当日不发，
+    # 也不在"建议模式"下发出与预期不符的整报；与 PushPlus 降级开关独立。
+    xueqiu_limit_up_advice_fallback_to_report: bool = Field(
+        default=False,
+        alias="XUEQIU_LIMIT_UP_ADVICE_FALLBACK_TO_REPORT",
     )
     pushplus_enabled: bool = Field(default=True, alias="PUSHPLUS_ENABLED")
     pushplus_base_url: str = Field(default="https://www.pushplus.plus", alias="PUSHPLUS_BASE_URL")

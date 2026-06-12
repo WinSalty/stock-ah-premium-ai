@@ -24,6 +24,8 @@ from app.services.limit_up_push_service import LimitUpPushService
 from app.services.xueqiu_publish_service import (
     XUEQIU_MODE_DRAFT,
     XUEQIU_SOURCE_CHAT_ANSWER,
+    XUEQIU_SOURCE_LIMIT_UP_ADVICE,
+    XUEQIU_SOURCE_LIMIT_UP_REPORT,
     XUEQIU_STATUS_DRAFTED,
     XueqiuPublishError,
     XueqiuPublishService,
@@ -193,7 +195,9 @@ def test_preview_latest_report_unwraps_pushplus_container() -> None:
 
     db = make_db()
     report = add_ready_report(db)
-    preview = XueqiuPublishService(db, Settings()).preview_latest_report(report.id)
+    preview = XueqiuPublishService(
+        db, Settings(xueqiu_limit_up_content_mode="REPORT")
+    ).preview_latest_report(report.id)
 
     assert preview.title == "2026-05-08 打板复盘：涨停生态、题材强度与次日观察"
     assert "style=" not in preview.content_html
@@ -210,7 +214,7 @@ def test_publish_record_is_idempotent_for_same_mode() -> None:
 
     db = make_db()
     report = add_ready_report(db)
-    service = XueqiuPublishService(db, Settings())
+    service = XueqiuPublishService(db, Settings(xueqiu_limit_up_content_mode="REPORT"))
 
     first = service._get_or_create_record(report, XUEQIU_MODE_DRAFT, None, None)
     db.commit()
@@ -228,7 +232,7 @@ def test_force_retry_creates_new_record_without_mutating_old_record() -> None:
 
     db = make_db()
     report = add_ready_report(db)
-    service = XueqiuPublishService(db, Settings())
+    service = XueqiuPublishService(db, Settings(xueqiu_limit_up_content_mode="REPORT"))
     old_record = service._get_or_create_record(report, XUEQIU_MODE_DRAFT, None, None)
     old_record.status = XUEQIU_STATUS_DRAFTED
     old_record.draft_id = "deleted-draft-id"
@@ -671,7 +675,10 @@ def test_scheduler_publishes_current_t_minus_one_report_on_tuesday(monkeypatch) 
     db.refresh(admin)
     old_report = add_ready_report_for_date(db, date(2026, 5, 8))
     expected_report = add_ready_report_for_date(db, date(2026, 5, 11))
-    service = XueqiuPublishService(db, Settings(xueqiu_publish_scheduler_enabled=True))
+    service = XueqiuPublishService(db, Settings(
+        xueqiu_publish_scheduler_enabled=True,
+        xueqiu_limit_up_content_mode="REPORT",
+    ))
     enable_scheduler_setting(service, admin)
     save_test_credential(service, admin)
     requested_trade_dates: list[date] = []
@@ -718,7 +725,10 @@ def test_scheduler_backfills_after_configured_time_when_report_becomes_ready(mon
     db.commit()
     db.refresh(admin)
     expected_report = add_ready_report_for_date(db, date(2026, 6, 5))
-    service = XueqiuPublishService(db, Settings(xueqiu_publish_scheduler_enabled=True))
+    service = XueqiuPublishService(db, Settings(
+        xueqiu_publish_scheduler_enabled=True,
+        xueqiu_limit_up_content_mode="REPORT",
+    ))
     save_test_credential(service, admin)
     service.save_publish_setting(
         XueqiuPublishSettingRequest(
@@ -782,7 +792,10 @@ def test_scheduler_skips_monday_even_when_report_exists(monkeypatch) -> None:
     db.commit()
     db.refresh(admin)
     add_ready_report_for_date(db, date(2026, 5, 8))
-    service = XueqiuPublishService(db, Settings(xueqiu_publish_scheduler_enabled=True))
+    service = XueqiuPublishService(db, Settings(
+        xueqiu_publish_scheduler_enabled=True,
+        xueqiu_limit_up_content_mode="REPORT",
+    ))
     enable_scheduler_setting(service, admin)
     save_test_credential(service, admin)
     monkeypatch.setattr(
@@ -815,6 +828,7 @@ def test_publish_failure_sends_pushplus_alert_to_admin(monkeypatch) -> None:
             default_admin_username="admin",
             pushplus_token="push-token",
             pushplus_token_file=None,
+            xueqiu_limit_up_content_mode="REPORT",
         ),
     )
     service.save_credential(
@@ -859,3 +873,173 @@ def test_publish_failure_sends_pushplus_alert_to_admin(monkeypatch) -> None:
     assert "Cookie 已失效" in sent_messages[0][1]
     assert logs[-1].push_status == "SENT"
     assert logs[-1].push_message_id == "push-message-id"
+
+def add_ready_report_with_advice(db: Session) -> LimitUpAnalysisCache:
+    """写入带 READY 投资建议的测试报告（ADVICE 模式用例公共夹具）。
+
+    创建日期：2026-06-12
+    author: claude
+    """
+
+    report = add_ready_report(db)
+    report.advice_status = "READY"
+    report.advice_html = (
+        '<div style="background:#fff"><div style="padding:10px">'
+        "<h2>风险提示</h2><p>退潮期控制仓位。</p><h2>核心结论</h2><p>重点观察某某。</p>"
+        "</div></div>"
+    )
+    db.commit()
+    db.refresh(report)
+    return report
+
+
+def test_preview_advice_mode_uses_advice_content() -> None:
+    """确认 ADVICE 模式预览稿使用建议正文与建议标题。
+
+    创建日期：2026-06-12
+    author: claude
+    """
+
+    db = make_db()
+    report = add_ready_report_with_advice(db)
+
+    preview = XueqiuPublishService(db, Settings()).preview_latest_report(report.id)
+
+    assert preview.title == "2026-05-08 打板观察与投资建议（高风险）"
+    assert "退潮期控制仓位" in preview.content_html
+    assert "风险提示" in preview.content_html
+    # 建议稿同样剥掉 PushPlus 外层容器样式。
+    assert "style=" not in preview.content_html
+
+
+def test_advice_mode_record_uses_advice_source_type() -> None:
+    """确认 ADVICE 模式新建流水 source_type 为 LIMIT_UP_ADVICE。
+
+    创建日期：2026-06-12
+    author: claude
+    """
+
+    db = make_db()
+    report = add_ready_report_with_advice(db)
+    service = XueqiuPublishService(db, Settings())
+
+    record = service._get_or_create_record(report, XUEQIU_MODE_DRAFT, None, None)
+
+    assert record.source_type == XUEQIU_SOURCE_LIMIT_UP_ADVICE
+    assert "打板观察与投资建议" in record.title
+
+
+def test_advice_mode_total_gate_blocks_cross_source_double_publish() -> None:
+    """确认同报告同模式已有整报流水时不再自动新建建议流水（防同源双发总闸）。
+
+    创建日期：2026-06-12
+    author: claude
+    """
+
+    db = make_db()
+    report = add_ready_report_with_advice(db)
+    service = XueqiuPublishService(db, Settings())
+    old_record = XueqiuPublishRecord(
+        analysis_id=report.id,
+        source_type=XUEQIU_SOURCE_LIMIT_UP_REPORT,
+        publish_mode=XUEQIU_MODE_DRAFT,
+        status=XUEQIU_STATUS_DRAFTED,
+        title="旧整报草稿",
+        content_html="<p>旧整报</p>",
+    )
+    db.add(old_record)
+    db.commit()
+
+    reused = service._get_or_create_record(report, XUEQIU_MODE_DRAFT, None, None)
+    assert reused.id == old_record.id
+
+    # force 通道允许按当前内容（建议）新建流水，保留旧流水审计。
+    forced = service._get_or_create_record(report, XUEQIU_MODE_DRAFT, None, None, force=True)
+    assert forced.id != old_record.id
+    assert forced.source_type == XUEQIU_SOURCE_LIMIT_UP_ADVICE
+
+
+def test_advice_mode_failed_without_fallback_blocks_manual_publish() -> None:
+    """确认建议 FAILED 且雪球降级关闭时，手动预览/发布给出明确错误。
+
+    创建日期：2026-06-12
+    author: claude
+    """
+
+    db = make_db()
+    report = add_ready_report(db)
+    report.advice_status = "FAILED"
+    report.advice_error = "llm down"
+    db.commit()
+    service = XueqiuPublishService(db, Settings())
+
+    try:
+        service.preview_latest_report(report.id)
+    except XueqiuPublishError as exc:
+        assert "投资建议未就绪" in str(exc)
+    else:
+        raise AssertionError("应当抛出投资建议未就绪错误")
+
+
+def test_advice_mode_failed_with_fallback_uses_report_content() -> None:
+    """确认建议 FAILED 且雪球降级开启时回退整报正文（source_type 记整报）。
+
+    创建日期：2026-06-12
+    author: claude
+    """
+
+    db = make_db()
+    report = add_ready_report(db)
+    report.advice_status = "FAILED"
+    db.commit()
+    service = XueqiuPublishService(
+        db, Settings(xueqiu_limit_up_advice_fallback_to_report=True)
+    )
+
+    title, content_html, source_type = service._build_article(report)
+
+    assert title == "2026-05-08 打板复盘：涨停生态、题材强度与次日观察"
+    assert "涨停家数达 125 家" in content_html
+    assert source_type == XUEQIU_SOURCE_LIMIT_UP_REPORT
+
+
+def test_scheduler_skips_when_advice_not_ready(monkeypatch) -> None:
+    """确认定时任务在建议未就绪（FAILED 且降级关）时静默跳过且不触发重试。
+
+    创建日期：2026-06-12
+    author: claude
+    """
+
+    db = make_db()
+    admin = AppUser(username="admin", password_hash="hash", role="ADMIN", is_active=True)
+    db.add(admin)
+    db.commit()
+    db.refresh(admin)
+    # 2026-05-12 周二，T-1 为 2026-05-11 周一。
+    db.add(ATradeCalendar(exchange="SSE", cal_date=date(2026, 5, 11), is_open=1))
+    db.commit()
+    report = add_ready_report_for_date(db, date(2026, 5, 11))
+    report.advice_status = "FAILED"
+    report.advice_error = "llm down"
+    db.commit()
+    service = XueqiuPublishService(db, Settings(xueqiu_publish_scheduler_enabled=True))
+    save_test_credential(service, admin)
+    enable_scheduler_setting(service, admin)
+
+    def fake_ensure_analysis(self, trade_date: date) -> LimitUpAnalysisCache | None:
+        # 单测只验证"建议未就绪时跳过"，不触发真实 KPL 抓数与 LLM 生成。
+        return self.db.scalar(
+            select(LimitUpAnalysisCache).where(LimitUpAnalysisCache.trade_date == trade_date)
+        )
+
+    monkeypatch.setattr(
+        LimitUpPushService, "ensure_analysis_for_trade_date", fake_ensure_analysis
+    )
+    monkeypatch.setattr(
+        service, "_now_local", lambda: datetime(2026, 5, 12, 9, 0, tzinfo=EAST8_TZ)
+    )
+
+    record = service.save_or_publish_latest_by_scheduler()
+
+    assert record is None
+    assert list(db.scalars(select(XueqiuPublishRecord)).all()) == []

@@ -14,6 +14,7 @@ from app.db.models.chat import LlmCallMetric
 from app.db.models.market import ATradeCalendar
 from app.db.models.notification import (
     LimitUpAnalysisCache,
+    LimitUpPushDelivery,
     LimitUpPushRecipient,
     LimitUpReportShare,
     PushplusBinding,
@@ -358,6 +359,8 @@ def test_limit_up_report_cache_reuses_ready_when_snapshot_order_changes(monkeypa
             llm_api_key_file=None,
             tushare_token="token",
             tushare_token_file=None,
+            # 回滚通道回归：REPORT 模式必须与重构前推送行为一致（不触发建议生成）。
+            limit_up_push_content_mode="REPORT",
         ),
         tushare_client=fake_client,
         notification_service=fake_notification,
@@ -895,6 +898,8 @@ def test_limit_up_push_uses_enabled_system_users(monkeypatch) -> None:
             llm_api_key_file=None,
             tushare_token="token",
             tushare_token_file=None,
+            # 回滚通道回归：REPORT 模式必须与重构前推送行为一致（不触发建议生成）。
+            limit_up_push_content_mode="REPORT",
         ),
         tushare_client=FakeTushareClient({}),
         notification_service=fake_notification,
@@ -957,6 +962,8 @@ def test_weekend_replay_respects_recipient_preference(monkeypatch) -> None:
             llm_api_key_file=None,
             tushare_token="token",
             tushare_token_file=None,
+            # 回滚通道回归：REPORT 模式必须与重构前推送行为一致（不触发建议生成）。
+            limit_up_push_content_mode="REPORT",
         ),
         tushare_client=FakeTushareClient({}),
         notification_service=fake_notification,
@@ -1003,6 +1010,8 @@ def test_limit_up_push_only_targets_configured_recipients(monkeypatch) -> None:
             llm_api_key_file=None,
             tushare_token="token",
             tushare_token_file=None,
+            # 回滚通道回归：REPORT 模式必须与重构前推送行为一致（不触发建议生成）。
+            limit_up_push_content_mode="REPORT",
         ),
         tushare_client=FakeTushareClient({}),
         notification_service=fake_notification,
@@ -1288,6 +1297,8 @@ def test_latest_analysis_push_is_idempotent_across_polling(monkeypatch) -> None:
             llm_api_key_file=None,
             tushare_token="token",
             tushare_token_file=None,
+            # 回滚通道回归：REPORT 模式必须与重构前推送行为一致（不触发建议生成）。
+            limit_up_push_content_mode="REPORT",
         ),
         tushare_client=FakeTushareClient(
             {
@@ -1938,3 +1949,263 @@ def test_stage_prompt_version_mapping_keeps_existing_suffix() -> None:
     assert service._stage_prompt_version("INVESTMENT_ADVICE").endswith(
         ":investment_advice:advice-v1"
     )
+
+def _add_push_user(db) -> AppUser:
+    """构造可推送接收人（复用既有 add_user 辅助）。
+
+    创建日期：2026-06-12
+    author: claude
+    """
+
+    return add_user(db)
+
+
+def test_push_report_advice_mode_pushes_advice_content(monkeypatch) -> None:
+    """确认 ADVICE 模式推送正文为建议 HTML、标题为建议口径。
+
+    创建日期：2026-06-12
+    author: claude
+    """
+
+    db = make_db()
+    _add_push_user(db)
+    fake_notification = FakeNotificationService()
+    service = LimitUpPushService(
+        db,
+        settings=Settings(
+            llm_api_key="key",
+            llm_api_key_file=None,
+            tushare_token="token",
+            tushare_token_file=None,
+        ),
+        tushare_client=FakeTushareClient({}),
+        notification_service=fake_notification,
+    )
+    analysis = _make_ready_analysis(db, service)
+    analysis.advice_status = "READY"
+    analysis.advice_html = "<div>建议正文</div>"
+    db.commit()
+    monkeypatch.setattr(
+        service, "_latest_pushplus_log_id", lambda user_id, message_id: None
+    )
+
+    pushed = service.push_report(analysis.id, "MANUAL", service._now_naive())
+
+    assert pushed == 1
+    _, title, content = fake_notification.sent[0]
+    assert title == "2026-05-08 打板投资建议（高风险）"
+    assert content == "<div>建议正文</div>"
+
+
+def test_push_report_advice_pending_backfills_then_pushes(monkeypatch) -> None:
+    """确认 PENDING 建议在推送前现场回填（含 MANUAL 与定时入口同路径）。
+
+    创建日期：2026-06-12
+    author: claude
+    """
+
+    db = make_db()
+    _add_push_user(db)
+    fake_notification = FakeNotificationService()
+    service = LimitUpPushService(
+        db,
+        settings=Settings(
+            llm_api_key="key",
+            llm_api_key_file=None,
+            tushare_token="token",
+            tushare_token_file=None,
+        ),
+        tushare_client=FakeTushareClient({}),
+        notification_service=fake_notification,
+    )
+    analysis = _make_ready_analysis(db, service)
+    calls = {"count": 0}
+
+    def fake_chat(
+        prompt: str, system_prompt: str, json_mode: bool = False, phase: str = "limit_up_analysis"
+    ) -> str:
+        calls["count"] += 1
+        return "<h2>风险提示</h2><p>回填建议</p>"
+
+    monkeypatch.setattr(service, "_chat_completion_with_reasoning", fake_chat)
+    monkeypatch.setattr(
+        service, "_latest_pushplus_log_id", lambda user_id, message_id: None
+    )
+
+    scheduled_at = datetime(2026, 5, 9, 0, 30)
+    pushed = service.push_report(analysis.id, "DATA_READY", scheduled_at)
+
+    assert pushed == 1
+    assert calls["count"] == 1
+    assert analysis.advice_status == "READY"
+    _, title, content = fake_notification.sent[0]
+    assert "打板投资建议" in title
+    assert "回填建议" in content
+    # 同一业务计划重复轮询不重发（建议已缓存也不再调 LLM）。
+    pushed_again = service.push_report(analysis.id, "DATA_READY", scheduled_at)
+    assert pushed_again == 0
+    assert calls["count"] == 1
+
+
+def test_push_report_advice_failed_falls_back_to_report(monkeypatch) -> None:
+    """确认建议 FAILED 且降级开启时推送整报正文（冷却窗口内不重试）。
+
+    创建日期：2026-06-12
+    author: claude
+    """
+
+    db = make_db()
+    _add_push_user(db)
+    fake_notification = FakeNotificationService()
+    service = LimitUpPushService(
+        db,
+        settings=Settings(
+            llm_api_key="key",
+            llm_api_key_file=None,
+            tushare_token="token",
+            tushare_token_file=None,
+        ),
+        tushare_client=FakeTushareClient({}),
+        notification_service=fake_notification,
+    )
+    analysis = _make_ready_analysis(db, service)
+    analysis.advice_status = "FAILED"
+    analysis.advice_error = "llm down"
+    analysis.updated_at = datetime(2026, 5, 9, 0, 30)
+    db.commit()
+    calls = {"count": 0}
+
+    def fake_chat(*args: object, **kwargs: object) -> str:
+        calls["count"] += 1
+        return "<p>x</p>"
+
+    monkeypatch.setattr(service, "_chat_completion_with_reasoning", fake_chat)
+    monkeypatch.setattr(service, "_now_naive", lambda: datetime(2026, 5, 9, 0, 40))
+    monkeypatch.setattr(
+        service, "_latest_pushplus_log_id", lambda user_id, message_id: None
+    )
+
+    pushed = service.push_report(analysis.id, "MANUAL", datetime(2026, 5, 9, 0, 40))
+
+    assert pushed == 1
+    assert calls["count"] == 0
+    _, title, content = fake_notification.sent[0]
+    assert title == analysis.title
+    assert content == analysis.content_html
+
+
+def test_push_report_advice_failed_without_fallback(monkeypatch) -> None:
+    """确认降级关闭时：定时入口跳过不建流水，MANUAL 返回明确错误。
+
+    创建日期：2026-06-12
+    author: claude
+    """
+
+    db = make_db()
+    _add_push_user(db)
+    service = LimitUpPushService(
+        db,
+        settings=Settings(
+            llm_api_key="key",
+            llm_api_key_file=None,
+            tushare_token="token",
+            tushare_token_file=None,
+            limit_up_push_advice_fallback_to_report=False,
+        ),
+        tushare_client=FakeTushareClient({}),
+        notification_service=FakeNotificationService(),
+    )
+    analysis = _make_ready_analysis(db, service)
+    analysis.advice_status = "FAILED"
+    analysis.updated_at = datetime(2026, 5, 9, 0, 30)
+    db.commit()
+    monkeypatch.setattr(service, "_now_naive", lambda: datetime(2026, 5, 9, 0, 40))
+
+    pushed = service.push_report(analysis.id, "DATA_READY", datetime(2026, 5, 9, 0, 40))
+    assert pushed == 0
+    deliveries = db.scalars(select(LimitUpPushDelivery)).all()
+    assert deliveries == []
+
+    with pytest.raises(LimitUpPushError, match="降级推送已关闭"):
+        service.push_report(analysis.id, "MANUAL", datetime(2026, 5, 9, 0, 41))
+
+
+def test_push_report_advice_generating_skips_scheduled_and_blocks_manual(monkeypatch) -> None:
+    """确认未僵死 GENERATING：定时跳过，MANUAL 提示稍后重试。
+
+    创建日期：2026-06-12
+    author: claude
+    """
+
+    db = make_db()
+    _add_push_user(db)
+    service = LimitUpPushService(
+        db,
+        settings=Settings(
+            llm_api_key="key",
+            llm_api_key_file=None,
+            tushare_token="token",
+            tushare_token_file=None,
+        ),
+        tushare_client=FakeTushareClient({}),
+        notification_service=FakeNotificationService(),
+    )
+    analysis = _make_ready_analysis(db, service)
+    analysis.advice_status = "GENERATING"
+    analysis.updated_at = datetime(2026, 5, 9, 0, 30)
+    db.commit()
+    monkeypatch.setattr(service, "_now_naive", lambda: datetime(2026, 5, 9, 0, 35))
+
+    pushed = service.push_report(analysis.id, "DATA_READY", datetime(2026, 5, 9, 0, 35))
+    assert pushed == 0
+
+    with pytest.raises(LimitUpPushError, match="正在生成中"):
+        service.push_report(analysis.id, "MANUAL", datetime(2026, 5, 9, 0, 36))
+
+
+def test_weekend_replay_uses_cached_advice_without_llm(monkeypatch) -> None:
+    """确认周末复推命中已缓存建议时零新增 LLM 调用。
+
+    创建日期：2026-06-12
+    author: claude
+    """
+
+    db = make_db()
+    _add_push_user(db)
+    fake_notification = FakeNotificationService()
+    service = LimitUpPushService(
+        db,
+        settings=Settings(
+            llm_api_key="key",
+            llm_api_key_file=None,
+            tushare_token="token",
+            tushare_token_file=None,
+        ),
+        tushare_client=FakeTushareClient({}),
+        notification_service=fake_notification,
+    )
+    analysis = _make_ready_analysis(db, service)
+    analysis.advice_status = "READY"
+    analysis.advice_html = "<div>周五建议</div>"
+    db.commit()
+    calls = {"count": 0}
+
+    def fake_chat(*args: object, **kwargs: object) -> str:
+        calls["count"] += 1
+        return "<p>x</p>"
+
+    monkeypatch.setattr(service, "_chat_completion_with_reasoning", fake_chat)
+    monkeypatch.setattr(
+        service, "_latest_pushplus_log_id", lambda user_id, message_id: None
+    )
+    # 2026-05-09 是周六，最近周五为 2026-05-08（已 READY 且带建议）。
+    monkeypatch.setattr(service, "_today_local", lambda: date(2026, 5, 9))
+
+    replay_analysis, pushed = service.push_weekend_replay()
+
+    assert replay_analysis is not None and replay_analysis.id == analysis.id
+    assert pushed == 1
+    assert calls["count"] == 0
+    _, title, content = fake_notification.sent[0]
+    assert "打板投资建议" in title
+    assert content == "<div>周五建议</div>"
