@@ -36,6 +36,7 @@ from app.schemas.xueqiu_publish import (
 )
 from app.services.limit_up_push_service import (
     ADVICE_STATUS_FAILED,
+    ADVICE_STATUS_GENERATING,
     ADVICE_STATUS_PENDING,
     ADVICE_STATUS_READY,
     ANALYSIS_STATUS_READY,
@@ -972,7 +973,10 @@ class XueqiuPublishService:
         mode = (self.settings.xueqiu_limit_up_content_mode or "ADVICE").strip().upper()
         if mode != "ADVICE":
             return analysis
-        if analysis.advice_status == ADVICE_STATUS_PENDING:
+        # PENDING 现场回填；GENERATING 也交给 ensure 内部裁决：未僵死立即返回（本分钟
+        # 静默跳过），僵死则接管恢复——否则进程在生成中途重启后，雪球每分钟任务会
+        # 全天跳过该报告且无自动恢复通道。FAILED 仍不在雪球链路重试（防无界重试）。
+        if analysis.advice_status in {ADVICE_STATUS_PENDING, ADVICE_STATUS_GENERATING}:
             LimitUpPushService(self.db, self.settings).ensure_advice_for_analysis(analysis)
         return analysis
 

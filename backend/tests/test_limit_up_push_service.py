@@ -2266,3 +2266,77 @@ def test_force_regenerate_bypasses_stage_cache(monkeypatch) -> None:
     regenerated = service.ensure_advice_for_analysis(analysis, force=True)
     assert calls["count"] == 2
     assert "第2版建议" in (regenerated.advice_markdown or "")
+
+def test_ensure_advice_empty_llm_output_marks_failed(monkeypatch) -> None:
+    """确认 LLM 返回空内容时建议置 FAILED（守卫不被 html_fragment 包装绕过）。
+
+    创建日期：2026-06-12
+    author: claude
+    """
+
+    db = make_db()
+    service = _make_advice_service(db)
+    analysis = _make_ready_analysis(db, service)
+
+    def empty_chat(
+        prompt: str, system_prompt: str, json_mode: bool = False, phase: str = "limit_up_analysis"
+    ) -> str:
+        return "   "
+
+    monkeypatch.setattr(service, "_chat_completion_with_reasoning", empty_chat)
+
+    result = service.ensure_advice_for_analysis(analysis)
+
+    assert result.advice_status == "FAILED"
+    assert "输出为空" in (result.advice_error or "")
+    # 报告本体不受影响，推送层据 FAILED 走降级整报路径。
+    assert result.status == "READY"
+
+
+def test_manual_push_recovers_from_stale_generating_advice(monkeypatch) -> None:
+    """确认 MANUAL 推送可接管僵死 GENERATING 建议（进程崩溃后的恢复通道）。
+
+    创建日期：2026-06-12
+    author: claude
+    """
+
+    db = make_db()
+    _add_push_user(db)
+    fake_notification = FakeNotificationService()
+    service = LimitUpPushService(
+        db,
+        settings=Settings(
+            llm_api_key="key",
+            llm_api_key_file=None,
+            tushare_token="token",
+            tushare_token_file=None,
+        ),
+        tushare_client=FakeTushareClient({}),
+        notification_service=fake_notification,
+    )
+    analysis = _make_ready_analysis(db, service)
+    analysis.advice_status = "GENERATING"
+    analysis.updated_at = datetime(2026, 5, 9, 0, 0)
+    db.commit()
+    calls = {"count": 0}
+
+    def fake_chat(
+        prompt: str, system_prompt: str, json_mode: bool = False, phase: str = "limit_up_analysis"
+    ) -> str:
+        calls["count"] += 1
+        return "<h2>风险提示</h2><p>接管后建议</p>"
+
+    monkeypatch.setattr(service, "_chat_completion_with_reasoning", fake_chat)
+    monkeypatch.setattr(
+        service, "_latest_pushplus_log_id", lambda user_id, message_id: None
+    )
+    # 超过 30 分钟僵死阈值：MANUAL 推送应接管重生成后推送建议，而非永久报"生成中"。
+    monkeypatch.setattr(service, "_now_naive", lambda: datetime(2026, 5, 9, 1, 0))
+
+    pushed = service.push_report(analysis.id, "MANUAL", datetime(2026, 5, 9, 1, 0))
+
+    assert pushed == 1
+    assert calls["count"] == 1
+    _, title, content = fake_notification.sent[0]
+    assert "打板投资建议" in title
+    assert "接管后建议" in content

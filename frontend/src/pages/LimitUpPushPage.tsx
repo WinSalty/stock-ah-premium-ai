@@ -270,7 +270,13 @@ function LimitUpPushPage({ currentUser }: LimitUpPushPageProps) {
   const regenerateAdviceMutation = useMutation({
     mutationFn: (reportId: number) => regenerateLimitUpAdvice(reportId),
     onSuccess: (result) => {
-      message.success(result.message);
+      // 后端重生成失败也返回 HTTP 200 + ok:false，必须按 ok 分支提示，
+      // 否则失败信息会带成功样式误导管理员；两种情况都要刷新详情与列表。
+      if (result.ok) {
+        message.success(result.message);
+      } else {
+        message.error(result.message);
+      }
       queryClient.invalidateQueries({ queryKey: ['limit-up-report-detail'] });
       queryClient.invalidateQueries({ queryKey: ['limit-up-reports'] });
     },

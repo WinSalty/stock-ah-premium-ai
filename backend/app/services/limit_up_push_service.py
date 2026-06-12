@@ -499,9 +499,14 @@ class LimitUpPushService:
         is_manual = scheduled_kind == DELIVERY_KIND_MANUAL
         if analysis.advice_status != ADVICE_STATUS_READY or not analysis.advice_html:
             if is_manual:
-                # MANUAL：PENDING 现场回填（含存量历史报告）；FAILED 不自动重试，
+                # MANUAL：PENDING 现场回填（含存量历史报告）；GENERATING 也交给 ensure
+                # 内部裁决——未僵死直接返回（落到下方"生成中"提示），僵死则接管恢复，
+                # 避免进程崩溃后手动推送被永久卡死；FAILED 不自动重试，
                 # 由管理员经重生成端点修复后再推，避免手动重复推送触发重复 LLM 调用。
-                if analysis.advice_status == ADVICE_STATUS_PENDING:
+                if analysis.advice_status in {
+                    ADVICE_STATUS_PENDING,
+                    ADVICE_STATUS_GENERATING,
+                }:
                     self.ensure_advice_for_analysis(analysis)
             else:
                 # 定时入口：PENDING 回填、FAILED 冷却重试、僵死 GENERATING 接管，
@@ -595,7 +600,9 @@ class LimitUpPushService:
                 # 质量不满意场景会原样返回旧内容，端点回复"已重新生成"即构成误导。
                 skip_cache=force,
             )
-            raw_advice = str(payload.get("content") or payload.get("html_fragment") or "")
+            # 判空只看 LLM 原始输出 content：html_fragment 对空串会包装出 "<p></p>"，
+            # 若回退它判空守卫会变成死代码，空白建议将被置 READY 推送/发布出去。
+            raw_advice = str(payload.get("content") or "")
             if not raw_advice.strip():
                 raise LimitUpPushError("投资建议输出为空")
         except Exception as exc:
