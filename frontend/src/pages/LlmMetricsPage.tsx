@@ -1,12 +1,28 @@
-import { Button, DatePicker, Empty, Input, Modal, Select, Skeleton, Space, Table, Tag, Tooltip, Typography } from 'antd';
+import {
+  Button,
+  DatePicker,
+  Empty,
+  Input,
+  Modal,
+  Select,
+  Skeleton,
+  Space,
+  Spin,
+  Table,
+  Tabs,
+  Tag,
+  Tooltip,
+  Typography,
+  message
+} from 'antd';
 import type { TableColumnsType } from 'antd';
-import { CircleHelp, RotateCw, Search, X } from 'lucide-react';
+import { CircleHelp, Copy, RotateCw, Search, X } from 'lucide-react';
 import { useMemo, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useIsFetching, useQuery, useQueryClient } from '@tanstack/react-query';
 import dayjs from 'dayjs';
 import PageHeader from '../components/PageHeader';
-import { fetchLlmMetricDetail, fetchLlmMetricSummary, fetchLlmMetrics } from '../api/llmMetrics';
-import type { LlmMetricItem } from '../types/domain';
+import { fetchLlmMetricDetail, fetchLlmMetricRounds, fetchLlmMetricSummary, fetchLlmMetrics } from '../api/llmMetrics';
+import type { LlmMetricItem, LlmRoundItem } from '../types/domain';
 import { formatEast8DateTime } from '../utils/datetime';
 
 type DateRange = [dayjs.Dayjs, dayjs.Dayjs] | null;
@@ -106,6 +122,20 @@ const modelOptions = [
   'deepseek-v4-pro'
 ].map((item) => ({ label: item, value: item }));
 
+/**
+ * "按对话轮"视图字段口径说明：与后端 /api/llm-metrics/rounds 聚合口径保持一致，
+ * 用于列头帮助图标，避免使用者误读聚合数值（尤其是总耗时为求和参考值而非墙钟时间）。
+ */
+const roundFieldDescriptions: Record<string, string> = {
+  started_at: '本轮最早阶段的开始时间，页面按东八区展示；列表按轮开始时间倒序排列。',
+  question_id: '单轮问答唯一追踪 ID，仅展示前 8 位，点击复制按钮可复制完整 ID 用于精确检索。',
+  phase_count: '轮内全部阶段记录数，包含路由、SQL、回答、工具执行与汇总等所有阶段。',
+  llm_call_count: '外部 LLM 调用数（Agent 迭代 + 流式收尾），不含首包派生记录与工具执行。',
+  tool_call_count: '轮内工具执行次数。',
+  total_elapsed_ms: '轮内各阶段耗时求和（按秒展示），属于相对参考值，不等于用户真实等待的墙钟时间。',
+  has_failure: '轮内任一阶段失败即标记为“含失败”，可展开该行定位具体失败阶段。'
+};
+
 interface MetricFilters {
   question_id?: string;
   provider?: string;
@@ -116,18 +146,398 @@ interface MetricFilters {
   date_range?: DateRange;
 }
 
+/** 按对话轮视图的筛选条件：只保留轮级维度（追踪 ID / 会话 / 用户 / 日期范围），阶段级筛选留在阶段明细 Tab。 */
+interface RoundFilters {
+  question_id?: string;
+  session_id?: string;
+  user_id?: string;
+  date_range?: DateRange;
+}
+
 /**
  * LLM 调用耗时查询页面。
+ * Agent 化后一轮问答会产生多条阶段记录，页面拆成双 Tab 视图：
+ * - 按对话轮（默认）：一个 question_id 聚合为一行，行内展开懒加载该轮全部阶段明细，便于按轮排查链路。
+ * - 阶段明细：保留原有统计卡片、阶段级筛选与平铺明细表，作为兜底排查入口。
  * 创建日期：2026-05-05
  * author: sunshengxian
  */
 function LlmMetricsPage() {
+  // 当前激活视图：rounds=按对话轮聚合主视图（默认），phases=阶段明细兜底视图。
+  const [activeTab, setActiveTab] = useState<'rounds' | 'phases'>('rounds');
+  // payload/响应全文查看器状态：两个 Tab 共用同一个 Modal，并复用按 metric id 懒加载详情的查询。
+  const [viewer, setViewer] = useState<MetricViewerState>(null);
+  const queryClient = useQueryClient();
+  // 分别统计两个视图的在途请求数，让头部刷新按钮的 loading 状态只跟随当前 Tab。
+  const roundsFetching = useIsFetching({ queryKey: ['llm-metric-rounds'] });
+  const metricsFetching = useIsFetching({ queryKey: ['llm-metrics'] });
+  const summaryFetching = useIsFetching({ queryKey: ['llm-metrics-summary'] });
+  // 详情按 metric id 懒加载：只有点击“查看”后才请求 payload/响应全文，列表接口不传输大字段。
+  const metricDetail = useQuery({
+    queryKey: ['llm-metric-detail', viewer?.metricId],
+    queryFn: () => fetchLlmMetricDetail(viewer?.metricId || 0),
+    enabled: Boolean(viewer?.metricId)
+  });
+
+  const refreshActiveTab = () => {
+    // 刷新只作用于当前 Tab 的数据源，避免无意义地重复拉取另一个视图的接口。
+    if (activeTab === 'rounds') {
+      queryClient.invalidateQueries({ queryKey: ['llm-metric-rounds'] });
+      return;
+    }
+    // 列表和摘要拆成两个请求：刷新时同时触发，但摘要慢也不阻塞表格首屏。
+    queryClient.invalidateQueries({ queryKey: ['llm-metrics'] });
+    queryClient.invalidateQueries({ queryKey: ['llm-metrics-summary'] });
+  };
+
+  return (
+    <main className="page">
+      <PageHeader
+        title="LLM 耗时"
+        extra={
+          <Button
+            title="刷新"
+            icon={<RotateCw size={16} />}
+            onClick={refreshActiveTab}
+            loading={activeTab === 'rounds' ? roundsFetching > 0 : metricsFetching + summaryFetching > 0}
+          />
+        }
+      />
+      <Tabs
+        activeKey={activeTab}
+        onChange={(key) => setActiveTab(key as 'rounds' | 'phases')}
+        items={[
+          { key: 'rounds', label: '按对话轮', children: <RoundMetricsTab onOpenViewer={setViewer} /> },
+          { key: 'phases', label: '阶段明细', children: <PhaseMetricsTab onOpenViewer={setViewer} /> }
+        ]}
+      />
+      <Modal
+        title={viewer?.title || '指标内容'}
+        open={Boolean(viewer)}
+        footer={null}
+        width={920}
+        onCancel={() => setViewer(null)}
+      >
+        <MetricDetailViewer
+          loading={metricDetail.isLoading}
+          error={metricDetail.error}
+          type={viewer?.type}
+          value={
+            viewer?.type === 'payload'
+              ? metricDetail.data?.request_payload_json
+              : metricDetail.data?.response_content
+          }
+        />
+      </Modal>
+    </main>
+  );
+}
+
+/**
+ * Tab1 按对话轮聚合视图（默认主视图）。
+ * 聚合口径：一轮 = 一个 question_id，后端把该轮全部阶段汇总成一行并按轮起始时间倒序分页返回；
+ * 行展开时复用既有 /api/llm-metrics 接口按 question_id 懒加载阶段明细，并缓存到 state，重复展开不重复请求。
+ */
+function RoundMetricsTab({ onOpenViewer }: { onOpenViewer: (viewer: MetricViewerState) => void }) {
+  const [draftFilters, setDraftFilters] = useState<RoundFilters>({});
+  const [filters, setFilters] = useState<RoundFilters>({});
+  const [queryVersion, setQueryVersion] = useState(0);
+  const [page, setPage] = useState(1);
+  // 后端 page_size 限制为 10-100，默认 20，分页器选项与之对齐。
+  const [pageSize, setPageSize] = useState(20);
+  // 阶段明细缓存：key=question_id。一轮的阶段集合落库后不可变，翻页或重复展开时直接命中缓存渲染，不再请求后端。
+  const [roundDetailCache, setRoundDetailCache] = useState<Record<string, LlmMetricItem[]>>({});
+  // 正在懒加载阶段明细的轮次集合（question_id -> true）：用于展开区域 Spin 展示，并防止同一轮并发重复请求。
+  const [detailLoading, setDetailLoading] = useState<Record<string, boolean>>({});
+  // 当前展开的轮次 question_id 列表：受控展开，便于在加载失败时收起该行实现“重新展开即重试”。
+  const [expandedRowKeys, setExpandedRowKeys] = useState<string[]>([]);
+
+  const roundParams = useMemo(
+    () => ({
+      question_id: filters.question_id?.trim() || undefined,
+      session_id: toNumber(filters.session_id),
+      user_id: toNumber(filters.user_id),
+      start_date: filters.date_range?.[0]?.format('YYYY-MM-DD'),
+      end_date: filters.date_range?.[1]?.format('YYYY-MM-DD')
+    }),
+    [filters]
+  );
+  const roundList = useQuery({
+    queryKey: ['llm-metric-rounds', roundParams, page, pageSize, queryVersion],
+    queryFn: () => fetchLlmMetricRounds({ ...roundParams, page, page_size: pageSize })
+  });
+
+  /**
+   * 懒加载某一轮的阶段明细：复用既有 /api/llm-metrics 接口按 question_id 精确过滤，
+   * 不取全文内容/统计摘要/精确总数（单轮阶段数有限，page_size=50 足够覆盖一轮）。
+   * 失败时弹出 message.error 并收起该行；缓存未写入，重新展开会再次发起请求实现重试。
+   */
+  const loadRoundDetail = (questionId: string) => {
+    if (roundDetailCache[questionId] || detailLoading[questionId]) {
+      // 缓存命中或请求在途时直接跳过，保证“重复展开不重复请求”。
+      return;
+    }
+    setDetailLoading((items) => ({ ...items, [questionId]: true }));
+    fetchLlmMetrics({
+      page: 1,
+      page_size: 50,
+      question_id: questionId,
+      include_content: false,
+      include_summary: false,
+      include_total: false
+    })
+      .then((data) => {
+        // 按落库时间正序整理阶段：展开后从上到下即一轮链路的执行顺序，便于定位耗时瓶颈与失败阶段。
+        const rows = [...data.rows].sort((a, b) =>
+          a.created_at === b.created_at ? a.id - b.id : a.created_at < b.created_at ? -1 : 1
+        );
+        setRoundDetailCache((items) => ({ ...items, [questionId]: rows }));
+      })
+      .catch((error: unknown) => {
+        message.error(error instanceof Error ? error.message : '阶段明细加载失败，请重新展开重试');
+        // 失败时主动收起该行：用户重新展开即可重试，避免停留在空白展开区。
+        setExpandedRowKeys((keys) => keys.filter((key) => key !== questionId));
+      })
+      .finally(() => {
+        setDetailLoading((items) => {
+          const next = { ...items };
+          delete next[questionId];
+          return next;
+        });
+      });
+  };
+
+  const handleExpand = (expanded: boolean, record: LlmRoundItem) => {
+    if (!expanded) {
+      setExpandedRowKeys((keys) => keys.filter((key) => key !== record.question_id));
+      return;
+    }
+    setExpandedRowKeys((keys) => [...keys, record.question_id]);
+    loadRoundDetail(record.question_id);
+  };
+
+  // 展开行内的嵌套阶段明细列：复用阶段明细视图的核心列子集与“查看”详情交互。
+  const phaseColumns = useMemo(() => buildRoundPhaseColumns(onOpenViewer), [onOpenViewer]);
+
+  const columns = useMemo<TableColumnsType<LlmRoundItem>>(
+    () => [
+      {
+        title: <HelpTitle label="开始时间" help={roundFieldDescriptions.started_at} />,
+        dataIndex: 'started_at',
+        width: 188,
+        render: (value: string) => (
+          <Typography.Text className="llm-metric-time">
+            {formatEast8DateTime(value, { naiveAsEast8: true })}
+          </Typography.Text>
+        )
+      },
+      {
+        title: <HelpTitle label="用户" help={fieldDescriptions.user_name} />,
+        dataIndex: 'user_name',
+        width: 120,
+        render: renderText
+      },
+      {
+        title: <HelpTitle label="对话标题" help={fieldDescriptions.conversation_title} />,
+        dataIndex: 'conversation_title',
+        width: 260,
+        // 单元格内截断展示，悬浮 Tooltip 查看完整标题；showTitle 关闭原生 title 避免双重提示。
+        ellipsis: { showTitle: false },
+        render: (value: string | null) =>
+          value ? (
+            <Tooltip title={value} placement="topLeft">
+              {value}
+            </Tooltip>
+          ) : (
+            <Typography.Text type="secondary">-</Typography.Text>
+          )
+      },
+      {
+        title: <HelpTitle label="追踪 ID" help={roundFieldDescriptions.question_id} />,
+        dataIndex: 'question_id',
+        width: 140,
+        render: (value: string) => (
+          <Space size={4}>
+            <Tooltip title={value}>
+              <Typography.Text>{value.slice(0, 8)}</Typography.Text>
+            </Tooltip>
+            <Tooltip title="复制完整追踪 ID">
+              <Button type="text" size="small" icon={<Copy size={13} />} onClick={() => copyQuestionId(value)} />
+            </Tooltip>
+          </Space>
+        )
+      },
+      {
+        title: <HelpTitle label="阶段数" help={roundFieldDescriptions.phase_count} />,
+        dataIndex: 'phase_count',
+        width: 92,
+        align: 'right',
+        render: renderCount
+      },
+      {
+        title: <HelpTitle label="LLM 调用" help={roundFieldDescriptions.llm_call_count} />,
+        dataIndex: 'llm_call_count',
+        width: 104,
+        align: 'right',
+        render: renderCount
+      },
+      {
+        title: <HelpTitle label="工具执行" help={roundFieldDescriptions.tool_call_count} />,
+        dataIndex: 'tool_call_count',
+        width: 104,
+        align: 'right',
+        render: renderCount
+      },
+      {
+        title: <HelpTitle label="总耗时(s)" help={roundFieldDescriptions.total_elapsed_ms} />,
+        dataIndex: 'total_elapsed_ms',
+        width: 110,
+        align: 'right',
+        render: (value: number | null) => <Typography.Text>{formatSeconds(value)}</Typography.Text>
+      },
+      {
+        title: <HelpTitle label="状态" help={roundFieldDescriptions.has_failure} />,
+        dataIndex: 'has_failure',
+        width: 96,
+        render: (value: boolean) => <Tag color={value ? 'red' : 'green'}>{value ? '含失败' : '正常'}</Tag>
+      }
+    ],
+    []
+  );
+
+  const applyFilters = () => {
+    // 查询按钮代表一次显式提交：即使条件未变化也强制刷新；同时收起展开行，避免旧展开状态跨筛选残留。
+    setFilters({ ...draftFilters });
+    setPage(1);
+    setExpandedRowKeys([]);
+    setQueryVersion((version) => version + 1);
+  };
+
+  const resetFilters = () => {
+    setDraftFilters({});
+    setFilters({});
+    setPage(1);
+    setExpandedRowKeys([]);
+    setQueryVersion((version) => version + 1);
+  };
+
+  return (
+    <>
+      <section className="panel">
+        <div className="llm-metric-filter-grid">
+          <FilterInput
+            label="追踪 ID"
+            value={draftFilters.question_id}
+            placeholder="question_id"
+            onChange={(value) => setDraftFilters((items) => ({ ...items, question_id: value }))}
+            onPressEnter={applyFilters}
+          />
+          <FilterInput
+            label="会话 ID"
+            value={draftFilters.session_id}
+            placeholder="session_id"
+            onChange={(value) => setDraftFilters((items) => ({ ...items, session_id: value }))}
+            onPressEnter={applyFilters}
+          />
+          <FilterInput
+            label="用户 ID"
+            value={draftFilters.user_id}
+            placeholder="user_id"
+            onChange={(value) => setDraftFilters((items) => ({ ...items, user_id: value }))}
+            onPressEnter={applyFilters}
+          />
+          <div>
+            <Typography.Text className="field-label">日期范围</Typography.Text>
+            <DatePicker.RangePicker
+              className="full-width"
+              value={draftFilters.date_range || null}
+              onChange={(value) =>
+                setDraftFilters((items) => ({ ...items, date_range: value as DateRange }))
+              }
+            />
+          </div>
+          <Space className="query-actions">
+            <Button type="primary" icon={<Search size={16} />} onClick={applyFilters}>
+              查询
+            </Button>
+            <Button icon={<X size={16} />} onClick={resetFilters}>
+              清空
+            </Button>
+          </Space>
+        </div>
+      </section>
+
+      <section className="panel">
+        <div className="query-result-head">
+          <div>
+            <div className="panel-title">对话轮列表</div>
+            <Typography.Text type="secondary">
+              一轮问答（一个追踪 ID）聚合为一行，按轮开始时间倒序；点击行首箭头展开查看该轮全部阶段明细。
+            </Typography.Text>
+          </div>
+          <Tag color="blue">{roundList.data?.total ?? 0} 轮</Tag>
+        </div>
+        <Table<LlmRoundItem>
+          className="llm-metric-table"
+          rowKey="question_id"
+          loading={roundList.isLoading || roundList.isFetching}
+          dataSource={roundList.data?.rows || []}
+          columns={columns}
+          locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} /> }}
+          scroll={{ x: 1260 }}
+          expandable={{
+            expandedRowKeys,
+            onExpand: handleExpand,
+            expandedRowRender: (record) =>
+              detailLoading[record.question_id] ? (
+                // 阶段明细懒加载中：展开区域先展示 Spin，加载完成后替换为嵌套阶段表格。
+                <div style={{ padding: '16px 0', textAlign: 'center' }}>
+                  <Spin />
+                </div>
+              ) : (
+                <Table<LlmMetricItem>
+                  rowKey="id"
+                  size="small"
+                  columns={phaseColumns}
+                  dataSource={roundDetailCache[record.question_id] || []}
+                  pagination={false}
+                  locale={{
+                    emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="该轮暂无阶段明细" />
+                  }}
+                  scroll={{ x: 1190 }}
+                />
+              )
+          }}
+          pagination={{
+            current: page,
+            pageSize,
+            total: roundList.data?.total ?? 0,
+            showSizeChanger: true,
+            // 分页大小选项与后端 page_size 限制（10-100）对齐。
+            pageSizeOptions: [10, 20, 50, 100],
+            onChange: (nextPage, nextPageSize) => {
+              setPage(nextPage);
+              setPageSize(nextPageSize);
+              // 翻页后收起展开行；已加载的明细缓存保留，翻回原页重复展开仍命中缓存。
+              setExpandedRowKeys([]);
+            }
+          }}
+        />
+      </section>
+    </>
+  );
+}
+
+/**
+ * Tab2 阶段明细视图：保留原有统计卡片、全部阶段级筛选（provider/model/phase 等）与平铺明细表，
+ * 作为兜底排查入口；payload/响应全文查看通过 onOpenViewer 复用页面级共享 Modal。
+ */
+function PhaseMetricsTab({ onOpenViewer }: { onOpenViewer: (viewer: MetricViewerState) => void }) {
   const [draftFilters, setDraftFilters] = useState<MetricFilters>({});
   const [filters, setFilters] = useState<MetricFilters>({});
   const [queryVersion, setQueryVersion] = useState(0);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(30);
-  const [viewer, setViewer] = useState<MetricViewerState>(null);
   const metricParams = useMemo(
     () => ({
       question_id: filters.question_id?.trim() || undefined,
@@ -156,11 +566,6 @@ function LlmMetricsPage() {
   const metricSummary = useQuery({
     queryKey: ['llm-metrics-summary', metricParams, queryVersion],
     queryFn: () => fetchLlmMetricSummary(metricParams)
-  });
-  const metricDetail = useQuery({
-    queryKey: ['llm-metric-detail', viewer?.metricId],
-    queryFn: () => fetchLlmMetricDetail(viewer?.metricId || 0),
-    enabled: Boolean(viewer?.metricId)
   });
 
   const columns = useMemo<TableColumnsType<LlmMetricItem>>(
@@ -213,7 +618,7 @@ function LlmMetricsPage() {
             <Button
               size="small"
               onClick={() =>
-                setViewer({
+                onOpenViewer({
                   title: `${record.phase_label || record.phase} 请求参数`,
                   type: 'payload',
                   metricId: record.id
@@ -235,7 +640,7 @@ function LlmMetricsPage() {
             <Button
               size="small"
               onClick={() =>
-                setViewer({
+                onOpenViewer({
                   title: `${record.phase_label || record.phase} 响应内容`,
                   type: 'response',
                   metricId: record.id
@@ -286,7 +691,8 @@ function LlmMetricsPage() {
       { title: <HelpTitle label="用户" help={fieldDescriptions.user_id} />, dataIndex: 'user_id', width: 86, render: renderText },
       { title: <HelpTitle label="错误" help={fieldDescriptions.error_message} />, dataIndex: 'error_message', width: 220, ellipsis: true, render: renderText }
     ],
-    []
+    // 列定义依赖外部传入的查看器回调：回调变化时同步重建“查看”按钮的点击行为。
+    [onOpenViewer]
   );
 
   const applyFilters = () => {
@@ -304,23 +710,7 @@ function LlmMetricsPage() {
   };
 
   return (
-    <main className="page">
-      <PageHeader
-        title="LLM 耗时"
-        extra={
-          <Button
-            title="刷新"
-            icon={<RotateCw size={16} />}
-            onClick={() => {
-              // 列表和摘要拆成两个请求：刷新时同时触发，但摘要慢也不阻塞表格首屏。
-              metricList.refetch();
-              metricSummary.refetch();
-            }}
-            loading={metricList.isFetching || metricSummary.isFetching}
-          />
-        }
-      />
-
+    <>
       <section className="metrics-summary-grid">
         <MetricCard
           label="调用阶段"
@@ -460,25 +850,7 @@ function LlmMetricsPage() {
           }}
         />
       </section>
-      <Modal
-        title={viewer?.title || '指标内容'}
-        open={Boolean(viewer)}
-        footer={null}
-        width={920}
-        onCancel={() => setViewer(null)}
-      >
-        <MetricDetailViewer
-          loading={metricDetail.isLoading}
-          error={metricDetail.error}
-          type={viewer?.type}
-          value={
-            viewer?.type === 'payload'
-              ? metricDetail.data?.request_payload_json
-              : metricDetail.data?.response_content
-          }
-        />
-      </Modal>
-    </main>
+    </>
   );
 }
 
@@ -724,6 +1096,130 @@ function formatMs(value?: number | null) {
     return `${(value / 1000).toFixed(2)}s`;
   }
   return `${value.toFixed(1)}ms`;
+}
+
+/**
+ * 把毫秒耗时换算成秒展示（保留两位小数）：用于轮级"总耗时(s)"列统一量纲；空值显示 -。
+ * 注意该值是轮内阶段耗时求和的相对参考值，不代表用户真实等待的墙钟时间。
+ */
+function formatSeconds(value?: number | null) {
+  if (value === null || value === undefined) {
+    return '-';
+  }
+  return `${(value / 1000).toFixed(2)}s`;
+}
+
+/**
+ * 一键复制完整追踪 ID：列表内只截断展示前 8 位，复制时写入完整值，便于粘贴到筛选框或日志检索。
+ * 剪贴板写入失败（如非安全上下文）时给出错误提示，不中断页面操作。
+ */
+function copyQuestionId(value: string) {
+  navigator.clipboard
+    .writeText(value)
+    .then(() => message.success('已复制追踪 ID'))
+    .catch(() => message.error('复制失败'));
+}
+
+/**
+ * 构建"按对话轮"展开行内的嵌套阶段明细列：复用阶段明细视图的核心列子集
+ * （阶段/来源/模型/状态/耗时/首包/输出字符/时间/查看），渲染函数与字段口径说明全部复用既有实现；
+ * "查看"按钮通过 onOpenViewer 打开页面级共享 Modal，复用按 metric id 懒加载 payload/响应全文的交互。
+ */
+function buildRoundPhaseColumns(
+  onOpenViewer: (viewer: MetricViewerState) => void
+): TableColumnsType<LlmMetricItem> {
+  return [
+    {
+      title: <HelpTitle label="阶段" help={fieldDescriptions.phase} />,
+      dataIndex: 'phase',
+      width: 210,
+      render: (_value: string, record) => renderPhase(record)
+    },
+    { title: <HelpTitle label="来源" help={fieldDescriptions.provider} />, dataIndex: 'provider', width: 96, render: renderTag },
+    { title: <HelpTitle label="模型" help={fieldDescriptions.model} />, dataIndex: 'model', width: 170, render: renderText },
+    {
+      title: <HelpTitle label="状态" help={fieldDescriptions.success} />,
+      dataIndex: 'success',
+      width: 84,
+      render: (value: boolean) => <Tag color={value ? 'blue' : 'red'}>{value ? '成功' : '失败'}</Tag>
+    },
+    {
+      title: <HelpTitle label="耗时" help={fieldDescriptions.elapsed_ms} />,
+      dataIndex: 'elapsed_ms',
+      width: 104,
+      align: 'right',
+      render: renderMs
+    },
+    {
+      title: <HelpTitle label="首包" help={fieldDescriptions.first_chunk_ms} />,
+      dataIndex: 'first_chunk_ms',
+      width: 104,
+      align: 'right',
+      render: renderMs
+    },
+    {
+      title: <HelpTitle label="输出字符" help={fieldDescriptions.output_chars} />,
+      dataIndex: 'output_chars',
+      width: 100,
+      align: 'right',
+      render: renderCount
+    },
+    {
+      title: <HelpTitle label="时间" help={fieldDescriptions.created_at} />,
+      dataIndex: 'created_at',
+      width: 188,
+      render: (value: string) => (
+        <Typography.Text className="llm-metric-time">
+          {formatEast8DateTime(value, { naiveAsEast8: true })}
+        </Typography.Text>
+      )
+    },
+    {
+      title: '查看',
+      key: 'detail-actions',
+      width: 134,
+      render: (_value: unknown, record) => {
+        // 只有后端标记存在 payload/响应内容时才渲染按钮；两者皆无时显示占位符。
+        const hasPayload = record.request_payload_size > 0;
+        const hasResponse = record.response_content_size > 0;
+        if (!hasPayload && !hasResponse) {
+          return <Typography.Text type="secondary">-</Typography.Text>;
+        }
+        return (
+          <Space size={4}>
+            {hasPayload ? (
+              <Button
+                size="small"
+                onClick={() =>
+                  onOpenViewer({
+                    title: `${record.phase_label || record.phase} 请求参数`,
+                    type: 'payload',
+                    metricId: record.id
+                  })
+                }
+              >
+                参数
+              </Button>
+            ) : null}
+            {hasResponse ? (
+              <Button
+                size="small"
+                onClick={() =>
+                  onOpenViewer({
+                    title: `${record.phase_label || record.phase} 响应内容`,
+                    type: 'response',
+                    metricId: record.id
+                  })
+                }
+              >
+                响应
+              </Button>
+            ) : null}
+          </Space>
+        );
+      }
+    }
+  ];
 }
 
 function formatTotalTag(exactTotal?: number, listTotalExact?: boolean, listTotal?: number) {

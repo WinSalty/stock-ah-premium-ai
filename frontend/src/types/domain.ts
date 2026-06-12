@@ -211,6 +211,56 @@ export type LlmMetricSummaryParams = Omit<
   'page' | 'page_size' | 'include_summary' | 'include_total' | 'include_content'
 >;
 
+/**
+ * 单个"对话轮"聚合行。
+ * 一轮 = 一个 question_id：Agent 化后一轮问答会产生多条 phase 记录，后端按 question_id 聚合成一行。
+ * 字段口径：
+ * - phase_count：轮内全部阶段记录数。
+ * - llm_call_count：外部 LLM 调用数（迭代 + 流式收尾，不含首包派生记录与工具执行）。
+ * - tool_call_count：轮内工具执行数。
+ * - has_failure：轮内任一阶段失败即为 true。
+ * - total_elapsed_ms：轮内各阶段耗时求和，属于相对参考值，不等于用户真实等待的墙钟时间。
+ * - started_at / finished_at：本轮最早与最晚阶段的起止时间。
+ */
+export interface LlmRoundItem {
+  question_id: string;
+  conversation_title: string | null;
+  user_id: number | null;
+  user_name: string | null;
+  session_id: number | null;
+  phase_count: number;
+  llm_call_count: number;
+  tool_call_count: number;
+  has_failure: boolean;
+  total_elapsed_ms: number | null;
+  started_at: string;
+  finished_at: string;
+}
+
+/**
+ * 对话轮聚合列表响应：后端按轮起始时间倒序返回，total 为符合筛选条件的轮总数（用于分页）。
+ */
+export interface LlmRoundResponse {
+  total: number;
+  page: number;
+  page_size: number;
+  rows: LlmRoundItem[];
+}
+
+/**
+ * 对话轮聚合列表查询参数：page_size 后端限制 10-100（默认 20）；
+ * 仅支持轮级筛选（追踪 ID / 会话 / 用户 / 日期范围），不支持 provider/model/phase 等阶段级筛选。
+ */
+export interface LlmRoundParams {
+  page: number;
+  page_size: number;
+  question_id?: string;
+  session_id?: number;
+  user_id?: number;
+  start_date?: string;
+  end_date?: string;
+}
+
 export interface SyncRun {
   id: number;
   dataset: string;

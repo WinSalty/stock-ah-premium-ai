@@ -15,6 +15,7 @@ author: claude
 from __future__ import annotations
 
 import logging
+import re
 import uuid
 from collections.abc import Iterator
 from typing import Any
@@ -64,6 +65,15 @@ FINAL_ANSWER_NUDGE = (
 )
 # 流式收尾仍泄漏工具语法时的兜底文案（生产缺陷 219bddf9 的最后防线）。
 MARKUP_FALLBACK_MESSAGE = "本轮回答生成出现异常内容已被拦截，请重试或换一种问法。"
+# 回答只剩无效图表占位符时的纠错指令（生产缺陷 977cf4a3：模型引用历史轮次占位符，
+# 前端按安全口径渲染为空，用户看到空回答）。回填后模型可重新调 render_chart 出图。
+INVALID_CHART_NUDGE = (
+    "你引用的图表占位符在本轮无效：图表必须在本轮调用 render_chart 重新登记后，"
+    "使用新返回的占位符。请重新组织回答；需要展示图表就先调用 render_chart，"
+    "否则用文字和表格直接回答。"
+)
+# 图表占位符匹配（与前端 CHART_PLACEHOLDER_PATTERN 口径一致）。
+_CHART_PLACEHOLDER_PATTERN = re.compile(r"\{\{chart:([a-zA-Z0-9_-]+)\}\}")
 # 流式头部缓冲长度：攒够这些字符先做协议泄漏检测，再开始向前端下发。
 STREAM_GUARD_BUFFER_CHARS = 64
 # 复用迭代内容下发时的分片长度：保持前端打字机渐进渲染体验。
@@ -162,8 +172,20 @@ class AgentEngine:
                 # 复用内容同时省掉一次外部 LLM 调用。
                 content = (result.content or "").strip()
                 if content and not self._looks_like_tool_markup(content):
-                    yield from self._emit_prepared_answer(content, turn_state)
-                    return
+                    # 净化无效图表占位符（缺陷 977cf4a3：模型引用历史轮次占位符）。
+                    sanitized = self._strip_invalid_chart_placeholders(content, turn_state)
+                    if sanitized.strip():
+                        yield from self._emit_prepared_answer(sanitized, turn_state)
+                        return
+                    # 净化后为空说明回答全靠无效占位符：回填纠错指令继续迭代，
+                    # 给模型重新调用 render_chart 出图（或改用文字回答）的机会。
+                    logger.warning(
+                        "Agent 回答仅含无效图表占位符，回填纠错重试 question_id=%s",
+                        turn_state.question_id,
+                    )
+                    messages.append({"role": "assistant", "content": content})
+                    messages.append({"role": "system", "content": INVALID_CHART_NUDGE})
+                    continue
                 # 内容为空或疑似协议泄漏：注入禁止工具指令后改走流式补救。
                 logger.warning(
                     "Agent 迭代内容异常（空或疑似工具语法泄漏），走流式补救 question_id=%s",
@@ -295,8 +317,15 @@ class AgentEngine:
             head_text = "".join(head_buffer)
             answer_parts.append(head_text)
             yield DeltaEvent(content=head_text)
+        # 终态再净化一次无效占位符：流式路径无法在 delta 阶段拦截，
+        # 但落库与 done.answer（前端以其覆盖展示）保持干净。
+        final_answer = self._strip_invalid_chart_placeholders(
+            "".join(answer_parts), turn_state
+        )
+        if not final_answer.strip():
+            final_answer = MARKUP_FALLBACK_MESSAGE
         yield DoneEvent(
-            answer="".join(answer_parts),
+            answer=final_answer,
             charts=list(turn_state.charts),
             tool_trace=[item.to_payload() for item in turn_state.tool_trace],
         )
@@ -451,6 +480,24 @@ class AgentEngine:
             response_content=result.payload,
             prompt_version=PROMPT_VERSION,
         )
+
+    def _strip_invalid_chart_placeholders(self, answer: str, turn_state: TurnState) -> str:
+        """剥离回答中未在本轮登记的图表占位符（输出净化，设计 3.10）。
+
+        模型可能引用历史轮次的 {{chart:cN}}（图表登记按轮隔离，跨轮无效），
+        前端会把未知占位符渲染为空——若不剥离，回答可能"看起来为空"
+        （生产缺陷 977cf4a3）。本轮已登记的占位符原样保留。
+
+        创建日期：2026-06-12
+        author: claude
+        """
+
+        registered = {str(chart.get("chart_id")) for chart in turn_state.charts}
+
+        def replace(match: re.Match[str]) -> str:
+            return match.group(0) if match.group(1) in registered else ""
+
+        return _CHART_PLACEHOLDER_PATTERN.sub(replace, answer)
 
     def _looks_like_tool_markup(self, text: str) -> bool:
         """判断文本是否疑似泄漏的工具调用协议语法。

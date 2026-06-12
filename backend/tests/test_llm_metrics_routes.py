@@ -160,3 +160,69 @@ def test_list_llm_metrics_can_skip_summary_for_fast_page_load() -> None:
     assert detail.question_id == "trace-fast"
     assert detail.request_payload_json == '{"messages":["用于验证列表不直接返回大字段"]}'
     assert detail.response_content == "详情接口再返回完整响应"
+
+
+def test_list_llm_metric_rounds_groups_by_question() -> None:
+    """确认按问答轮聚合：一轮一行、阶段/工具计数与失败标记正确（试用反馈问题4）。
+
+    创建日期：2026-06-12
+    author: claude
+    """
+
+    from app.api.routes_llm_metrics import list_llm_metric_rounds
+
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    with Session(engine) as db:
+        user = add_user(db)
+        t0 = datetime.combine(date.today(), datetime.min.time())
+
+        def metric(qid: str, phase: str, success: int, elapsed: float, seq: int) -> LlmCallMetric:
+            return LlmCallMetric(
+                question_id=qid,
+                conversation_title=f"问题-{qid}",
+                user_id=user.id,
+                user_name="管理员",
+                session_id=9,
+                phase=phase,
+                success=success,
+                elapsed_ms=elapsed,
+                created_at=t0.replace(minute=seq),
+                updated_at=t0.replace(minute=seq),
+            )
+
+        # 一轮 Agent 问答：2 次迭代 + 1 次工具（失败）+ 首包派生 + 流式收尾。
+        db.add_all(
+            [
+                metric("round-a", "agent_iteration", 1, 1000.0, 1),
+                metric("round-a", "tool_query_database", 0, 12.0, 2),
+                metric("round-a", "agent_iteration", 1, 2000.0, 3),
+                metric("round-a", "answer_stream_first_chunk", 1, 0.0, 4),
+                metric("round-a", "answer_stream", 1, 3000.0, 5),
+                # 另一轮纯回答。
+                metric("round-b", "agent_iteration", 1, 800.0, 6),
+            ]
+        )
+        db.commit()
+
+        result = list_llm_metric_rounds(db, user)
+
+        assert result.total == 2
+        assert [row.question_id for row in result.rows] == ["round-b", "round-a"]
+        round_a = result.rows[1]
+        # 阶段总数 5；外部 LLM 调用 3（迭代×2 + 流式收尾，首包派生与工具不计）；工具 1。
+        assert round_a.phase_count == 5
+        assert round_a.llm_call_count == 3
+        assert round_a.tool_call_count == 1
+        # 轮内含失败工具步骤 → 失败标记。
+        assert round_a.has_failure is True
+        assert round_a.total_elapsed_ms == 6012.0
+        assert round_a.conversation_title == "问题-round-a"
+        round_b = result.rows[0]
+        assert round_b.phase_count == 1
+        assert round_b.has_failure is False
+
+        # question_id 过滤精确命中单轮。
+        filtered = list_llm_metric_rounds(db, user, question_id="round-a")
+        assert filtered.total == 1
+        assert filtered.rows[0].question_id == "round-a"

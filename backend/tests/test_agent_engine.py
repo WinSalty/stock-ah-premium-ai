@@ -319,6 +319,73 @@ def test_engine_forces_final_answer_when_iterations_exhausted(monkeypatch) -> No
     assert events[-1].answer == "基于已有材料的结论"
 
 
+def test_engine_strips_invalid_chart_placeholder_from_answer(monkeypatch) -> None:
+    """确认未在本轮登记的图表占位符被剥离、文字内容保留（缺陷 977cf4a3）。
+
+    创建日期：2026-06-12
+    author: claude
+    """
+
+    fake_client = FakeLlmClient(
+        results=[_chat_result(content="走势见下图 {{chart:c1}} ，整体维持折价。")]
+    )
+    engine = _make_engine(monkeypatch, fake_client)
+
+    events = list(engine.run("看走势"))
+
+    assert events[-1].type == "done"
+    # 本轮未登记任何图表：历史占位符被剥离，正文文字保留。
+    assert "{{chart:" not in events[-1].answer
+    assert "整体维持折价" in events[-1].answer
+
+
+def test_engine_retries_when_answer_is_only_invalid_placeholder(monkeypatch) -> None:
+    """确认回答只剩无效占位符时回填纠错指令继续迭代（模型可重新出图或改文字）。
+
+    创建日期：2026-06-12
+    author: claude
+    """
+
+    from app.services.agent.engine import INVALID_CHART_NUDGE
+
+    fake_client = FakeLlmClient(
+        results=[
+            _chat_result(content="{{chart:c1}}"),
+            _chat_result(content="用文字重新说明：近期维持折价走势。"),
+        ]
+    )
+    engine = _make_engine(monkeypatch, fake_client)
+
+    events = list(engine.run("再给我一遍图"))
+
+    # 第二次迭代的 messages 末尾必须带纠错 system 指令。
+    second_messages = fake_client.chat_calls[1]["messages"]
+    assert second_messages[-1] == {"role": "system", "content": INVALID_CHART_NUDGE}
+    assert events[-1].type == "done"
+    assert events[-1].answer == "用文字重新说明：近期维持折价走势。"
+
+
+def test_strip_invalid_chart_placeholders_keeps_registered_ids(monkeypatch) -> None:
+    """确认占位符净化只剥离未登记 id，本轮已登记的原样保留。
+
+    创建日期：2026-06-12
+    author: claude
+    """
+
+    from app.services.agent.budget import TurnState
+
+    fake_client = FakeLlmClient(results=[])
+    engine = _make_engine(monkeypatch, fake_client)
+    state = TurnState(question_id="x")
+    state.charts.append({"chart_id": "c1", "chart_type": "line"})
+
+    text = "前文 {{chart:c1}} 中段 {{chart:c9}} 尾部"
+    cleaned = engine._strip_invalid_chart_placeholders(text, state)
+
+    assert "{{chart:c1}}" in cleaned
+    assert "{{chart:c9}}" not in cleaned
+
+
 def test_engine_streams_fallback_when_iteration_content_empty(monkeypatch) -> None:
     """确认迭代内容为空时注入禁止工具指令并走流式补救生成。
 
@@ -453,7 +520,8 @@ def test_engine_enforces_per_turn_tool_quota(monkeypatch) -> None:
 
     tool_results = [event for event in events if isinstance(event, ToolResultEvent)]
     assert [event.ok for event in tool_results] == [True, True, True, False]
-    assert tool_results[3].summary == "本轮配额已用尽"
+    # 摘要面向用户时间线：不出现"配额"内部术语（试用反馈问题2）。
+    assert tool_results[3].summary == "本轮调用次数已达单轮上限，已基于已有数据继续"
     # 第 4 次的回填 payload 必须告知模型配额已用尽，让其调整策略。
     tool_messages = [
         item for item in fake_client.chat_calls[1]["messages"] if item["role"] == "tool"

@@ -4,7 +4,7 @@ from datetime import date, datetime, time
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query
-from sqlalchemy import desc, func, select
+from sqlalchemy import case, desc, func, select
 from sqlalchemy.orm import load_only
 
 from app.api.deps_auth import DbSession, require_permission
@@ -14,6 +14,8 @@ from app.schemas.llm_metrics import (
     LlmCallMetricItem,
     LlmCallMetricResponse,
     LlmCallMetricSummary,
+    LlmRoundItem,
+    LlmRoundResponse,
 )
 
 router = APIRouter()
@@ -125,6 +127,111 @@ def list_llm_metrics(
             for metric, display_name, username, payload_size, response_size in page_rows
         ],
     )
+
+
+@router.get("/llm-metrics/rounds", response_model=LlmRoundResponse)
+def list_llm_metric_rounds(
+    db: DbSession,
+    metrics_user: MetricsUser,
+    page: Annotated[int, Query(ge=1)] = 1,
+    page_size: Annotated[int, Query(ge=10, le=100)] = 20,
+    question_id: Annotated[str | None, Query(max_length=32)] = None,
+    session_id: Annotated[int | None, Query(ge=1)] = None,
+    user_id: Annotated[int | None, Query(ge=1)] = None,
+    start_date: date | None = None,
+    end_date: date | None = None,
+) -> LlmRoundResponse:
+    """按问答轮（question_id）聚合查询指标：一轮一行，便于排查单次对话全貌。
+
+    Agent 化后一轮问答产生多条 phase 记录（迭代/工具/流式收尾），明细视图
+    排查不便（试用反馈问题4）；本接口按 question_id 聚合分页，明细由前端
+    点击展开后用既有 /llm-metrics?question_id=xxx 懒加载。
+
+    创建日期：2026-06-12
+    author: claude
+    """
+
+    filters = _metric_filters(
+        question_id=question_id,
+        provider=None,
+        model=None,
+        phase=None,
+        session_id=session_id,
+        user_id=user_id,
+        start_date=start_date,
+        end_date=end_date,
+    )
+    total = int(
+        db.scalar(
+            select(func.count(func.distinct(LlmCallMetric.question_id))).where(*filters)
+        )
+        or 0
+    )
+    # 聚合口径：external LLM 调用按 provider 维度（DeepSeek/Qwen 等真实模型），
+    # 工具执行按 phase 前缀 tool_ 计数；首包派生记录（*_first_chunk）不计入两者。
+    is_tool_phase = LlmCallMetric.phase.like("tool\\_%", escape="\\")
+    is_first_chunk = LlmCallMetric.phase.like("%\\_first\\_chunk", escape="\\")
+    statement = (
+        select(
+            LlmCallMetric.question_id,
+            func.max(LlmCallMetric.conversation_title),
+            func.max(LlmCallMetric.user_id),
+            func.max(LlmCallMetric.user_name),
+            func.max(LlmCallMetric.session_id),
+            func.count(LlmCallMetric.id),
+            func.coalesce(
+                func.sum(
+                    case((is_tool_phase | is_first_chunk, 0), else_=1)
+                ),
+                0,
+            ),
+            func.coalesce(func.sum(case((is_tool_phase, 1), else_=0)), 0),
+            func.min(LlmCallMetric.success),
+            func.sum(LlmCallMetric.elapsed_ms),
+            func.min(LlmCallMetric.created_at),
+            func.max(LlmCallMetric.created_at),
+            func.max(LlmCallMetric.id),
+        )
+        .where(*filters)
+        .group_by(LlmCallMetric.question_id)
+        .order_by(desc(func.max(LlmCallMetric.id)))
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+    )
+    rows = []
+    for row in db.execute(statement).all():
+        (
+            qid,
+            title,
+            row_user_id,
+            user_name,
+            row_session_id,
+            phase_count,
+            llm_count,
+            tool_count,
+            min_success,
+            sum_elapsed,
+            started_at,
+            finished_at,
+            _max_id,
+        ) = row
+        rows.append(
+            LlmRoundItem(
+                question_id=qid,
+                conversation_title=title,
+                user_id=row_user_id,
+                user_name=user_name,
+                session_id=row_session_id,
+                phase_count=int(phase_count or 0),
+                llm_call_count=int(llm_count or 0),
+                tool_call_count=int(tool_count or 0),
+                has_failure=int(min_success or 0) == 0,
+                total_elapsed_ms=_round_metric(sum_elapsed),
+                started_at=started_at,
+                finished_at=finished_at,
+            )
+        )
+    return LlmRoundResponse(total=total, page=page, page_size=page_size, rows=rows)
 
 
 @router.get("/llm-metrics/summary", response_model=LlmCallMetricSummary)

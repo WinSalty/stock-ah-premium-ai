@@ -19,7 +19,11 @@ from dataclasses import dataclass, field
 from time import perf_counter
 from typing import Any
 
-from app.services.agent.budget import QUOTA_EXHAUSTED_MESSAGE, TurnState
+from app.services.agent.budget import (
+    QUOTA_EXHAUSTED_MESSAGE,
+    QUOTA_EXHAUSTED_SUMMARY,
+    TurnState,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -181,7 +185,8 @@ class ToolRegistry:
             return ToolResult(
                 ok=False,
                 payload=QUOTA_EXHAUSTED_MESSAGE,
-                summary="本轮配额已用尽",
+                # 摘要面向用户时间线：用"单轮上限"替代内部术语"配额"（试用反馈问题2）。
+                summary=QUOTA_EXHAUSTED_SUMMARY,
                 elapsed_ms=(perf_counter() - started_at) * 1000,
             )
         try:
