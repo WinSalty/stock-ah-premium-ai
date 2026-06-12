@@ -146,9 +146,13 @@ def schema_catalog() -> dict[str, str]:
         "limit_up_analysis_cache": (
             "table purpose: 打板推送报告缓存表，用于风险高收益型、短线、连板和晋级观察推荐。"
             "默认查询最新 READY 报告：status='READY' ORDER BY trade_date DESC,id DESC LIMIT 1；"
-            "回答时从报告正文提取观察标的、晋级理由、触发条件和风险。"
-            "columns: id,trade_date,report_type,title,content_markdown,content_html,"
-            "source_payload_json,status,error_message,generated_at,created_at,updated_at"
+            "advice_markdown 是已经结论化的投资建议（风险前置、候选分层、触发/止损条件），"
+            "advice_status='READY' 时优先引用它回答推荐类问题，"
+            "为空再退回 content_markdown 从报告正文提取观察标的、晋级理由、触发条件和风险。"
+            "columns: id,trade_date,model,prompt_version,data_snapshot_hash,status,title,"
+            "content_html,content_markdown,context_json,data_quality_json,error_message,"
+            "generated_at,advice_status,advice_html,advice_markdown,advice_generated_at,"
+            "advice_error,created_at,updated_at"
         ),
         "v_latest_ah_premium": "columns: same as v_latest_official_ah_premium",
         "v_ah_premium_trend": "columns: same as v_official_ah_premium_trend",

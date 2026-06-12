@@ -86,8 +86,8 @@ LLM 按需个股研究数据：
 - `pushplus_binding`：PushPlus 好友绑定表，保存系统用户与 PushPlus 好友的后端发送令牌映射，不向前端返回好友令牌。
 - `alert_event`：提醒事件表，保存阈值提醒和股价提醒触发时的去重键、推送标题、推送内容和发送状态。
 - `pushplus_message_log`：PushPlus 推送消息流水表，记录测试推送、阈值提醒和股价提醒实际提交给 PushPlus 的时间、接收用户、接收对象、标题、内容、状态、消息流水号和错误信息，供管理员审计查看。
-- `limit_up_analysis_cache`：打板 LLM 报告缓存表，按交易日、模型、提示词版本和数据快照哈希去重，保存 HTML 报告、上下文、质量记录和生成状态。
-- `limit_up_analysis_stage_cache`：打板多阶段 LLM 缓存表，按交易日、阶段、模型、提示词版本和阶段输入哈希去重，保存首板、两连三连、高连板、重点分析和最终合成等阶段输出，便于重跑时复用稳定中间结果。
+- `limit_up_analysis_cache`：打板 LLM 报告缓存表，按交易日、模型、提示词版本和数据快照哈希去重，保存 HTML 报告、上下文、质量记录和生成状态；另含投资建议附加产物五列（`advice_status`/`advice_html`/`advice_markdown`/`advice_generated_at`/`advice_error`），建议状态机与报告本体解耦，存量行默认 PENDING 由推送/发布链路按需回填，建议失败不影响报告 READY。
+- `limit_up_analysis_stage_cache`：打板多阶段 LLM 缓存表，按交易日、阶段、模型、提示词版本和阶段输入哈希去重，保存首板题材、首板精选（FIRST_BOARD_SELECTION/FIRST_BOARD_FOCUS）、两连三连、高连板、重点分析、最终合成与投资建议（INVESTMENT_ADVICE）等阶段输出，便于重跑时复用稳定中间结果。
 - `limit_up_stock_supplement_cache`：打板重点股票筹码补数缓存表，按交易日、股票和回看窗口去重，保存 LLM 入选股票的 `cyq_perf`/`cyq_chips` 摘要、数据状态和错误信息，避免同一报告重跑时重复请求 Tushare。
 - `limit_up_push_recipient`：打板报告接收人配置表，保存系统用户是否启用接收，以及是否接收周六、周日晚间缓存报告复推；PushPlus 好友令牌仍只保存在绑定表。
 - `limit_up_push_delivery`：打板报告业务推送计划与结果表，按报告、计划类型、计划时间和接收用户做幂等，实际 PushPlus 请求流水关联到 `pushplus_message_log`。
@@ -96,7 +96,7 @@ LLM 按需个股研究数据：
 - `nine_turn_push_delivery`：神奇九转报告业务推送计划与结果表，接收人名单复用打板报告接收人配置，按九转报告、计划类型、计划时间和接收用户做幂等，实际 PushPlus 请求流水关联到 `pushplus_message_log`。
 - `xueqiu_publish_credential`：雪球发布登录态配置表，保存管理员提供的创作者后台 Cookie、User-Agent、Referer、过期时间和最近验证结果；接口只返回掩码摘要，不返回完整 Cookie。
 - `xueqiu_publish_setting`：雪球发布定时配置表，保存页面配置的工作日定时开关、草稿/正式发布模式、东八区小时/分钟 cron 字段和默认封面图；进程级调度注册仍由环境变量控制，任务执行时实时读取本表决定是否真正发起保存或发布。
-- `xueqiu_publish_record`：雪球长文草稿与发布流水表，按 `source_type` 区分打板报告、问答回答和神奇九转报告；打板报告使用 `analysis_id`，神奇九转报告使用 `nine_turn_analysis_id`，九转文章不提交封面图。记录每次草稿或发布尝试的草稿 ID、正式发布 ID、文章 URL、请求摘要、响应 JSON、失败原因和发布时间；默认操作复用同一来源同一模式的最近流水，管理员强制新建/重试时会新增流水以保留历史审计。
+- `xueqiu_publish_record`：雪球长文草稿与发布流水表，按 `source_type` 区分打板报告（`LIMIT_UP_REPORT`）、打板投资建议（`LIMIT_UP_ADVICE`）、问答回答和神奇九转报告；自动链路的防双发总闸按报告+发布模式跨 source_type 查重；打板报告使用 `analysis_id`，神奇九转报告使用 `nine_turn_analysis_id`，九转文章不提交封面图。记录每次草稿或发布尝试的草稿 ID、正式发布 ID、文章 URL、请求摘要、响应 JSON、失败原因和发布时间；默认操作复用同一来源同一模式的最近流水，管理员强制新建/重试时会新增流水以保留历史审计。
 - `llm_chat_session`：LLM 问答会话，用于保存投资问答主题和更新时间，按 `user_id` 隔离，`deleted_at` 非空表示会话已逻辑删除。
 - `llm_chat_message`：LLM 问答消息，用于保存用户问题、助手回答与会话上下文记忆。问答模块 Agent 化重构后新增 `tool_trace_json`（本条回答的工具执行轨迹：工具名/入参摘要/结果摘要/耗时/是否成功，`LONGTEXT`）和 `charts_json`（本条回答登记的图表 ChartSpec 列表，`LONGTEXT`），供前端历史回放渲染执行时间线与内嵌图表；旧字段 `sql_text`/`result_preview_json` 保留供历史数据可读，新引擎不再写入。
 - `llm_call_metric`：LLM 调用耗时指标，按每轮问答唯一 `question_id` 串联各阶段。Agent 引擎下的 phase 维度：`agent_iteration`（工具迭代调用，计入项目日限额）、`answer_stream`（最终流式回答）、`tool_query_database`/`tool_get_stock_data`/`tool_web_search`/`tool_fetch_url`/`tool_run_python`/`tool_render_chart`/`tool_recommend_threshold`（各工具执行记录，不计 LLM 日限额，沙箱/搜索的日配额据此计数）。`conversation_title`/`user_name` 保存对话标题与用户展示名称；`phase_label`/`phase_description` 为阶段中文含义；重构新增 `prompt_version` 记录 Agent 系统提示词版本（如 `agent-v1`），用于提示词迭代效果按版本对比。`request_payload_json`/`response_content` 使用 `LONGTEXT` 记录请求 JSON（不含鉴权头）与响应全文（工具阶段记录代码与输出供审计）。该表按 `LLM_METRIC_RETENTION_DAYS`（默认 90 天）由 `scripts/cleanup-llm-metrics.sh` 定期清理过期记录，控制表膨胀。

@@ -1,6 +1,6 @@
 # 开发进度记录
 
-更新日期：2026-06-06
+更新日期：2026-06-12
 
 ## 当前状态
 
@@ -8,6 +8,7 @@
 
 ## 已完成
 
+- 打板报告推送投资建议重构已完成五阶段代码落地（方案见 `limit-up-push-investment-advice-refactor-plan.md`）：①报告流水线新增首板个股精选与重点分析两个阶段（`FIRST_BOARD_SELECTION`/`FIRST_BOARD_FOCUS`，默认上限 5 只，入选股进入筹码补数与最终报告，`LIMIT_UP_PUSH_FINAL_PROMPT_VERSION` bump 至 `limit-up-multi-stage-v3`）；②主表新增建议五列（迁移 `20260612_0049`）与 `INVESTMENT_ADVICE` 阶段，`ensure_advice_for_analysis` 带 GENERATING 条件更新抢占锁、僵死接管与 FAILED 冷却，指标单列 `limit_up_advice` phase 不计问答日限额；③PushPlus 与雪球默认推送投资建议（`LIMIT_UP_PUSH_CONTENT_MODE`/`XUEQIU_LIMIT_UP_CONTENT_MODE`，REPORT 为严格回滚通道），建议回填收口在 `push_report` 与雪球 `_resolve_analysis`，PushPlus 降级默认开、雪球降级默认关，雪球流水新增 `LIMIT_UP_ADVICE` source_type 并保留跨 source_type 防双发总闸，新增管理员建议重生成端点；④前端报告列表新增建议状态列、详情新增“建议”Tab（预览/失败原因/重新生成）与首板入选名单表、推送弹窗加内容模式提示；⑤data_catalog 打板表条目修正为真实列清单并引导优先引用 `advice_markdown`。本轮 `backend/.venv/bin/python -m pytest tests/ -q` 全量 297 通过、`npm --prefix frontend run build` 通过、Alembic 已升级到 `20260612_0049`；真实 LLM/PushPlus/雪球线上验收（建议全文微信端渲染、雪球建议稿人工审看）待用户确认后执行。
 - 图片生成功能已从本地文件存储迁移到阿里 OSS 存储口径：后端新增图片存储适配层，生产环境通过 `IMAGE_GEN_STORAGE_BACKEND=oss` 上传生成图和参考图到私有 Bucket，数据库继续保存对象键、MIME、大小和 SHA256；列表、详情和旧文件接口都在完成系统用户鉴权后返回 1 天有效 OSS 签名 URL，前端直接使用签名 URL 预览和下载，避免对 OSS URL 追加业务 Authorization。历史图库已支持逻辑删除，删除只写 `deleted_at` 并隐藏记录，不物理删除 OSS 对象和错误日志。`local` 存储仅保留给单测和旧环境兜底，配置示例、部署文档、启动文档和全量 schema 注释已同步更新。
 - 新增 `resources/doc/limit-up-multi-stage-analysis-refactor-plan.md`，沉淀打板报告多轮分析与筹码补数改造计划：保留现有 KPL 数据就绪、报告缓存和 PushPlus 推送链路，将报告生成拆为首板题材发酵、两连三连候选选择、高连板候选选择、`cyq_perf`/`cyq_chips` 筹码补数、重点分析和最终报告合成多个节点；两连三连重点候选上限定为 20 只，高连板允许由 LLM 挑选并给出观察分层，最终报告同时覆盖连板可能性、下一个交易日溢价可能性、反证条件和风险提示。
 - 打板报告多轮分析完成代码落地：后端新增阶段缓存与重点股票筹码补数缓存模型、Alembic 迁移和配置项，`LimitUpPushService` 内部改为首板、两连三连筛选、高连筛选、筹码补数、重点分析和最终合成的多阶段 pipeline；两连三连重点候选默认放宽到 20 只，高连板也允许 LLM 挑选分析和推荐；前端报告详情新增“阶段”页签，展示阶段质量、两连三连入选名单和高连板入选名单，便于核对 LLM 筛选依据。本轮已通过 `backend/.venv/bin/python -m compileall backend/app backend/tests/test_limit_up_push_service.py`、`backend/.venv/bin/python -m pytest backend/tests/test_limit_up_push_service.py -q`、`backend/.venv/bin/ruff check backend/alembic/versions/20260605_0047_add_limit_up_multi_stage_cache.py backend/app/db/models/notification.py` 和 `npm --prefix frontend run build`。
