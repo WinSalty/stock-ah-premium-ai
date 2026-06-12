@@ -1,5 +1,5 @@
-import ReactECharts from 'echarts-for-react';
-import { useEffect, useMemo, useState } from 'react';
+import * as echarts from 'echarts';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type {
   ChartAxis,
   ChartSeries,
@@ -394,16 +394,87 @@ function ChatChart({ spec }: ChatChartProps) {
   return (
     <figure className="chat-chart">
       <div className="chat-chart-title">{title}</div>
-      <ReactECharts
-        option={option}
-        style={{ width: '100%', height }}
-        notMerge
-        opts={{ renderer: 'canvas' }}
-      />
+      <EChartsContainer option={option} height={height} />
       {/* note 渲染为图表下方小字数据来源说明 */}
       {spec.note ? <figcaption className="chat-chart-note">{spec.note}</figcaption> : null}
     </figure>
   );
+}
+
+/**
+ * 直接管理 echarts 实例的渲染容器（替代 echarts-for-react）。
+ *
+ * 背景（试用反馈问题1）：移动端聊天气泡内的图表经 echarts-for-react 初始化后
+ * canvas 图层始终没有被创建（size-sensor 在该容器环境下测量失效，实例存在但
+ * 从未完成首帧绘制）。这里改为：
+ * - 初始化显式传入像素宽高（官方对容器尺寸不可测场景的标准做法），不依赖
+ *   DOM 测量时机；容器宽度暂为 0 时延迟到 ResizeObserver 首报再初始化；
+ * - 用 ResizeObserver 跟踪容器尺寸变化（旋转屏幕、侧栏开合）主动 resize，
+ *   不再依赖 size-sensor 的注入式监听。
+ * 创建日期：2026-06-12
+ * author: sunshengxian
+ */
+function EChartsContainer({ option, height }: { option: Record<string, unknown>; height: number }) {
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const chartRef = useRef<echarts.ECharts | null>(null);
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) {
+      return undefined;
+    }
+    let disposed = false;
+
+    // 初始化或同步图表：容器有真实宽度才动手，避免 0 尺寸初始化导致首帧缺失。
+    const ensureChart = () => {
+      if (disposed) {
+        return;
+      }
+      const width = el.clientWidth;
+      if (width <= 0) {
+        return;
+      }
+      if (!chartRef.current) {
+        chartRef.current = echarts.init(el, undefined, {
+          renderer: 'canvas',
+          width,
+          height
+        });
+        chartRef.current.setOption(option, { notMerge: true });
+        return;
+      }
+      // 宽高变化（旋转/布局调整）：显式按像素 resize，保持 canvas 与容器一致。
+      chartRef.current.resize({ width, height });
+    };
+
+    // 首帧重试：流式渲染时容器可能尚未完成布局（宽度暂为 0），
+    // 用 rAF 轮询直到拿到真实宽度完成初始化（上限约 30 帧，避免空转）。
+    let rafTries = 0;
+    const tryInit = () => {
+      ensureChart();
+      if (!chartRef.current && !disposed && rafTries < 30) {
+        rafTries += 1;
+        requestAnimationFrame(tryInit);
+      }
+    };
+    tryInit();
+    // 双保险监听：ResizeObserver 跟踪容器自身尺寸；部分 WebView 环境 RO 不可靠，
+    // 再挂一个 window resize 兜底（旋转屏幕/分屏必触发 window resize）。
+    const observer = new ResizeObserver(() => ensureChart());
+    observer.observe(el);
+    const onWindowResize = () => ensureChart();
+    window.addEventListener('resize', onWindowResize);
+    return () => {
+      disposed = true;
+      observer.disconnect();
+      window.removeEventListener('resize', onWindowResize);
+      chartRef.current?.dispose();
+      chartRef.current = null;
+    };
+    // option/height 变化时整体重建：聊天图表的 spec 落库后不变，重建成本可忽略。
+  }, [option, height]);
+
+  return <div ref={containerRef} style={{ width: '100%', height }} />;
 }
 
 export default ChatChart;

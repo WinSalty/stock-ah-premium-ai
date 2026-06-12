@@ -15,7 +15,6 @@ import remarkGfm from 'remark-gfm';
 import type { ReactNode } from 'react';
 import { useEffect, useRef, useState } from 'react';
 import PageHeader from '../components/PageHeader';
-import LlmProgressNote from '../components/LlmProgressNote';
 import ChatChart from '../components/ChatChart';
 import {
   batchDeleteChatSessions,
@@ -135,7 +134,11 @@ function formatElapsedSeconds(elapsedMs: number) {
  * 创建日期：2026-06-12
  * author: sunshengxian
  */
-function renderToolSteps(toolTrace: ToolTraceItem[], activeTool?: { tool: string; summary: string }) {
+function renderToolSteps(
+  toolTrace: ToolTraceItem[],
+  activeTool?: { tool: string; summary: string },
+  thinking?: boolean
+) {
   return (
     <ul className="chat-tool-steps">
       {toolTrace.map((step, index) => (
@@ -158,6 +161,14 @@ function renderToolSteps(toolTrace: ToolTraceItem[], activeTool?: { tool: string
           <span className="chat-tool-step-summary">{activeTool.summary || activeTool.tool}</span>
         </li>
       ) : null}
+      {/* LLM 迭代思考期（工具步骤之间 / 回答生成前）的进行中行：
+          没有该行时图表先渲染、回答未到的空窗会让页面看起来像已结束（试用反馈问题3）。 */}
+      {!activeTool && thinking ? (
+        <li className="chat-tool-step running">
+          <Spin size="small" />
+          <span className="chat-tool-step-summary">正在分析与组织回答...</span>
+        </li>
+      ) : null}
     </ul>
   );
 }
@@ -172,10 +183,17 @@ function renderToolSteps(toolTrace: ToolTraceItem[], activeTool?: { tool: string
  */
 function renderToolTimeline(turn: ChatTurn) {
   if (turn.streaming) {
-    if (!turn.toolTrace.length && !turn.activeTool) {
+    // 思考行口径：回答文本尚未开始且没有正在执行的工具时，始终保留一个进行中指示，
+    // 覆盖「首个事件前」「工具步骤之间」「最终回答生成前」三段空窗。
+    const thinking = !turn.activeTool && !turn.response?.answer;
+    if (!turn.toolTrace.length && !turn.activeTool && !thinking) {
       return null;
     }
-    return <div className="chat-tool-timeline">{renderToolSteps(turn.toolTrace, turn.activeTool)}</div>;
+    return (
+      <div className="chat-tool-timeline">
+        {renderToolSteps(turn.toolTrace, turn.activeTool, thinking)}
+      </div>
+    );
   }
   if (!turn.toolTrace.length) {
     return null;
@@ -913,13 +931,8 @@ function ChatPage({ currentUser }: ChatPageProps) {
                         {/* 按 {{chart:id}} 占位符分段渲染：文本段走 Markdown，图表段渲染 ChatChart；
                             未被正文引用的图表追加在末尾（流式与历史回放复用同一逻辑）。 */}
                         {renderAnswerWithCharts(turn.response?.answer || '', turn.charts, turn.id)}
-                        {turn.streaming &&
-                        !turn.response?.answer &&
-                        !turn.toolTrace.length &&
-                        !turn.activeTool ? (
-                          // 首个工具事件到达前的等待提示：固定通用文案，不再做假进度轮播。
-                          <LlmProgressNote />
-                        ) : null}
+                        {/* 等待提示统一收敛到时间线的"正在分析与组织回答"思考行
+                            （renderToolTimeline），不再单独渲染 LlmProgressNote，避免双指示。 */}
                         {turn.streaming && turn.response?.answer ? <span className="stream-caret" /> : null}
                       </div>
                     </div>

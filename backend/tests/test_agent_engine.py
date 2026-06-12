@@ -195,24 +195,45 @@ def _make_engine(
 
 
 def test_engine_answers_directly_without_tool_calls(monkeypatch) -> None:
-    """确认无工具调用时引擎直接流式作答，事件序列为 delta...done。
+    """确认无工具调用时直接复用迭代内容作答，不再重发流式（缺陷 219bddf9 修复）。
 
     创建日期：2026-06-12
     author: claude
     """
 
-    fake_client = FakeLlmClient(results=[_chat_result(content="你好")], chunks=["你好", "世界"])
+    fake_client = FakeLlmClient(results=[_chat_result(content="你好世界")], chunks=["不应使用"])
     engine = _make_engine(monkeypatch, fake_client)
 
     events = list(engine.run("打个招呼"))
 
-    assert [event.type for event in events] == ["delta", "delta", "done"]
+    assert [event.type for event in events] == ["delta", "done"]
     assert isinstance(events[-1], DoneEvent)
     assert events[-1].answer == "你好世界"
     assert events[-1].tool_trace == []
     # 无可用工具时引擎应以纯对话模式调用（tools=None）。
     assert fake_client.chat_calls[0]["tools"] is None
-    assert len(fake_client.stream_calls) == 1
+    # 复用迭代内容：不发起第二次流式调用（省一次外部调用且避免二次生成改判）。
+    assert len(fake_client.stream_calls) == 0
+
+
+def test_engine_chunks_prepared_answer_into_deltas(monkeypatch) -> None:
+    """确认复用迭代内容时按固定分片下发 delta，保持前端渐进渲染。
+
+    创建日期：2026-06-12
+    author: claude
+    """
+
+    long_answer = "答" * 100
+    fake_client = FakeLlmClient(results=[_chat_result(content=long_answer)])
+    engine = _make_engine(monkeypatch, fake_client)
+
+    events = list(engine.run("长回答"))
+
+    deltas = [event for event in events if event.type == "delta"]
+    # 100 字按 48 字分片 → 3 个 delta（48 + 48 + 4），拼接还原全文。
+    assert len(deltas) == 3
+    assert "".join(delta.content for delta in deltas) == long_answer
+    assert events[-1].answer == long_answer
 
 
 def test_engine_executes_single_tool_call_then_answers(monkeypatch) -> None:
@@ -227,7 +248,6 @@ def test_engine_executes_single_tool_call_then_answers(monkeypatch) -> None:
     )
     fake_client = FakeLlmClient(
         results=[_chat_result(tool_calls=(tool_call,)), _chat_result(content="答案")],
-        chunks=["答", "案"],
     )
     engine = _make_engine(monkeypatch, fake_client, tools=[_fake_tool()])
 
@@ -236,7 +256,6 @@ def test_engine_executes_single_tool_call_then_answers(monkeypatch) -> None:
     assert [event.type for event in events] == [
         "tool_start",
         "tool_result",
-        "delta",
         "delta",
         "done",
     ]
@@ -298,6 +317,57 @@ def test_engine_forces_final_answer_when_iterations_exhausted(monkeypatch) -> No
     assert last_message == {"role": "system", "content": FORCE_FINISH_INSTRUCTION}
     assert events[-1].type == "done"
     assert events[-1].answer == "基于已有材料的结论"
+
+
+def test_engine_streams_fallback_when_iteration_content_empty(monkeypatch) -> None:
+    """确认迭代内容为空时注入禁止工具指令并走流式补救生成。
+
+    创建日期：2026-06-12
+    author: claude
+    """
+
+    from app.services.agent.engine import FINAL_ANSWER_NUDGE
+
+    fake_client = FakeLlmClient(results=[_chat_result(content="")], chunks=["补救回答"])
+    engine = _make_engine(monkeypatch, fake_client)
+
+    events = list(engine.run("内容为空"))
+
+    assert len(fake_client.stream_calls) == 1
+    # 补救流式调用的末尾必须是禁止工具语法的 system 指令。
+    last_message = fake_client.stream_calls[0]["messages"][-1]
+    assert last_message == {"role": "system", "content": FINAL_ANSWER_NUDGE}
+    assert events[-1].type == "done"
+    assert events[-1].answer == "补救回答"
+
+
+def test_engine_intercepts_tool_markup_leak(monkeypatch) -> None:
+    """确认工具语法泄漏被双层拦截：迭代内容泄漏走补救，流式仍泄漏则兜底文案。
+
+    复现生产缺陷 219bddf9：模型把 DSML 工具调用语法当正文输出，
+    任何 delta 事件都不得包含协议标记。
+
+    创建日期：2026-06-12
+    author: claude
+    """
+
+    from app.services.agent.engine import MARKUP_FALLBACK_MESSAGE
+
+    leaked = '<｜｜DSML｜｜tool_calls>\n<｜｜DSML｜｜invoke name="web_search">'
+    fake_client = FakeLlmClient(
+        # 迭代内容即泄漏 → 触发补救流式；补救流式头部仍泄漏 → 兜底文案。
+        results=[_chat_result(content=leaked)],
+        chunks=[leaked[:20], leaked[20:], "后续内容"],
+    )
+    engine = _make_engine(monkeypatch, fake_client)
+
+    events = list(engine.run("泄漏场景"))
+
+    deltas = [event.content for event in events if event.type == "delta"]
+    # 任何下发给前端的增量都不得含协议标记。
+    assert all("DSML" not in chunk and "tool_calls" not in chunk for chunk in deltas)
+    assert events[-1].type == "done"
+    assert events[-1].answer == MARKUP_FALLBACK_MESSAGE
 
 
 def test_engine_converts_tool_exception_to_error_text(monkeypatch) -> None:
