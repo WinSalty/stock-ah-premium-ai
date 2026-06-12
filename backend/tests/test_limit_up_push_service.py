@@ -1484,3 +1484,191 @@ def test_multi_stage_pipeline_supplements_only_selected_stocks(monkeypatch) -> N
     assert [row["ts_code"] for row in context["pipeline"]["selected_high_board_stocks"]] == [
         "000003.SZ"
     ]
+
+def test_first_board_selection_supplements_and_pipeline_fields(monkeypatch) -> None:
+    """确认首板精选标的进入筹码补数并写回 pipeline 首板字段。
+
+    创建日期：2026-06-12
+    author: claude
+    """
+
+    db = make_db()
+    fake_client = FakeTushareClient({})
+    service = LimitUpPushService(
+        db,
+        settings=Settings(
+            llm_api_key="key",
+            llm_api_key_file=None,
+            tushare_token="token",
+            tushare_token_file=None,
+        ),
+        tushare_client=fake_client,
+        notification_service=FakeNotificationService(),
+    )
+    context = {
+        "trade_date": "2026-05-08",
+        "data_quality": [],
+        "first_board_context": {
+            "stocks": [
+                {
+                    "ts_code": "000010.SZ",
+                    "name": "入选首板",
+                    "status": "首板",
+                    "theme": "人工智能",
+                    "technical": {"close": 8},
+                },
+                {
+                    "ts_code": "000011.SZ",
+                    "name": "未入选首板",
+                    "status": "首板",
+                    "theme": "机器人",
+                    "technical": {"close": 9},
+                },
+            ],
+            "themes": [],
+        },
+        "chain_board_context": {"stocks": []},
+        "high_board_context": {"stocks": []},
+        "market_context": {"market_emotion": {}, "themes": []},
+    }
+
+    def fake_json_stage(
+        stage_key: str,
+        stage_input: dict[str, object],
+        system_prompt: str,
+        user_prompt: str,
+        fallback_payload: dict[str, object],
+        stage_quality: list[dict[str, object]],
+    ) -> dict[str, object]:
+        stage_quality.append({"stage_key": stage_key, "status": "OK", "message": "测试阶段"})
+        if stage_key == "FIRST_BOARD_SELECTION":
+            return {
+                "selected_stocks": [{"ts_code": "000010.SZ", "selection_reason": "强题材首板"}]
+            }
+        if stage_key in {"CHAIN_SELECTION", "HIGH_BOARD_SELECTION"}:
+            return {"selected_stocks": []}
+        return {"html_fragment": "<h3>首板</h3>", "theme_candidates": []}
+
+    def fake_text_stage(
+        stage_key: str,
+        stage_input: dict[str, object],
+        system_prompt: str,
+        user_prompt: str,
+        stage_quality: list[dict[str, object]],
+    ) -> dict[str, object]:
+        stage_quality.append({"stage_key": stage_key, "status": "OK", "message": "测试文本阶段"})
+        return {"content": f"<h2>{stage_key}</h2>", "html_fragment": f"<h2>{stage_key}</h2>"}
+
+    monkeypatch.setattr(service, "_run_json_stage", fake_json_stage)
+    monkeypatch.setattr(service, "_run_text_stage", fake_text_stage)
+
+    html, raw = service._generate_multi_stage_llm_report(context)
+
+    # 仅入选的首板股票触发筹码补数，未入选股票不应产生 cyq 调用。
+    called_codes = sorted(
+        {
+            params["ts_code"]
+            for api_name, params in fake_client.calls
+            if api_name in {"cyq_perf", "cyq_chips"}
+        }
+    )
+    assert called_codes == ["000010.SZ"]
+    assert html.startswith("<div")
+    pipeline = context["pipeline"]
+    assert [row["ts_code"] for row in pipeline["selected_first_board_stocks"]] == ["000010.SZ"]
+    assert pipeline["first_board_focus_html"] == "<h2>FIRST_BOARD_FOCUS</h2>"
+
+
+def test_first_board_selection_is_limited_to_configured_cap(monkeypatch) -> None:
+    """确认首板精选数量受配置上限约束（默认 5）。
+
+    创建日期：2026-06-12
+    author: claude
+    """
+
+    db = make_db()
+    service = LimitUpPushService(
+        db,
+        settings=Settings(
+            llm_api_key="key",
+            llm_api_key_file=None,
+            tushare_token="token",
+            tushare_token_file=None,
+        ),
+        tushare_client=FakeTushareClient({}),
+        notification_service=FakeNotificationService(),
+    )
+    source_rows = [
+        {
+            "ts_code": f"00010{i}.SZ",
+            "name": f"首板{i}",
+            "status": "首板",
+            "theme": "人工智能",
+        }
+        for i in range(8)
+    ]
+    payload = {
+        "selected_stocks": [
+            {"ts_code": row["ts_code"], "selection_reason": "测试入选"} for row in source_rows
+        ]
+    }
+
+    selected = service._select_stage_stocks(
+        payload,
+        source_rows,
+        service.settings.limit_up_push_first_board_focus_stock_limit,
+    )
+
+    assert len(selected) == 5
+
+
+def test_first_board_focus_stage_falls_back_on_llm_error(monkeypatch) -> None:
+    """确认首板重点分析阶段 LLM 失败时降级为确定性观察表。
+
+    创建日期：2026-06-12
+    author: claude
+    """
+
+    db = make_db()
+    service = LimitUpPushService(
+        db,
+        settings=Settings(
+            llm_api_key="key",
+            llm_api_key_file=None,
+            tushare_token="token",
+            tushare_token_file=None,
+        ),
+        tushare_client=FakeTushareClient({}),
+        notification_service=FakeNotificationService(),
+    )
+
+    def boom(prompt: str, system_prompt: str, json_mode: bool = False) -> str:
+        raise RuntimeError("llm unavailable")
+
+    monkeypatch.setattr(service, "_chat_completion_with_reasoning", boom)
+    stage_quality: list[dict[str, object]] = []
+
+    payload = service._run_text_stage(
+        "FIRST_BOARD_FOCUS",
+        {
+            "trade_date": "2026-05-08",
+            "selected_first_board_stocks": [
+                {
+                    "ts_code": "000010.SZ",
+                    "name": "入选首板",
+                    "status": "首板",
+                    "theme": "人工智能",
+                    "selection": {"selection_reason": "强题材首板"},
+                }
+            ],
+            "supplements": {},
+            "market_context": {},
+        },
+        "system",
+        "prompt",
+        stage_quality,
+    )
+
+    assert payload["error_fallback"] is True
+    assert "首板重点个股观察" in payload["html_fragment"]
+    assert any(item["status"] == "FAILED_FALLBACK" for item in stage_quality)

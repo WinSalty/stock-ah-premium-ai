@@ -81,6 +81,10 @@ LIMIT_UP_CONTEXT_THEME_LIMIT = 80
 LIMIT_UP_CONTEXT_CAPITAL_SIGNAL_LIMIT = 160
 LIMIT_UP_CONTEXT_BOARD_STATUS_LIMIT = 40
 LIMIT_UP_STAGE_FIRST_BOARD = "FIRST_BOARD"
+# 首板个股精选扩展：FIRST_BOARD 阶段保持题材级结论不变，
+# 个股精选与重点分析拆成两个独立阶段，避免破坏既有阶段的缓存键、JSON 结构与兜底逻辑。
+LIMIT_UP_STAGE_FIRST_BOARD_SELECTION = "FIRST_BOARD_SELECTION"
+LIMIT_UP_STAGE_FIRST_BOARD_FOCUS = "FIRST_BOARD_FOCUS"
 LIMIT_UP_STAGE_CHAIN_SELECTION = "CHAIN_SELECTION"
 LIMIT_UP_STAGE_HIGH_BOARD_SELECTION = "HIGH_BOARD_SELECTION"
 LIMIT_UP_STAGE_CHAIN_FOCUS = "CHAIN_FOCUS"
@@ -530,6 +534,7 @@ class LimitUpPushService:
             stage_quality=self._json_loads_list(
                 self._json_dumps(pipeline.get("stage_quality") or [])
             ),
+            selected_first_board_stocks=list(pipeline.get("selected_first_board_stocks") or []),
             selected_chain_stocks=list(pipeline.get("selected_chain_stocks") or []),
             selected_high_board_stocks=list(pipeline.get("selected_high_board_stocks") or []),
         )
@@ -1668,6 +1673,28 @@ class LimitUpPushService:
             self._fallback_first_board_stage(context),
             stage_quality,
         )
+        # 首板个股精选：在题材级结论之后挑选少量首板重点标的（默认上限 5），
+        # 与两三连/高连板共用筹码补数与重点分析链路；强题材代表股优先，由提示词约束。
+        selected_first_board = self._select_stage_stocks(
+            self._run_json_stage(
+                LIMIT_UP_STAGE_FIRST_BOARD_SELECTION,
+                {
+                    "trade_date": context.get("trade_date"),
+                    "first_board_context": context.get("first_board_context") or {},
+                    "theme_candidates": first_board.get("theme_candidates") or [],
+                },
+                self._stage_system_prompt("首板重点个股筛选分析师"),
+                self._first_board_selection_prompt(context, first_board),
+                self._fallback_selection_stage(
+                    context.get("first_board_context") or {},
+                    self.settings.limit_up_push_first_board_focus_stock_limit,
+                    "first_board",
+                ),
+                stage_quality,
+            ),
+            list((context.get("first_board_context") or {}).get("stocks") or []),
+            self.settings.limit_up_push_first_board_focus_stock_limit,
+        )
         selected_chain = self._select_stage_stocks(
             self._run_json_stage(
                 LIMIT_UP_STAGE_CHAIN_SELECTION,
@@ -1706,9 +1733,24 @@ class LimitUpPushService:
             list((context.get("high_board_context") or {}).get("stocks") or []),
             self.settings.limit_up_push_high_board_focus_stock_limit,
         )
+        # 补数去重集合扩入首板入选（5+20+10）；仅入选股触发 cyq 接口，单股失败不阻塞。
         supplement_map = self._build_selected_stock_supplements(
             trade_date,
-            self._dedupe_selected_stocks([*selected_chain, *selected_high]),
+            self._dedupe_selected_stocks(
+                [*selected_first_board, *selected_chain, *selected_high]
+            ),
+            stage_quality,
+        )
+        first_board_focus = self._run_text_stage(
+            LIMIT_UP_STAGE_FIRST_BOARD_FOCUS,
+            {
+                "trade_date": context.get("trade_date"),
+                "selected_first_board_stocks": selected_first_board,
+                "supplements": supplement_map,
+                "market_context": context.get("market_context") or {},
+            },
+            self._stage_system_prompt("首板重点个股分析师"),
+            self._first_board_focus_prompt(context, selected_first_board, supplement_map),
             stage_quality,
         )
         chain_focus = self._run_text_stage(
@@ -1739,10 +1781,14 @@ class LimitUpPushService:
             "trade_date": context.get("trade_date"),
             "market_context": context.get("market_context") or {},
             "first_board": first_board,
+            "selected_first_board_stocks": self._stocks_for_final_prompt(
+                selected_first_board, supplement_map
+            ),
             "selected_chain_stocks": self._stocks_for_final_prompt(selected_chain, supplement_map),
             "selected_high_board_stocks": self._stocks_for_final_prompt(
                 selected_high, supplement_map
             ),
+            "first_board_focus_html": first_board_focus.get("html_fragment"),
             "chain_focus_html": chain_focus.get("html_fragment"),
             "high_board_focus_html": high_focus.get("html_fragment"),
         }
@@ -1755,10 +1801,12 @@ class LimitUpPushService:
         )
         context["pipeline"] = {
             "version": self.settings.limit_up_push_final_prompt_version,
+            "selected_first_board_stocks": selected_first_board,
             "selected_chain_stocks": selected_chain,
             "selected_high_board_stocks": selected_high,
             "stage_quality": stage_quality,
             "first_board": first_board,
+            "first_board_focus_html": first_board_focus.get("html_fragment"),
             "chain_focus_html": chain_focus.get("html_fragment"),
             "high_board_focus_html": high_focus.get("html_fragment"),
             "stock_supplements": supplement_map,
@@ -1842,7 +1890,13 @@ class LimitUpPushService:
         try:
             content = self._chat_completion_with_reasoning(user_prompt, system_prompt)
         except Exception as exc:
-            if stage_key not in {LIMIT_UP_STAGE_CHAIN_FOCUS, LIMIT_UP_STAGE_HIGH_BOARD_FOCUS}:
+            # 重点分析类文本阶段失败可降级为确定性观察表，报告仍能 READY；
+            # FINAL_REPORT 等合成阶段失败必须抛出，让整份报告进入 FAILED 重试。
+            if stage_key not in {
+                LIMIT_UP_STAGE_FIRST_BOARD_FOCUS,
+                LIMIT_UP_STAGE_CHAIN_FOCUS,
+                LIMIT_UP_STAGE_HIGH_BOARD_FOCUS,
+            }:
                 raise
             payload = self._fallback_text_stage(stage_key, stage_input, str(exc)[:300])
             stage_quality.append(
@@ -1867,13 +1921,18 @@ class LimitUpPushService:
         """
 
         rows = (
-            stage_input.get("selected_chain_stocks")
+            stage_input.get("selected_first_board_stocks")
+            or stage_input.get("selected_chain_stocks")
             or stage_input.get("selected_high_board_stocks")
             or []
         )
-        title = (
-            "两连三连重点接力" if stage_key == LIMIT_UP_STAGE_CHAIN_FOCUS else "高连板与龙头观察"
-        )
+        # 降级表标题按阶段区分，便于在报告中辨认是哪个重点阶段降级。
+        if stage_key == LIMIT_UP_STAGE_FIRST_BOARD_FOCUS:
+            title = "首板重点个股观察"
+        elif stage_key == LIMIT_UP_STAGE_CHAIN_FOCUS:
+            title = "两连三连重点接力"
+        else:
+            title = "高连板与龙头观察"
         table_rows = []
         for row in rows:
             selection = row.get("selection") if isinstance(row.get("selection"), dict) else {}
@@ -2025,6 +2084,68 @@ class LimitUpPushService:
             f"输入数据：\n{self._json_dumps(stage_input)}"
         )
 
+    def _first_board_selection_prompt(
+        self, context: dict[str, Any], first_board: dict[str, Any]
+    ) -> str:
+        """生成首板重点个股筛选提示词。
+
+        首板池远大于连板池且次日溢价不确定性更高，因此上限默认 5 只、强调"宁缺毋滥"；
+        题材发酵价值取自 FIRST_BOARD 阶段输出，强题材代表股优先入选。
+
+        创建日期：2026-06-12
+        author: claude
+        """
+
+        limit = self.settings.limit_up_push_first_board_focus_stock_limit
+        stage_input = {
+            "first_board_context": context.get("first_board_context") or {},
+            "theme_candidates": first_board.get("theme_candidates") or [],
+        }
+        return (
+            f"请从首板（当日首次涨停）股票中挑选最多 {limit} 只重点观察标的，宁缺毋滥，"
+            "不强制选满；首板次日溢价失败率高于连板接力，只保留题材发酵价值高、"
+            "有晋级二板潜力的标的。筛选维度：题材发酵价值与题材内卡位"
+            "（theme_candidates 中 fermentation_value 为强的题材代表股优先）、"
+            "封板质量(封流比+首封时间+开板次数)、资金信号、辨识度与晋级二板潜力；"
+            "尾盘 14:30 后首封或多次开板需降级或剔除。"
+            "输出严格 JSON：{\"selected_stocks\":[{\"ts_code\":\"代码\",\"name\":\"名称\","
+            "\"board_status\":\"首板\",\"theme\":\"题材\",\"theme_role\":\"题材龙头/板块前排/跟风\","
+            "\"score_detail\":{\"theme_position\":\"强/中/弱\",\"seal_quality\":\"强/中/弱\",\"capital_signal\":\"强/中/弱\",\"promotion_potential\":\"强/中/弱\"},"
+            "\"selection_reason\":\"入选理由\",\"priority\":1}],\"excluded_summary\":\"剔除摘要\"}。\n\n"
+            f"输入数据：\n{self._json_dumps(stage_input)}"
+        )
+
+    def _first_board_focus_prompt(
+        self,
+        context: dict[str, Any],
+        selected_first_board: list[dict[str, Any]],
+        supplements: dict[str, Any],
+    ) -> str:
+        """生成首板重点个股分析提示词。
+
+        口径对齐两三连重点阶段（每股限 150 字、必须输出次日竞价观察清单），
+        并额外要求强调首板接力的更高不确定性，避免被读成低风险建议。
+
+        创建日期：2026-06-12
+        author: claude
+        """
+
+        stage_input = {
+            "selected_first_board_stocks": selected_first_board,
+            "supplements": supplements,
+            "market_context": context.get("market_context"),
+        }
+        return (
+            "请重点分析入选的首板股票，每只不超过 150 字，禁止复述输入原文。"
+            "分别覆盖题材发酵逻辑、晋级二板可能性、下一个交易日溢价可能性、"
+            "触发条件、失败/止损条件、筹码压力和风险提示。"
+            "必须输出次日竞价观察清单：给出竞价弱于多少放弃、合理高开区间、过高开警惕点。"
+            "必须显著提示首板接力的不确定性高于连板接力，参与方式与试错幅度要更克制；"
+            "用 emotion_cycle 约束口径，退潮或冰点只给观察不给参与建议。"
+            "输出 HTML 片段，使用 h3、p、ul、table、strong，不要输出 html/body。\n\n"
+            f"输入数据：\n{self._json_dumps(stage_input)}"
+        )
+
     def _chain_selection_prompt(self, context: dict[str, Any]) -> str:
         """生成两连三连候选筛选提示词。
 
@@ -2128,8 +2249,11 @@ class LimitUpPushService:
         return (
             "请把以下阶段结果合成为一份完整中文打板复盘 HTML 报告。必须先根据 emotion_cycle 判断"
             "启动期/发酵期/高潮期/分歧期/退潮期/冰点期，并说明依据；随后包含："
-            "市场情绪概览、首板题材发酵、两连三连重点观察与次日竞价/溢价判断、"
+            "市场情绪概览、首板题材发酵价值与首板重点个股、"
+            "两连三连重点观察与次日竞价/溢价判断、"
             "高连板与龙头接力观察、反证信号和风险提示、最后总结。"
+            "首板重点个股小节使用 selected_first_board_stocks 与 first_board_focus_html，"
+            "并提示首板接力不确定性高于连板接力；该名单为空时保留小节并说明当日无首板精选。"
             "只输出纯 HTML 片段，使用 h2/h3、p、ul、ol、table、strong，"
             "不要 Markdown 代码块，不要 html/body。\n\n"
             f"阶段结果：\n{self._json_dumps(final_input)}"

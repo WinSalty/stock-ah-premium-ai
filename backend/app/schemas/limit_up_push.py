@@ -88,6 +88,8 @@ class LimitUpReportDetail(LimitUpReportListItem):
     context: dict[str, Any] | None = None
     data_quality: list[dict[str, Any]] = Field(default_factory=list)
     stage_quality: list[dict[str, Any]] = Field(default_factory=list)
+    # 首板个股精选扩展：旧报告 pipeline 无该字段时回退空列表，前端按空名单渲染。
+    selected_first_board_stocks: list[dict[str, Any]] = Field(default_factory=list)
     selected_chain_stocks: list[dict[str, Any]] = Field(default_factory=list)
     selected_high_board_stocks: list[dict[str, Any]] = Field(default_factory=list)
 

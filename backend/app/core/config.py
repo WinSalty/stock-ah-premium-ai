@@ -226,6 +226,11 @@ class Settings(BaseSettings):
         default=10,
         alias="LIMIT_UP_PUSH_HIGH_BOARD_FOCUS_STOCK_LIMIT",
     )
+    # 首板重点入选上限：“少量精选”口径，过大会稀释精选定位并抬升筹码补数调用量。
+    limit_up_push_first_board_focus_stock_limit: int = Field(
+        default=5,
+        alias="LIMIT_UP_PUSH_FIRST_BOARD_FOCUS_STOCK_LIMIT",
+    )
     limit_up_push_cyq_lookback_days: int = Field(
         default=20,
         alias="LIMIT_UP_PUSH_CYQ_LOOKBACK_DAYS",
@@ -234,8 +239,10 @@ class Settings(BaseSettings):
         default=True,
         alias="LIMIT_UP_PUSH_STAGE_CACHE_ENABLED",
     )
+    # v3：最终合成阶段新增首板重点个股小节（首板个股精选扩展），按既定规约提示词变更必须 bump；
+    # bump 会使全部阶段缓存失效并重新生成，属预期行为；存量 READY 报告不受影响。
     limit_up_push_final_prompt_version: str = Field(
-        default="limit-up-multi-stage-v2",
+        default="limit-up-multi-stage-v3",
         alias="LIMIT_UP_PUSH_FINAL_PROMPT_VERSION",
     )
     limit_up_push_generating_stale_minutes: int = Field(
