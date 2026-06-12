@@ -104,6 +104,8 @@ class TurnState:
     # 指标展示上下文：会话标题（问题截 48 字）与用户名，随 LlmCallTrace 落库。
     conversation_title: str | None = None
     user_name: str | None = None
+    # 日限额豁免（admin 账户）：路由层按用户角色注入，随 trace 透传给 llm_client。
+    llm_limit_exempt: bool = False
     # 配额组 -> 已用次数
     tool_call_counts: dict[str, int] = field(default_factory=dict)
     # 本轮已登记图表 spec 列表（chart_id -> spec 字典，保序）

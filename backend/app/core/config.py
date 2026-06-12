@@ -44,7 +44,9 @@ class Settings(BaseSettings):
         alias="LLM_API_KEY_FILE",
     )
     llm_model: str | None = Field(default="deepseek-v4-flash", alias="LLM_MODEL")
-    llm_daily_call_limit: int = Field(default=100, alias="LLM_DAILY_CALL_LIMIT")
+    # 内部 LLM 调用日限额（防异常循环烧钱的安全网）：只约束非 admin 用户，
+    # admin 账户豁免且其调用不计入统计（2026-06-12 调整：100→200 并增加 admin 豁免）。
+    llm_daily_call_limit: int = Field(default=200, alias="LLM_DAILY_CALL_LIMIT")
     image_gen_base_url: str = Field(
         default="https://api.86gamestore.com",
         alias="IMAGE_GEN_BASE_URL",

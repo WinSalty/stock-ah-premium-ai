@@ -39,7 +39,7 @@ LLM_STREAM_TIMEOUT_SECONDS = 240.0
 # 日限额按东八区自然日统计，与业务展示时区保持一致。
 LLM_LIMIT_TIMEZONE = ZoneInfo("Asia/Shanghai")
 LLM_LIMIT_EXCEEDED_MESSAGE = (
-    "今日智能问答模型调用次数已达到项目日限额 100 次，请明天再试或联系管理员调整配置。"
+    "今日智能问答模型调用次数已达到项目日限额 200 次，请明天再试或联系管理员调整配置。"
 )
 # 计入项目日限额的外部模型主调用阶段；first_chunk 等派生指标不重复计数。
 # agent_iteration 是 Agent 引擎的迭代调用 phase：必须计入，否则日限额安全网
@@ -96,6 +96,10 @@ class LlmCallTrace:
     # 由 Agent 引擎在构造 trace 时填入，随指标落库到 llm_call_metric.prompt_version，
     # 用于按版本对比提示词迭代效果；旧链路不传，保持 None 向后兼容。
     prompt_version: str | None = None
+    # 日限额豁免标记（创建日期：2026-06-12，author: claude）：
+    # admin 账户发起的调用不受 llm_daily_call_limit 约束；由路由层按用户角色
+    # 注入、引擎透传，llm_client 不感知用户体系。缺省 False 保持原行为。
+    exempt_daily_limit: bool = False
 
 
 @dataclass(frozen=True)
@@ -694,6 +698,10 @@ class LlmClient:
         limit = self.settings.llm_daily_call_limit
         if limit <= 0:
             return
+        # admin 账户豁免（2026-06-12）：日限额是面向普通用户的安全网，
+        # 管理员调试/重度使用不受限，其调用也不计入普通用户的统计口径。
+        if trace is not None and trace.exempt_daily_limit:
+            return
         used_count = self._today_external_llm_call_count()
         if used_count < limit:
             return
@@ -710,19 +718,29 @@ class LlmClient:
         raise LlmDailyLimitExceeded(self.daily_limit_message(limit))
 
     def _today_external_llm_call_count(self) -> int:
-        """统计当天已发生的外部 LLM 主调用次数。
+        """统计当天已发生的外部 LLM 主调用次数（不含 admin 账户产生的调用）。
+
+        admin 调用排除口径（2026-06-12）：LEFT JOIN 用户表按角色过滤，
+        user_id 为空或用户已不存在的记录按非 admin 保守计入，防止漏数。
 
         创建日期：2026-05-05
         author: sunshengxian
         """
 
+        from app.db.models.auth import AppUser
+
         now = datetime.now(LLM_LIMIT_TIMEZONE).replace(tzinfo=None)
         today_start = datetime.combine(now.date(), time.min)
         tomorrow_start = today_start + timedelta(days=1)
-        statement = select(func.count(LlmCallMetric.id)).where(
-            LlmCallMetric.phase.in_(LLM_EXTERNAL_CALL_PHASES),
-            LlmCallMetric.created_at >= today_start,
-            LlmCallMetric.created_at < tomorrow_start,
+        statement = (
+            select(func.count(LlmCallMetric.id))
+            .outerjoin(AppUser, AppUser.id == LlmCallMetric.user_id)
+            .where(
+                LlmCallMetric.phase.in_(LLM_EXTERNAL_CALL_PHASES),
+                LlmCallMetric.created_at >= today_start,
+                LlmCallMetric.created_at < tomorrow_start,
+                func.coalesce(AppUser.role, "USER") != "ADMIN",
+            )
         )
         try:
             raw_count = self.db.scalar(statement)
@@ -743,8 +761,7 @@ class LlmClient:
         author: sunshengxian
         """
 
-        if limit == 100:
-            return LLM_LIMIT_EXCEEDED_MESSAGE
+        # 统一走动态文案（默认值历经 100→200 调整，不再固定特例某个数值）。
         return (
             f"今日智能问答模型调用次数已达到项目日限额 {limit} 次，"
             "请明天再试或联系管理员调整配置。"

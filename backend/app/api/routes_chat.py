@@ -30,6 +30,7 @@ from app.schemas.chat import (
     ChatStoredMessageResponse,
 )
 from app.services.agent.engine import CHAT_FAILURE_MESSAGE, AgentEngine
+from app.services.auth_service import ROLE_ADMIN
 
 router = APIRouter()
 DbSession = Annotated[Session, Depends(get_db)]
@@ -493,6 +494,8 @@ def create_message(
     context["session_id"] = session_id
     context["_metric_question"] = visible_question
     context["_metric_user_name"] = _display_user_name(current_user)
+    # admin 账户豁免 LLM 内部日限额（2026-06-12）：安全网只约束普通用户。
+    context["_llm_limit_exempt"] = current_user.role == ROLE_ADMIN
     context["conversation_history"] = history
     _touch_session(session, visible_question, has_history=bool(history))
     db.commit()
@@ -577,6 +580,8 @@ def create_message_stream(
         context["session_id"] = session_id
         context["_metric_question"] = visible_question
         context["_metric_user_name"] = _display_user_name(current_user)
+        # admin 账户豁免 LLM 内部日限额（2026-06-12）：安全网只约束普通用户。
+        context["_llm_limit_exempt"] = current_user.role == ROLE_ADMIN
         context["conversation_history"] = history
 
         event_queue: queue.Queue[dict[str, object] | object] = queue.Queue()

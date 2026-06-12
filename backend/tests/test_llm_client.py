@@ -608,3 +608,65 @@ def test_chat_completion_stream_messages_yields_chunks_until_done(monkeypatch) -
     assert done_metric.response_content == "你好，世界"
     assert done_metric.elapsed_ms is not None
     assert done_metric.first_chunk_ms is not None
+
+
+def test_daily_call_limit_exempts_admin_and_excludes_admin_usage() -> None:
+    """确认 admin 账户豁免日限额，且 admin 产生的调用不计入普通用户的统计口径。
+
+    创建日期：2026-06-12
+    author: claude
+    """
+
+    from app.db.models.auth import AppUser
+    from app.services.llm_client import LlmCallTrace
+
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    today = datetime.now(ZoneInfo("Asia/Shanghai")).replace(tzinfo=None)
+    with Session(engine) as db:
+        admin = AppUser(username="admin", password_hash="h", role="ADMIN", is_active=True)
+        normal = AppUser(username="alice", password_hash="h", role="USER", is_active=True)
+        db.add_all([admin, normal])
+        db.commit()
+        db.refresh(admin)
+        db.refresh(normal)
+
+        def metric(qid: str, user_id: int | None) -> LlmCallMetric:
+            return LlmCallMetric(
+                question_id=qid,
+                user_id=user_id,
+                phase="agent_iteration",
+                provider="DeepSeek",
+                model="deepseek-v4-pro",
+                created_at=today,
+                updated_at=today,
+            )
+
+        # admin 已产生 3 次调用、普通用户 1 次、user_id 缺失 1 次（保守计入）。
+        db.add_all(
+            [
+                metric("adm-1", admin.id),
+                metric("adm-2", admin.id),
+                metric("adm-3", admin.id),
+                metric("usr-1", normal.id),
+                metric("sys-1", None),
+            ]
+        )
+        db.commit()
+
+        client = LlmClient(
+            db,
+            settings=_make_settings(llm_api_key="test-key", llm_daily_call_limit=2),
+        )
+        endpoint = client.model_endpoint()
+
+        # 统计口径：admin 的 3 次被排除，仅普通用户 1 次 + 无主 1 次 = 2 次，达到限额。
+        normal_trace = LlmCallTrace(question_id="q-normal", phase="agent_iteration",
+                                    user_id=normal.id)
+        with pytest.raises(LlmDailyLimitExceeded):
+            client.enforce_daily_call_limit(endpoint, normal_trace)
+
+        # admin 豁免：同样的超限状态下带豁免标记的调用直接放行。
+        admin_trace = LlmCallTrace(question_id="q-admin", phase="agent_iteration",
+                                   user_id=admin.id, exempt_daily_limit=True)
+        client.enforce_daily_call_limit(endpoint, admin_trace)

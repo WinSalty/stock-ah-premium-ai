@@ -24,7 +24,7 @@ cd /Users/salty/codeProject/ai/coding/stock-ah-premium-ai
 - Node.js：支持 Vite 5 的版本。
 - MySQL：本机 MySQL 5.7，连接说明见 `/Users/salty/codeProject/ai/doc/mysqluse.md`。
 - Tushare：使用 Python `tushare` SDK，默认中转地址 `https://tt.xiaodefa.cn`，同步接口运行时优先读取本机文件 `/Users/salty/codeProject/ai/doc/tushare-token.txt`，环境变量 `TUSHARE_TOKEN` 作为兜底。
-- LLM：智能问答采用 Agent 引擎（LLM 通过 function calling 自主编排工具），默认模型 `AGENT_MODEL=deepseek-v4-pro`（工具调用准确性优先），优先读取本机文件 `/Users/salty/codeProject/ai/doc/deepseek-apikey.txt`，环境变量 `LLM_API_KEY` 作为兜底；主端点临时不可用时自动回落阿里 Qwen `qwen3.6-flash`，Qwen Key 优先读取 `/Users/salty/codeProject/ai/doc/qwen-apikey.txt`。两层配额：用户可感知配额 `CHAT_DAILY_ROUND_LIMIT=50`（问答轮数/天），内部安全网 `LLM_DAILY_CALL_LIMIT=100`（外部模型调用次数/天，计入 `agent_iteration` 与 `answer_stream`）。
+- LLM：智能问答采用 Agent 引擎（LLM 通过 function calling 自主编排工具），默认模型 `AGENT_MODEL=deepseek-v4-pro`（工具调用准确性优先），优先读取本机文件 `/Users/salty/codeProject/ai/doc/deepseek-apikey.txt`，环境变量 `LLM_API_KEY` 作为兜底；主端点临时不可用时自动回落阿里 Qwen `qwen3.6-flash`，Qwen Key 优先读取 `/Users/salty/codeProject/ai/doc/qwen-apikey.txt`。两层配额：用户可感知配额 `CHAT_DAILY_ROUND_LIMIT=50`（问答轮数/天），内部安全网 `LLM_DAILY_CALL_LIMIT=200`（外部模型调用次数/天，计入 `agent_iteration` 与 `answer_stream`；仅约束非 admin 用户，admin 账户豁免且其调用不计入统计）。
 - 联网搜索：博查 Bocha API，Key 优先读取 `/Users/salty/codeProject/ai/doc/博查-apikey.txt`，环境变量 `BOCHA_API_KEY` 兜底；缺失或日配额 `AGENT_WEB_SEARCH_DAILY_LIMIT=100` 用尽时自动降级为无联网能力。仅时效性问题（最新政策、新闻、海外市场）才联网，本地数据能答的禁止联网。
 - Python 沙箱：`run_python` 在 subprocess 沙箱执行 pandas/numpy 计算（无网络、隔离临时目录、rlimit + 审计钩子约束、墙钟超时 `PY_SANDBOX_WALL_TIMEOUT_SECONDS=20`）；本轮已查数据自动挂载沙箱 `data/` 目录。日配额 `AGENT_RUN_PYTHON_DAILY_LIMIT=100`。
 - 文生图：默认接入 86GameStore OpenAI Images 兼容接口，优先读取本机文件 `/Users/salty/codeProject/ai/doc/86gamestore-image-apikey.txt`，环境变量 `IMAGE_GEN_API_KEY` 作为兜底；图片生产环境保存到阿里 OSS 私有 Bucket，后端鉴权后返回 1 天有效签名 URL。
@@ -86,7 +86,7 @@ LLM_BASE_URL=https://api.deepseek.com
 LLM_API_KEY_FILE=/Users/salty/codeProject/ai/doc/deepseek-apikey.txt
 LLM_API_KEY=
 LLM_MODEL=deepseek-v4-flash
-LLM_DAILY_CALL_LIMIT=100
+LLM_DAILY_CALL_LIMIT=200
 QWEN_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
 QWEN_API_KEY_FILE=/Users/salty/codeProject/ai/doc/qwen-apikey.txt
 QWEN_API_KEY=
@@ -480,14 +480,14 @@ LLM_BASE_URL=https://api.deepseek.com
 LLM_API_KEY_FILE=/Users/salty/codeProject/ai/doc/deepseek-apikey.txt
 LLM_API_KEY=
 LLM_MODEL=deepseek-v4-flash
-LLM_DAILY_CALL_LIMIT=100
+LLM_DAILY_CALL_LIMIT=200
 QWEN_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
 QWEN_API_KEY_FILE=/Users/salty/codeProject/ai/doc/qwen-apikey.txt
 QWEN_API_KEY=
 QWEN_QUESTION_ROUTER_MODEL=deepseek-v4-flash
 ```
 
-问答页面使用流式响应，输入框按 Enter 发送，Shift+Enter 换行；模型由后端统一使用 `AGENT_MODEL`（默认 `deepseek-v4-pro`），页面不再提供模型选择。预设问题点击后直接发送，空会话展示结构化投研场景预设问题。回答区实时展示 Agent 的工具执行时间线（查库/补数/搜索/计算/出图每步的动作、结果与耗时），完成后折叠为"本轮执行 N 步"可展开摘要，回答正文按 `{{chart:cN}}` 占位符内嵌 ECharts 图表。两层配额：用户按 `CHAT_DAILY_ROUND_LIMIT`（默认 50 轮/天）感知，超限返回 429"今日问答次数已达上限"；内部 `LLM_DAILY_CALL_LIMIT`（默认 100 次/天）作安全网，统计 `agent_iteration` 与 `answer_stream`。流式并发受 `CHAT_STREAM_MAX_CONCURRENCY`（默认 8）限制，超限返回 503 繁忙。若页面无响应，先确认后端 `/api/health` 正常，再查后端日志是否有 LLM 日限流、轮数超限、工具执行（SQL 字段名/沙箱/搜索）或数据库错误。
+问答页面使用流式响应，输入框按 Enter 发送，Shift+Enter 换行；模型由后端统一使用 `AGENT_MODEL`（默认 `deepseek-v4-pro`），页面不再提供模型选择。预设问题点击后直接发送，空会话展示结构化投研场景预设问题。回答区实时展示 Agent 的工具执行时间线（查库/补数/搜索/计算/出图每步的动作、结果与耗时），完成后折叠为"本轮执行 N 步"可展开摘要，回答正文按 `{{chart:cN}}` 占位符内嵌 ECharts 图表。两层配额：用户按 `CHAT_DAILY_ROUND_LIMIT`（默认 50 轮/天）感知，超限返回 429"今日问答次数已达上限"；内部 `LLM_DAILY_CALL_LIMIT`（默认 200 次/天，admin 账户豁免且不计入统计）作安全网，统计 `agent_iteration` 与 `answer_stream`。流式并发受 `CHAT_STREAM_MAX_CONCURRENCY`（默认 8）限制，超限返回 503 繁忙。若页面无响应，先确认后端 `/api/health` 正常，再查后端日志是否有 LLM 日限流、轮数超限、工具执行（SQL 字段名/沙箱/搜索）或数据库错误。
 
 AH 溢价、折价和套利相关问题可按前置路由补充本地候选池、市场分布和自选机会，避免只基于单行 SQL 结果作答。项目已移除自动静态投研材料注入链路和旧材料目录；银行/非银、个股报告、宏观地产金融推演等回答只基于会话历史、页面上下文、结构化市场观察、按需补数结果和模型自身金融知识组织。回答提示词要求 LLM 给出评级口径、配置倾向、优先级、仓位思路、阈值和触发条件，并避免输出模板化免责句。
 

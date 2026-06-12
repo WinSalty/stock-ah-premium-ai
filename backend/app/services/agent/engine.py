@@ -149,6 +149,8 @@ class AgentEngine:
             # 指标展示口径与旧链路一致：会话标题取问题前 48 字、用户名截 64 字。
             conversation_title=metric_question[:48] or None,
             user_name=(str(context.get("_metric_user_name") or "").strip()[:64] or None),
+            # admin 账户日限额豁免标记：由路由层按用户角色注入。
+            llm_limit_exempt=bool(context.get("_llm_limit_exempt")),
             threshold_context=self._threshold_context(context),
         )
         tools = build_tools(self.db, self.settings, turn_state)
@@ -451,6 +453,7 @@ class AgentEngine:
             user_name=turn_state.user_name,
             # 提示词版本随指标落库，支撑按版本对比迭代效果（旧评审 4.1）。
             prompt_version=PROMPT_VERSION,
+            exempt_daily_limit=turn_state.llm_limit_exempt,
         )
 
     def _record_tool_metric(self, turn_state: TurnState, call: ToolCall, result: Any) -> None:
