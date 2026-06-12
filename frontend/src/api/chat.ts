@@ -83,6 +83,8 @@ export interface ChatDoneEvent {
   answer: string;
   charts?: ChartSpec[];
   tool_trace?: ToolTraceItem[];
+  /** 整轮墙钟耗时毫秒数（提问进入引擎到回答完成，含模型思考与工具执行）。 */
+  elapsed_ms?: number | null;
 }
 
 /** 回答失败事件：answer 为失败文案（服务端已落库为 assistant 消息）。 */

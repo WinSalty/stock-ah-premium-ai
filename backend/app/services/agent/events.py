@@ -105,6 +105,9 @@ class DoneEvent(AgentEvent):
     """正常终态事件：answer 为完整回答，charts 为本轮全部图表 spec，
     tool_trace 为轨迹摘要数组（落库与历史回放共用同一结构）。
 
+    elapsed_ms 为整轮墙钟耗时（提问进入引擎到回答完成，含模型思考与工具执行；
+    试用反馈：仅加总工具耗时的"合计"严重低估真实等待）。
+
     创建日期：2026-06-12
     author: claude
     """
@@ -113,6 +116,7 @@ class DoneEvent(AgentEvent):
     answer: str = ""
     charts: list[dict[str, Any]] = field(default_factory=list)
     tool_trace: list[dict[str, Any]] = field(default_factory=list)
+    elapsed_ms: float | None = None
 
     def __post_init__(self) -> None:
         self.type = "done"

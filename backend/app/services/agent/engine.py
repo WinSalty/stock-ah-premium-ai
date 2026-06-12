@@ -18,6 +18,7 @@ import logging
 import re
 import uuid
 from collections.abc import Iterator
+from time import perf_counter
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -84,6 +85,8 @@ INVALID_CHART_NUDGE = (
 _CHART_PLACEHOLDER_PATTERN = re.compile(r"\{\{chart:([a-zA-Z0-9_-]+)\}\}")
 # 复用迭代内容下发时的分片长度：保持前端打字机渐进渲染体验。
 PREPARED_ANSWER_CHUNK_CHARS = 48
+# 流式迭代的头部缓冲长度：攒够这些字符做协议泄漏检测后再开始实时透传。
+STREAM_HEAD_GUARD_CHARS = 48
 # 工具调用语法泄漏特征：模型把 function calling 协议当正文输出时的标记
 # （DeepSeek 的 DSML 标记、OpenAI 风格 tool_calls 文本等）。
 _TOOL_MARKUP_PATTERNS = (
@@ -159,6 +162,7 @@ class AgentEngine:
             llm_limit_exempt=bool(context.get("_llm_limit_exempt")),
             threshold_context=self._threshold_context(context),
         )
+        turn_state.run_started_at = perf_counter()
         tools = build_tools(self.db, self.settings, turn_state)
         registry = ToolRegistry(tools)
         messages = self._build_messages(question, context, registry, turn_state)
@@ -167,23 +171,23 @@ class AgentEngine:
             messages = compress_messages_for_budget(
                 messages, self.settings.agent_context_budget_chars
             )
-            result = self.llm_client.chat_completion_messages(
-                messages,
-                tools=registry.specs() or None,
-                model=self.settings.agent_model,
-                trace=self._trace(turn_state, "agent_iteration"),
-            )
+            # 流式迭代（2026-06-13 真流式恢复）：模型直接作答时正文增量实时透传；
+            # 决定调工具时由客户端聚合 tool_calls 后继续循环——单次调用兼顾
+            # 打字机体验与工具解析，且不存在"二次生成改判调工具"的泄漏土壤。
+            iteration = yield from self._stream_iteration(messages, registry, turn_state)
+            result, transmitted, markup_detected = iteration
             if not result.tool_calls:
-                # 无工具调用：直接复用本次迭代生成的内容作为最终回答（生产缺陷
-                # 219bddf9 修复）。此前的"丢弃内容重发流式"会让模型二次生成时改判
-                # 去调工具，而流式请求不带 tools，工具调用语法就被当正文吐出；
-                # 复用内容同时省掉一次外部 LLM 调用。
                 content = (result.content or "").strip()
-                if content and not self._looks_like_tool_markup(content):
+                if content and not markup_detected and not self._looks_like_tool_markup(content):
                     # 净化无效图表占位符（缺陷 977cf4a3：模型引用历史轮次占位符）。
                     sanitized = self._strip_invalid_chart_placeholders(content, turn_state)
                     if sanitized.strip():
-                        yield from self._emit_prepared_answer(sanitized, turn_state)
+                        # 已实时透传 transmitted（content 的前缀）；补发剩余尾段后收尾，
+                        # done.answer 用净化全文覆盖（前端与落库均以 done 为准）。
+                        remaining = content[len(transmitted) :]
+                        if remaining:
+                            yield DeltaEvent(content=remaining)
+                        yield self._done_event(sanitized, turn_state)
                         return
                     # 净化后为空说明回答全靠无效占位符：回填纠错指令继续迭代，
                     # 给模型重新调用 render_chart 出图（或改用文字回答）的机会。
@@ -243,15 +247,87 @@ class AgentEngine:
         # 此前的流式收尾不带 tools，模型继续输出工具调用语法被拦后无重试机会）。
         yield from self._finalize_answer(messages, turn_state, FORCE_FINISH_INSTRUCTION)
 
+    def _stream_iteration(
+        self,
+        messages: list[dict[str, Any]],
+        registry: ToolRegistry,
+        turn_state: TurnState,
+    ) -> Any:
+        """流式执行一次迭代：正文增量实时透传，工具调用由客户端聚合后返回。
+
+        透传口径：头部先攒 STREAM_HEAD_GUARD_CHARS 字符做协议泄漏检测，通过后
+        转入实时透传；一旦出现工具调用分片即停止透传（content 是思考前言，
+        不作为回答下发）。返回 (聚合结果, 已透传文本, 是否检出泄漏)——
+        已透传文本恒为 content 的前缀，供上层补发尾段。
+
+        创建日期：2026-06-13
+        author: claude
+        """
+
+        head_parts: list[str] = []
+        head_chars = 0
+        head_flushed = False
+        markup_detected = False
+        tool_mode = False
+        transmitted_parts: list[str] = []
+        result: Any = None
+        for kind, payload in self.llm_client.stream_chat_with_tools(
+            messages,
+            tools=registry.specs() or None,
+            model=self.settings.agent_model,
+            trace=self._trace(turn_state, "agent_iteration"),
+        ):
+            if kind == "result":
+                result = payload
+                continue
+            if kind == "tool_call":
+                tool_mode = True
+                continue
+            if kind != "delta" or tool_mode or markup_detected:
+                continue
+            if head_flushed:
+                transmitted_parts.append(payload)
+                yield DeltaEvent(content=payload)
+                continue
+            head_parts.append(payload)
+            head_chars += len(payload)
+            head_text = "".join(head_parts)
+            if self._looks_like_tool_markup(head_text):
+                # 泄漏特征：停止透传，后续由主循环走收尾补救。
+                markup_detected = True
+                continue
+            if head_chars >= STREAM_HEAD_GUARD_CHARS:
+                head_flushed = True
+                transmitted_parts.append(head_text)
+                yield DeltaEvent(content=head_text)
+        if result is None:
+            # 上游流异常收尾未给聚合结果：按空内容交由主循环补救。
+            result = LlmChatResult(content=None, tool_calls=(), provider="", model="")
+        return result, "".join(transmitted_parts), markup_detected
+
+    def _done_event(self, answer: str, turn_state: TurnState) -> DoneEvent:
+        """构造终态 DoneEvent：附带整轮墙钟耗时（含模型思考与工具执行）。
+
+        创建日期：2026-06-13
+        author: claude
+        """
+
+        elapsed_ms: float | None = None
+        if turn_state.run_started_at > 0:
+            elapsed_ms = round((perf_counter() - turn_state.run_started_at) * 1000, 1)
+        return DoneEvent(
+            answer=answer,
+            charts=list(turn_state.charts),
+            tool_trace=[item.to_payload() for item in turn_state.tool_trace],
+            elapsed_ms=elapsed_ms,
+        )
+
     def _emit_prepared_answer(
         self,
         answer: str,
         turn_state: TurnState,
     ) -> Iterator[AgentEvent]:
-        """把迭代阶段已生成的回答按分片下发为 delta 事件并产出 DoneEvent。
-
-        内容已在 agent_iteration 阶段计量，本路径不再发起外部调用；
-        分片下发保持前端渐进渲染体验。
+        """把已生成的回答按分片下发为 delta 事件并产出 DoneEvent（收尾补救路径用）。
 
         创建日期：2026-06-12
         author: claude
@@ -259,11 +335,7 @@ class AgentEngine:
 
         for start in range(0, len(answer), PREPARED_ANSWER_CHUNK_CHARS):
             yield DeltaEvent(content=answer[start : start + PREPARED_ANSWER_CHUNK_CHARS])
-        yield DoneEvent(
-            answer=answer,
-            charts=list(turn_state.charts),
-            tool_trace=[item.to_payload() for item in turn_state.tool_trace],
-        )
+        yield self._done_event(answer, turn_state)
 
     def _finalize_answer(
         self,

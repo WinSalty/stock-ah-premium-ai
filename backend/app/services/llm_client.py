@@ -422,6 +422,164 @@ class LlmClient:
             model=endpoint.model,
         )
 
+    def stream_chat_with_tools(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
+        model: str | None = None,
+        trace: LlmCallTrace | None = None,
+        tool_choice: str = "auto",
+    ) -> Iterator[tuple[str, Any]]:
+        """带工具目录的流式调用：产出 ("delta", 文本增量) 事件，结束时产出
+        ("result", LlmChatResult)（含聚合后的 tool_calls）。
+
+        Agent 引擎流式迭代用（2026-06-13）：模型直接作答时正文增量实时透传
+        实现真流式；决定调工具时 tool_calls 以增量分片返回，本方法按 OpenAI
+        协议聚合（index 定位 + arguments 拼接），引擎拿到完整结果后执行工具。
+        与其余调用入口共享端点 fallback、日限额与指标三件套。
+
+        创建日期：2026-06-13
+        author: claude
+        """
+
+        endpoint = self.model_endpoint(model)
+        if not endpoint.api_key:
+            raise ValueError(f"{endpoint.provider} LLM 未配置 API Key")
+        try:
+            yield from self._stream_tools_once(endpoint, messages, tools, trace, tool_choice)
+        except httpx.HTTPError as exc:
+            fallback_endpoint = self.fallback_endpoint(endpoint, exc)
+            if fallback_endpoint is None:
+                raise
+            # 与既有流式口径一致：首包后失败重试备用端点可能造成少量重复增量，
+            # 由引擎的 done 全量覆盖兜底（前端以 done.answer 为准）。
+            logger.error(
+                "%s 工具流式 API 临时不可用，自动切换到 %s question_id=%s phase=%s",
+                endpoint.provider,
+                fallback_endpoint.provider,
+                self._trace_values(trace)[0],
+                self._trace_values(trace)[1],
+                exc_info=True,
+            )
+            yield from self._stream_tools_once(
+                fallback_endpoint, messages, tools, trace, tool_choice
+            )
+
+    def _stream_tools_once(
+        self,
+        endpoint: LlmEndpoint,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None,
+        trace: LlmCallTrace | None,
+        tool_choice: str,
+    ) -> Iterator[tuple[str, Any]]:
+        """按指定端点发起一次带工具的流式调用并聚合 tool_calls，不在本层重试。
+
+        创建日期：2026-06-13
+        author: claude
+        """
+
+        self.enforce_daily_call_limit(endpoint, trace)
+        url = f"{endpoint.base_url.rstrip('/')}/chat/completions"
+        headers = {"Authorization": f"Bearer {endpoint.api_key}"}
+        payload: dict[str, Any] = {
+            "model": endpoint.model,
+            "messages": messages,
+            "temperature": 0.1,
+            "stream": True,
+        }
+        if tools:
+            payload["tools"] = tools
+            payload["tool_choice"] = tool_choice
+        request_payload_json = self._metric_request_payload_json(payload)
+        started_at = perf_counter()
+        first_chunk_at: float | None = None
+        chunk_count = 0
+        char_count = 0
+        content_parts: list[str] = []
+        # tool_calls 增量聚合：OpenAI 协议按 index 定位条目，arguments 分片拼接。
+        pending_calls: dict[int, dict[str, Any]] = {}
+        with httpx.Client(timeout=LLM_STREAM_TIMEOUT_SECONDS) as client:
+            with client.stream("POST", url, headers=headers, json=payload) as response:
+                self._raise_for_status(response, endpoint.provider)
+                for line in response.iter_lines():
+                    if not line.startswith("data:"):
+                        continue
+                    data = line.removeprefix("data:").strip()
+                    if data == "[DONE]":
+                        break
+                    chunk = json.loads(data)
+                    choices = chunk.get("choices") or []
+                    if not choices:
+                        continue
+                    delta = choices[0].get("delta", {})
+                    content = delta.get("content")
+                    if content:
+                        if first_chunk_at is None:
+                            first_chunk_at = perf_counter()
+                            self.log_first_chunk(
+                                endpoint, trace, started_at, request_payload_json
+                            )
+                        chunk_count += 1
+                        char_count += len(content)
+                        content_parts.append(content)
+                        yield ("delta", content)
+                    for raw_call in delta.get("tool_calls") or []:
+                        if first_chunk_at is None:
+                            # 首个工具调用分片同样视为首包（衡量模型首响应延迟）。
+                            first_chunk_at = perf_counter()
+                            self.log_first_chunk(
+                                endpoint, trace, started_at, request_payload_json
+                            )
+                        if not pending_calls:
+                            # 即时告知消费方进入工具模式：引擎据此停止向前端透传
+                            # 后续 content（罕见的 content 与 tool_calls 交错场景）。
+                            yield ("tool_call", None)
+                        index = int(raw_call.get("index") or 0)
+                        entry = pending_calls.setdefault(
+                            index, {"id": None, "name": "", "arguments": []}
+                        )
+                        if raw_call.get("id"):
+                            entry["id"] = raw_call["id"]
+                        function = raw_call.get("function") or {}
+                        if function.get("name"):
+                            entry["name"] += function["name"]
+                        if function.get("arguments"):
+                            entry["arguments"].append(function["arguments"])
+        tool_calls = tuple(
+            LlmToolCallRequest(
+                call_id=str(entry["id"] or f"call_{index}"),
+                name=str(entry["name"]),
+                arguments_json="".join(entry["arguments"]) or "{}",
+            )
+            for index, entry in sorted(pending_calls.items())
+        )
+        content_text = "".join(content_parts)
+        # 指标的响应内容：有正文记正文，纯工具调用记调用清单（与非流式口径一致）。
+        metric_content = content_text or json.dumps(
+            [{"tool": call.name, "arguments": call.arguments_json} for call in tool_calls],
+            ensure_ascii=False,
+        )
+        self.log_stream_done(
+            endpoint,
+            trace,
+            started_at,
+            first_chunk_at,
+            chunk_count,
+            char_count,
+            request_payload_json,
+            metric_content,
+        )
+        yield (
+            "result",
+            LlmChatResult(
+                content=content_text or None,
+                tool_calls=tool_calls,
+                provider=endpoint.provider,
+                model=endpoint.model,
+            ),
+        )
+
     def chat_completion_stream_messages(
         self,
         messages: list[dict[str, Any]],

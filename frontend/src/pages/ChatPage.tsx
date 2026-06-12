@@ -52,6 +52,8 @@ interface ChatTurn {
   activeTool?: { tool: string; summary: string };
   /** 本轮登记的图表 spec（含后端写入的 chart_id）：正文按 {{chart:id}} 占位符配对渲染 ChatChart。 */
   charts?: ChartSpec[];
+  /** 整轮墙钟耗时毫秒数（done 事件下发，含模型思考；历史回放无该值时不展示合计）。 */
+  totalElapsedMs?: number | null;
 }
 
 interface ChatPageProps {
@@ -118,11 +120,15 @@ function randomPresetQuestions(previous: string[] = []) {
 }
 
 /**
- * 把毫秒耗时格式化为秒级展示（如 412.5 -> "0.4s"），用于工具步骤与合计耗时。
+ * 把毫秒耗时格式化为秒级展示（如 412.5 -> "0.4s"），用于工具步骤与整轮耗时。
+ * 本地查询常在毫秒级，四舍五入为 "0.0s" 观感像统计错误，统一显示 "<0.1s"。
  * 创建日期：2026-06-12
  * author: sunshengxian
  */
 function formatElapsedSeconds(elapsedMs: number) {
+  if (elapsedMs > 0 && elapsedMs < 100) {
+    return '<0.1s';
+  }
   return `${(elapsedMs / 1000).toFixed(1)}s`;
 }
 
@@ -198,7 +204,12 @@ function renderToolTimeline(turn: ChatTurn) {
   if (!turn.toolTrace.length) {
     return null;
   }
-  const totalElapsed = turn.toolTrace.reduce((sum, step) => sum + (step.elapsed_ms || 0), 0);
+  // 合计口径（试用反馈修正）：用 done 事件下发的整轮墙钟耗时（含模型思考），
+  // 而非仅工具执行求和——后者会把一轮 60s 的对话显示成 1.1s，严重误导。
+  // 历史回放没有墙钟值时不显示合计，只显示步数（每步耗时仍在明细中可见）。
+  const totalLabel = turn.totalElapsedMs
+    ? `（总耗时 ${formatElapsedSeconds(turn.totalElapsedMs)}，含模型分析）`
+    : '';
   return (
     <Collapse
       ghost
@@ -207,7 +218,7 @@ function renderToolTimeline(turn: ChatTurn) {
       items={[
         {
           key: 'trace',
-          label: `本轮执行 ${turn.toolTrace.length} 步（耗时合计 ${formatElapsedSeconds(totalElapsed)}）`,
+          label: `本轮执行 ${turn.toolTrace.length} 步${totalLabel}`,
           children: renderToolSteps(turn.toolTrace)
         }
       ]}
@@ -641,6 +652,8 @@ function ChatPage({ currentUser }: ChatPageProps) {
                       // 流式过程累积值；缺省时保留已累积的本地数据兜底。
                       toolTrace: event.tool_trace?.length ? event.tool_trace : item.toolTrace,
                       charts: event.charts?.length ? event.charts : item.charts,
+                      // 整轮墙钟耗时（含模型思考）：折叠摘要展示真实等待时长。
+                      totalElapsedMs: event.elapsed_ms ?? null,
                       response: {
                         message_id: event.message_id,
                         answer: event.answer || item.response?.answer || ''

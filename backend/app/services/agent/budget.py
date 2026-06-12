@@ -108,6 +108,8 @@ class TurnState:
     user_name: str | None = None
     # 日限额豁免（admin 账户）：路由层按用户角色注入，随 trace 透传给 llm_client。
     llm_limit_exempt: bool = False
+    # 整轮起始时刻（perf_counter）：done 事件计算整轮墙钟耗时用（含模型思考）。
+    run_started_at: float = 0.0
     # 配额组 -> 已用次数
     tool_call_counts: dict[str, int] = field(default_factory=dict)
     # 本轮已登记图表 spec 列表（chart_id -> spec 字典，保序）

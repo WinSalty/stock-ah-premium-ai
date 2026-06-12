@@ -147,6 +147,35 @@ class FakeLlmClient:
         )
         return iter(self.chunks)
 
+    def stream_chat_with_tools(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
+        model: str | None = None,
+        **kwargs: Any,
+    ):
+        """从 results 队列合成工具流事件：与真实客户端协议一致。
+
+        content 整段作为单个 delta 下发（测试不关心分片粒度），
+        tool_calls 结果先给 tool_call 模式信号再给聚合结果；
+        入参快照仍记入 chat_calls，保持既有用例的下标断言不变。
+
+        创建日期：2026-06-13
+        author: claude
+        """
+
+        self.chat_calls.append(
+            {"messages": [dict(item) for item in messages], "tools": tools, "model": model}
+        )
+        result = self.results.pop(0)
+        if isinstance(result, Exception):
+            raise result
+        if result.tool_calls:
+            yield ("tool_call", None)
+        elif result.content:
+            yield ("delta", result.content)
+        yield ("result", result)
+
 
 def _fake_tool(name: str = "fake_tool", handler: Any = None) -> ToolSpec:
     """构造最小可执行的 fake 工具规格，handler 缺省返回成功结果。
@@ -216,8 +245,11 @@ def test_engine_answers_directly_without_tool_calls(monkeypatch) -> None:
     assert len(fake_client.stream_calls) == 0
 
 
-def test_engine_chunks_prepared_answer_into_deltas(monkeypatch) -> None:
-    """确认复用迭代内容时按固定分片下发 delta，保持前端渐进渲染。
+def test_engine_streams_deltas_reassemble_to_full_answer(monkeypatch) -> None:
+    """确认流式增量拼接与 done 全量一致，且 done 携带整轮墙钟耗时。
+
+    真流式（2026-06-13）下分片粒度来自上游模型流，断言只锁
+    "增量重组 == done.answer == 迭代内容"的一致性口径。
 
     创建日期：2026-06-12
     author: claude
@@ -230,10 +262,11 @@ def test_engine_chunks_prepared_answer_into_deltas(monkeypatch) -> None:
     events = list(engine.run("长回答"))
 
     deltas = [event for event in events if event.type == "delta"]
-    # 100 字按 48 字分片 → 3 个 delta（48 + 48 + 4），拼接还原全文。
-    assert len(deltas) == 3
     assert "".join(delta.content for delta in deltas) == long_answer
-    assert events[-1].answer == long_answer
+    done = events[-1]
+    assert done.answer == long_answer
+    # 整轮墙钟耗时随 done 下发（试用反馈：仅工具求和的"合计"严重低估真实等待）。
+    assert done.elapsed_ms is not None and done.elapsed_ms >= 0
 
 
 def test_engine_executes_single_tool_call_then_answers(monkeypatch) -> None:
