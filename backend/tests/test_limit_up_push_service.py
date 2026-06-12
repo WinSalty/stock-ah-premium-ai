@@ -1672,3 +1672,269 @@ def test_first_board_focus_stage_falls_back_on_llm_error(monkeypatch) -> None:
     assert payload["error_fallback"] is True
     assert "首板重点个股观察" in payload["html_fragment"]
     assert any(item["status"] == "FAILED_FALLBACK" for item in stage_quality)
+
+def _make_advice_service(db) -> LimitUpPushService:
+    """构造建议链路测试用服务实例（统一关闭密钥文件读取）。
+
+    创建日期：2026-06-12
+    author: claude
+    """
+
+    return LimitUpPushService(
+        db,
+        settings=Settings(
+            llm_api_key="key",
+            llm_api_key_file=None,
+            tushare_token="token",
+            tushare_token_file=None,
+        ),
+        tushare_client=FakeTushareClient({}),
+        notification_service=FakeNotificationService(),
+    )
+
+
+def _make_ready_analysis(db, service, with_pipeline: bool = True):
+    """构造一份 READY 报告：with_pipeline 控制是否带结构化阶段结果（旧报告兜底场景）。
+
+    创建日期：2026-06-12
+    author: claude
+    """
+
+    context: dict[str, object] = {"trade_date": "2026-05-08", "market_context": {"themes": []}}
+    if with_pipeline:
+        context["pipeline"] = {
+            "selected_first_board_stocks": [
+                {"ts_code": "000010.SZ", "name": "首板股", "status": "首板", "theme": "AI"}
+            ],
+            "selected_chain_stocks": [
+                {"ts_code": "000001.SZ", "name": "二连股", "status": "2连板", "theme": "AI"}
+            ],
+            "selected_high_board_stocks": [],
+            "stock_supplements": {},
+            "stage_quality": [],
+            "first_board": {"theme_candidates": []},
+            "first_board_focus_html": "<h3>首板重点</h3>",
+            "chain_focus_html": "<h3>两连三连</h3>",
+            "high_board_focus_html": "<h3>高连板</h3>",
+        }
+    analysis = LimitUpAnalysisCache(
+        trade_date=date(2026, 5, 8),
+        model=service.settings.limit_up_push_model,
+        prompt_version=service.settings.limit_up_push_prompt_version,
+        data_snapshot_hash="hash-advice",
+        status="READY",
+        title="2026-05-08 A股涨停打板复盘",
+        content_html="<div><h2>整报</h2></div>",
+        content_markdown="```html\n<h2>整报正文</h2>\n```",
+        context_json=service._json_dumps(context),
+    )
+    db.add(analysis)
+    db.commit()
+    db.refresh(analysis)
+    return analysis
+
+
+def test_ensure_advice_generates_and_persists(monkeypatch) -> None:
+    """确认建议生成成功后五列落库且使用结构化材料与独立 phase。
+
+    创建日期：2026-06-12
+    author: claude
+    """
+
+    db = make_db()
+    service = _make_advice_service(db)
+    analysis = _make_ready_analysis(db, service)
+    captured: dict[str, object] = {}
+
+    def fake_chat(
+        prompt: str, system_prompt: str, json_mode: bool = False, phase: str = "limit_up_analysis"
+    ) -> str:
+        captured["phase"] = phase
+        captured["prompt"] = prompt
+        return "<h2>风险提示</h2><p>建议正文</p>"
+
+    monkeypatch.setattr(service, "_chat_completion_with_reasoning", fake_chat)
+
+    result = service.ensure_advice_for_analysis(analysis)
+
+    assert result.advice_status == "READY"
+    assert result.advice_html is not None and result.advice_html.startswith("<div")
+    assert result.advice_markdown == "<h2>风险提示</h2><p>建议正文</p>"
+    assert result.advice_generated_at is not None
+    assert result.advice_error is None
+    # 报告本体状态不受建议生成影响。
+    assert result.status == "READY"
+    assert captured["phase"] == "limit_up_advice"
+    # 结构化路径的提示词应携带首板入选材料。
+    assert "selected_first_board_stocks" in str(captured["prompt"])
+
+
+def test_ensure_advice_failure_marks_failed_and_lights_fallback_flag(monkeypatch) -> None:
+    """确认建议失败置 FAILED、报告保持 READY，且列表降级标识点亮。
+
+    创建日期：2026-06-12
+    author: claude
+    """
+
+    db = make_db()
+    service = _make_advice_service(db)
+    analysis = _make_ready_analysis(db, service)
+
+    def boom(
+        prompt: str, system_prompt: str, json_mode: bool = False, phase: str = "limit_up_analysis"
+    ) -> str:
+        raise RuntimeError("advice llm down")
+
+    monkeypatch.setattr(service, "_chat_completion_with_reasoning", boom)
+
+    result = service.ensure_advice_for_analysis(analysis)
+
+    assert result.advice_status == "FAILED"
+    assert "advice llm down" in (result.advice_error or "")
+    assert result.status == "READY"
+    item = service._report_list_item(result)
+    assert item.has_stage_fallback is True
+
+
+def test_ensure_advice_is_idempotent_when_ready(monkeypatch) -> None:
+    """确认建议已 READY 时不重调 LLM。
+
+    创建日期：2026-06-12
+    author: claude
+    """
+
+    db = make_db()
+    service = _make_advice_service(db)
+    analysis = _make_ready_analysis(db, service)
+    analysis.advice_status = "READY"
+    analysis.advice_html = "<div>已有建议</div>"
+    db.commit()
+    calls = {"count": 0}
+
+    def fake_chat(*args: object, **kwargs: object) -> str:
+        calls["count"] += 1
+        return "<p>x</p>"
+
+    monkeypatch.setattr(service, "_chat_completion_with_reasoning", fake_chat)
+
+    result = service.ensure_advice_for_analysis(analysis)
+
+    assert calls["count"] == 0
+    assert result.advice_html == "<div>已有建议</div>"
+
+
+def test_ensure_advice_respects_generating_lock_and_stale_takeover(monkeypatch) -> None:
+    """确认未僵死 GENERATING 直接返回，僵死后允许接管重跑。
+
+    创建日期：2026-06-12
+    author: claude
+    """
+
+    db = make_db()
+    service = _make_advice_service(db)
+    analysis = _make_ready_analysis(db, service)
+    analysis.advice_status = "GENERATING"
+    analysis.updated_at = datetime(2026, 5, 9, 0, 30)
+    db.commit()
+    calls = {"count": 0}
+
+    def fake_chat(
+        prompt: str, system_prompt: str, json_mode: bool = False, phase: str = "limit_up_analysis"
+    ) -> str:
+        calls["count"] += 1
+        return "<p>建议</p>"
+
+    monkeypatch.setattr(service, "_chat_completion_with_reasoning", fake_chat)
+    # 未超过 30 分钟阈值：他方持锁，不接管。
+    monkeypatch.setattr(service, "_now_naive", lambda: datetime(2026, 5, 9, 0, 40))
+    result = service.ensure_advice_for_analysis(analysis)
+    assert calls["count"] == 0
+    assert result.advice_status == "GENERATING"
+
+    # 超过阈值视为僵死：接管重跑并生成成功。
+    monkeypatch.setattr(service, "_now_naive", lambda: datetime(2026, 5, 9, 1, 30))
+    result = service.ensure_advice_for_analysis(analysis)
+    assert calls["count"] == 1
+    assert result.advice_status == "READY"
+
+
+def test_ensure_advice_failed_cooldown_blocks_auto_retry(monkeypatch) -> None:
+    """确认 FAILED 冷却窗口内不自动重试，窗口过后允许重试，force 绕过冷却。
+
+    创建日期：2026-06-12
+    author: claude
+    """
+
+    db = make_db()
+    service = _make_advice_service(db)
+    analysis = _make_ready_analysis(db, service)
+    analysis.advice_status = "FAILED"
+    analysis.advice_error = "first failure"
+    analysis.updated_at = datetime(2026, 5, 9, 0, 30)
+    db.commit()
+    calls = {"count": 0}
+
+    def fake_chat(
+        prompt: str, system_prompt: str, json_mode: bool = False, phase: str = "limit_up_analysis"
+    ) -> str:
+        calls["count"] += 1
+        return "<p>建议</p>"
+
+    monkeypatch.setattr(service, "_chat_completion_with_reasoning", fake_chat)
+    # 冷却窗口内：不重试。
+    monkeypatch.setattr(service, "_now_naive", lambda: datetime(2026, 5, 9, 0, 45))
+    result = service.ensure_advice_for_analysis(analysis)
+    assert calls["count"] == 0
+    assert result.advice_status == "FAILED"
+
+    # force 绕过冷却（管理员重生成端点语义）。
+    result = service.ensure_advice_for_analysis(analysis, force=True)
+    assert calls["count"] == 1
+    assert result.advice_status == "READY"
+
+
+def test_ensure_advice_old_report_uses_markdown_fallback(monkeypatch) -> None:
+    """确认无 pipeline 的旧报告走整报正文兜底材料（剥围栏）。
+
+    创建日期：2026-06-12
+    author: claude
+    """
+
+    db = make_db()
+    service = _make_advice_service(db)
+    analysis = _make_ready_analysis(db, service, with_pipeline=False)
+    captured: dict[str, object] = {}
+
+    def fake_chat(
+        prompt: str, system_prompt: str, json_mode: bool = False, phase: str = "limit_up_analysis"
+    ) -> str:
+        captured["prompt"] = prompt
+        return "<h2>风险提示</h2><p>建议</p>"
+
+    monkeypatch.setattr(service, "_chat_completion_with_reasoning", fake_chat)
+
+    result = service.ensure_advice_for_analysis(analysis)
+
+    assert result.advice_status == "READY"
+    prompt_text = str(captured["prompt"])
+    # 兜底路径提示词应声明材料为整报原文，并携带剥掉 ``` 围栏后的正文。
+    assert "完整打板复盘 HTML 报告原文" in prompt_text
+    assert "<h2>整报正文</h2>" in prompt_text
+    assert "```" not in prompt_text.split("输入材料：")[1]
+
+
+def test_stage_prompt_version_mapping_keeps_existing_suffix() -> None:
+    """确认版本映射重构后既有阶段后缀保持 v3，建议阶段独立起版。
+
+    创建日期：2026-06-12
+    author: claude
+    """
+
+    db = make_db()
+    service = _make_advice_service(db)
+
+    assert service._stage_prompt_version("CHAIN_FOCUS").endswith(":chain_focus:v3")
+    assert service._stage_prompt_version("FINAL_REPORT").endswith(":final_report:v3")
+    assert service._stage_prompt_version("INVESTMENT_ADVICE").endswith(
+        ":investment_advice:advice-v1"
+    )

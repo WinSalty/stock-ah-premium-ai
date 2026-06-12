@@ -15,7 +15,7 @@ from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 import httpx
-from sqlalchemy import desc, or_, select
+from sqlalchemy import desc, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -65,7 +65,18 @@ DELIVERY_KIND_SATURDAY_REPLAY = "SATURDAY_REPLAY"
 DELIVERY_KIND_SUNDAY_REPLAY = "SUNDAY_REPLAY"
 DELIVERY_KIND_MANUAL = "MANUAL"
 LIMIT_UP_LLM_PHASE = "limit_up_analysis"
+# 建议阶段独立指标 phase：与 limit_up_analysis 同为直连调用、不计问答日限额，
+# 单列 phase 便于在 LLM 耗时页区分报告生成与建议生成的成功率/耗时。
+LIMIT_UP_ADVICE_LLM_PHASE = "limit_up_advice"
 LIMIT_UP_LLM_TITLE = "打板数据推送"
+# 投资建议状态机：附加产物状态，与报告本体 status 解耦，建议失败不影响报告 READY。
+ADVICE_STATUS_PENDING = "PENDING"
+ADVICE_STATUS_GENERATING = "GENERATING"
+ADVICE_STATUS_READY = "READY"
+ADVICE_STATUS_FAILED = "FAILED"
+# 旧报告（多阶段改造前、无 pipeline 结构化结果）兜底材料上限：
+# content_markdown 实为整篇 HTML 报告原文，体积远大于结构化输入，必须截断控制 token。
+LIMIT_UP_ADVICE_FALLBACK_MATERIAL_MAX_CHARS = 12000
 KPL_REQUIRED_API = "kpl_list"
 KPL_TAG_LIMIT_UP = "涨停"
 KPL_TAG_BROKEN = "炸板"
@@ -90,6 +101,9 @@ LIMIT_UP_STAGE_HIGH_BOARD_SELECTION = "HIGH_BOARD_SELECTION"
 LIMIT_UP_STAGE_CHAIN_FOCUS = "CHAIN_FOCUS"
 LIMIT_UP_STAGE_HIGH_BOARD_FOCUS = "HIGH_BOARD_FOCUS"
 LIMIT_UP_STAGE_FINAL_REPORT = "FINAL_REPORT"
+# 投资建议阶段：报告 READY 后的附加阶段，基于 pipeline 结构化结果生成结论化建议；
+# 失败不影响报告本体，由推送/发布层按降级开关处理。
+LIMIT_UP_STAGE_INVESTMENT_ADVICE = "INVESTMENT_ADVICE"
 LIMIT_UP_SUPPLEMENT_STATUS_READY = "READY"
 LIMIT_UP_SUPPLEMENT_STATUS_PARTIAL = "PARTIAL"
 LIMIT_UP_SUPPLEMENT_STATUS_FAILED = "FAILED"
@@ -473,6 +487,286 @@ class LimitUpPushService:
         return analysis, self.push_report(
             analysis.id, kind, self._weekend_replay_scheduled_at(today)
         )
+
+    def ensure_advice_for_analysis(
+        self,
+        analysis: LimitUpAnalysisCache,
+        force: bool = False,
+    ) -> LimitUpAnalysisCache:
+        """为 READY 报告生成或回填投资建议（附加产物，失败不影响报告本体）。
+
+        幂等与并发口径：
+        - advice READY 直接返回，不重调 LLM；
+        - 生成前以条件更新抢占 GENERATING 锁——早盘轮询与雪球调度会并发进入本方法，
+          阶段缓存唯一键只保证落库幂等，拦不住并发窗口内的重复 LLM 调用；
+        - 他方持有未僵死的 GENERATING 时直接返回；僵死（超过 stale 阈值）允许接管重跑；
+        - FAILED 在冷却窗口内不自动重试，防止雪球每分钟调度放大为全天重试；
+          force=True（管理员重生成端点）绕过 READY 幂等与冷却。
+
+        创建日期：2026-06-12
+        author: claude
+        """
+
+        if analysis.status != ANALYSIS_STATUS_READY or not analysis.content_html:
+            # 建议依附于已完成报告；未 READY 时不生成，由报告链路自身重试。
+            return analysis
+        if not force:
+            if analysis.advice_status == ADVICE_STATUS_READY and analysis.advice_html:
+                return analysis
+            if analysis.advice_status == ADVICE_STATUS_GENERATING and not self._is_advice_stale(
+                analysis
+            ):
+                return analysis
+            if analysis.advice_status == ADVICE_STATUS_FAILED and not self._advice_cooldown_passed(
+                analysis
+            ):
+                return analysis
+        if not self._claim_advice_generation(analysis):
+            # 抢占失败说明并发方已接管，本方刷新后直接返回，避免双倍 LLM 调用。
+            return analysis
+        advice_input, from_report_fallback = self._build_advice_input(analysis)
+        stage_quality: list[dict[str, Any]] = []
+        try:
+            self._active_limit_up_analysis_id = analysis.id
+            payload = self._run_text_stage(
+                LIMIT_UP_STAGE_INVESTMENT_ADVICE,
+                advice_input,
+                self._stage_system_prompt("短线投资建议顾问"),
+                self._investment_advice_prompt(advice_input, from_report_fallback),
+                stage_quality,
+                llm_phase=LIMIT_UP_ADVICE_LLM_PHASE,
+            )
+            raw_advice = str(payload.get("content") or payload.get("html_fragment") or "")
+            if not raw_advice.strip():
+                raise LimitUpPushError("投资建议输出为空")
+        except Exception as exc:
+            # 建议失败只标记建议态：报告保持 READY，推送层按降级开关决定推整报或跳过；
+            # 质量项写入 pipeline.stage_quality 以点亮列表页 has_stage_fallback 标识。
+            analysis.advice_status = ADVICE_STATUS_FAILED
+            analysis.advice_error = str(exc)[:1000]
+            analysis.updated_at = self._now_naive()
+            self._append_advice_failure_quality(analysis, str(exc)[:300])
+            self.db.commit()
+            logger.error(
+                "打板投资建议生成失败 analysis_id=%s trade_date=%s",
+                analysis.id,
+                analysis.trade_date,
+                exc_info=True,
+            )
+            return analysis
+        finally:
+            self._active_limit_up_analysis_id = None
+        analysis.advice_html = self._normalize_report_html(raw_advice)
+        analysis.advice_markdown = raw_advice
+        analysis.advice_status = ADVICE_STATUS_READY
+        analysis.advice_generated_at = self._now_naive()
+        analysis.advice_error = None
+        analysis.updated_at = self._now_naive()
+        self.db.commit()
+        self.db.refresh(analysis)
+        return analysis
+
+    def _claim_advice_generation(self, analysis: LimitUpAnalysisCache) -> bool:
+        """以数据库条件更新抢占建议生成权（CAS 语义）。
+
+        以当前内存中的 advice_status 作为比较值：并发方若已先行改写该状态，
+        本次 UPDATE 影响行数为 0，视为抢占失败。抢占成功后立即 commit，
+        让其它入口能读到 GENERATING 并退出。
+
+        创建日期：2026-06-12
+        author: claude
+        """
+
+        current_status = analysis.advice_status or ADVICE_STATUS_PENDING
+        result = self.db.execute(
+            update(LimitUpAnalysisCache)
+            .where(
+                LimitUpAnalysisCache.id == analysis.id,
+                LimitUpAnalysisCache.advice_status == current_status,
+            )
+            .values(advice_status=ADVICE_STATUS_GENERATING, updated_at=self._now_naive())
+        )
+        self.db.commit()
+        self.db.refresh(analysis)
+        return bool(result.rowcount)
+
+    def _is_advice_stale(self, analysis: LimitUpAnalysisCache) -> bool:
+        """判断建议 GENERATING 是否僵死（进程崩溃等导致锁未释放）。
+
+        与报告僵死判定同口径：比较应用写入的 UTC-naive updated_at，
+        阈值复用 limit_up_push_generating_stale_minutes，避免依赖数据库时区。
+
+        创建日期：2026-06-12
+        author: claude
+        """
+
+        threshold_minutes = max(1, self.settings.limit_up_push_generating_stale_minutes)
+        updated_at = analysis.updated_at or analysis.created_at
+        if updated_at is None:
+            return True
+        return self._now_naive() - updated_at > timedelta(minutes=threshold_minutes)
+
+    def _advice_cooldown_passed(self, analysis: LimitUpAnalysisCache) -> bool:
+        """判断建议 FAILED 后冷却窗口是否已过（窗口内不自动重试）。
+
+        早盘轮询窗口仅 8-9 点共 12 次，叠加冷却后当日自动重试次数有界；
+        管理员强制重生成（force=True）不经过本判断。
+
+        创建日期：2026-06-12
+        author: claude
+        """
+
+        threshold_minutes = max(1, self.settings.limit_up_push_generating_stale_minutes)
+        updated_at = analysis.updated_at or analysis.created_at
+        if updated_at is None:
+            return True
+        return self._now_naive() - updated_at > timedelta(minutes=threshold_minutes)
+
+    def _build_advice_input(
+        self, analysis: LimitUpAnalysisCache
+    ) -> tuple[dict[str, Any], bool]:
+        """组装建议阶段输入材料。
+
+        优先使用 pipeline 结构化结果（与最终报告同源，含首板/两三连/高连板入选与筹码摘要）；
+        旧报告（多阶段改造前生成、无 pipeline）退化为整报正文提取口径，
+        返回值第二项标记是否走了兜底路径，供提示词切换指令段。
+
+        创建日期：2026-06-12
+        author: claude
+        """
+
+        context = self._json_loads_dict(analysis.context_json) or {}
+        pipeline = context.get("pipeline") if isinstance(context, dict) else None
+        pipeline = pipeline if isinstance(pipeline, dict) else {}
+        has_structured = bool(
+            pipeline.get("selected_chain_stocks")
+            or pipeline.get("selected_high_board_stocks")
+            or pipeline.get("selected_first_board_stocks")
+        )
+        if has_structured:
+            supplements = (
+                pipeline.get("stock_supplements")
+                if isinstance(pipeline.get("stock_supplements"), dict)
+                else {}
+            )
+            return (
+                {
+                    "trade_date": analysis.trade_date.isoformat(),
+                    "market_context": context.get("market_context") or {},
+                    "first_board": pipeline.get("first_board") or {},
+                    "selected_first_board_stocks": self._stocks_for_final_prompt(
+                        list(pipeline.get("selected_first_board_stocks") or []), supplements
+                    ),
+                    "selected_chain_stocks": self._stocks_for_final_prompt(
+                        list(pipeline.get("selected_chain_stocks") or []), supplements
+                    ),
+                    "selected_high_board_stocks": self._stocks_for_final_prompt(
+                        list(pipeline.get("selected_high_board_stocks") or []), supplements
+                    ),
+                    "first_board_focus_html": pipeline.get("first_board_focus_html"),
+                    "chain_focus_html": pipeline.get("chain_focus_html"),
+                    "high_board_focus_html": pipeline.get("high_board_focus_html"),
+                },
+                False,
+            )
+        # 兜底材料：content_markdown 实为 FINAL_REPORT 阶段原始输出（整篇 HTML 报告），
+        # 先剥代码块围栏再截断，控制 token 体积。
+        raw_report = str(analysis.content_markdown or analysis.content_html or "")
+        stripped = raw_report.strip()
+        stripped = re.sub(r"^```(?:html)?\s*", "", stripped)
+        stripped = re.sub(r"\s*```$", "", stripped)
+        return (
+            {
+                "trade_date": analysis.trade_date.isoformat(),
+                "report_html": stripped[:LIMIT_UP_ADVICE_FALLBACK_MATERIAL_MAX_CHARS],
+            },
+            True,
+        )
+
+    def _investment_advice_prompt(
+        self, advice_input: dict[str, Any], from_report_fallback: bool
+    ) -> str:
+        """生成投资建议阶段提示词。
+
+        内容口径对齐问答"风险高收益型推荐"：风险段前置、候选分层、
+        每只标的给晋级逻辑与竞价触发/失败条件、禁止模板化免责句但必须有真实风险提示段、
+        不暴露底层数据来源；载体按推送渠道约束直接产 HTML。
+
+        创建日期：2026-06-12
+        author: claude
+        """
+
+        if from_report_fallback:
+            material_note = (
+                "输入材料是一篇完整打板复盘 HTML 报告原文，"
+                "请从报告正文提取观察标的、晋级理由、触发条件和风险后再给结论。"
+            )
+        else:
+            material_note = (
+                "输入材料是打板分析的结构化阶段结果："
+                "selected_first_board_stocks（首板精选）、selected_chain_stocks（两三连）、"
+                "selected_high_board_stocks（高连板）含入选评分与筹码摘要，"
+                "market_context.emotion_cycle 含情绪周期数值。"
+            )
+        return (
+            "请基于以下打板分析结果，输出一份次日可执行的高风险短线投资建议，"
+            "读者是接受高波动、高回撤的进取型投资者。" + material_note + "\n"
+            "结构硬约束（顺序固定）：\n"
+            "1. 风险提示段必须置于全文最前：给出当日情绪周期定位、整体仓位态度，"
+            "并明确提示高波动、高回撤与失败风险；"
+            "禁止输出\"不构成投资建议\"\"仅供参考\"等模板化免责句。\n"
+            "2. 核心结论：3 到 5 条要点，给出当日参与或观望的总判断。\n"
+            "3. 候选标的分层：按重点观察/谨慎观察/放弃观察分层，每只不超过 100 字，"
+            "必须含晋级逻辑、次日竞价触发条件（竞价弱于多少放弃、合理低吸区间、"
+            "过高开警惕点）、失败/止损条件和筹码压力提示；"
+            "首板候选单列小节，并明确提示首板次日溢价失败率高于连板接力，"
+            "参与方式与试错幅度须更克制；名单为空的小节保留并说明当日无候选。\n"
+            "4. 反证信号：明确什么情况下整套建议作废。\n"
+            "数据纪律：退潮期、分歧期默认下调所有接力评级，冰点期只输出观察清单不给参与建议；"
+            "精确数值必须来自输入材料，缺失标注不确定性，不编造；"
+            "不要提及 JSON、阶段、数据库、报告流水线等底层数据来源。\n"
+            "只输出纯 HTML 片段，使用 h2/h3、p、ul、ol、table、strong，"
+            "不要 Markdown 代码块，不要 html/body；总篇幅显著短于完整复盘报告，"
+            "适合微信单屏到三屏阅读。\n\n"
+            f"输入材料：\n{self._json_dumps(advice_input)}"
+        )
+
+    def _append_advice_failure_quality(
+        self, analysis: LimitUpAnalysisCache, message: str
+    ) -> None:
+        """把建议失败质量项写入 context_json.pipeline.stage_quality。
+
+        列表页降级标识 _has_stage_fallback 只读取 pipeline.stage_quality，
+        写入其它位置不会点亮；旧报告无 pipeline 时补建仅含 stage_quality 的空结构。
+
+        创建日期：2026-06-12
+        author: claude
+        """
+
+        context = self._json_loads_dict(analysis.context_json) or {}
+        pipeline = context.get("pipeline") if isinstance(context, dict) else None
+        if not isinstance(pipeline, dict):
+            pipeline = {}
+        stage_quality = pipeline.get("stage_quality")
+        if not isinstance(stage_quality, list):
+            stage_quality = []
+        stage_quality.append(
+            self._stage_quality_item(
+                LIMIT_UP_STAGE_INVESTMENT_ADVICE, "FAILED_FALLBACK", message
+            )
+        )
+        pipeline["stage_quality"] = stage_quality
+        context["pipeline"] = pipeline
+        analysis.context_json = self._json_dumps(context)
+
+    def _advice_title(self, trade_date: date) -> str:
+        """生成投资建议推送标题（与整报标题区分，明示高风险属性）。
+
+        创建日期：2026-06-12
+        author: claude
+        """
+
+        return f"{trade_date:%Y-%m-%d} 打板投资建议（高风险）"
 
     def list_reports(
         self,
@@ -1876,6 +2170,7 @@ class LimitUpPushService:
         system_prompt: str,
         user_prompt: str,
         stage_quality: list[dict[str, Any]],
+        llm_phase: str = LIMIT_UP_LLM_PHASE,
     ) -> dict[str, Any]:
         """执行 HTML 或自然语言输出阶段。
 
@@ -1888,7 +2183,9 @@ class LimitUpPushService:
             stage_quality.append(self._stage_quality_item(stage_key, "CACHE_HIT", "复用阶段缓存"))
             return cached
         try:
-            content = self._chat_completion_with_reasoning(user_prompt, system_prompt)
+            content = self._chat_completion_with_reasoning(
+                user_prompt, system_prompt, phase=llm_phase
+            )
         except Exception as exc:
             # 重点分析类文本阶段失败可降级为确定性观察表，报告仍能 READY；
             # FINAL_REPORT 等合成阶段失败必须抛出，让整份报告进入 FAILED 重试。
@@ -2685,6 +2982,12 @@ class LimitUpPushService:
 
         return {"stage_key": stage_key, "status": status, "message": message}
 
+    # 阶段版本后缀映射：仅调整单一阶段提示词时 bump 对应条目，不影响其余阶段缓存；
+    # 未列出的阶段回退统一后缀 v3，保证既有阶段版本串不因结构重构而隐性变化。
+    _STAGE_PROMPT_VERSION_SUFFIXES: dict[str, str] = {
+        LIMIT_UP_STAGE_INVESTMENT_ADVICE: "advice-v1",
+    }
+
     def _stage_prompt_version(self, stage_key: str) -> str:
         """生成阶段提示词版本。
 
@@ -2692,7 +2995,8 @@ class LimitUpPushService:
         author: sunshengxian
         """
 
-        return f"{self.settings.limit_up_push_final_prompt_version}:{stage_key.lower()}:v3"
+        suffix = self._STAGE_PROMPT_VERSION_SUFFIXES.get(stage_key, "v3")
+        return f"{self.settings.limit_up_push_final_prompt_version}:{stage_key.lower()}:{suffix}"
 
     def _context_trade_date(self, context: dict[str, Any]) -> date:
         """从任意阶段输入中解析报告交易日。
@@ -2721,7 +3025,11 @@ class LimitUpPushService:
 
 
     def _chat_completion_with_reasoning(
-        self, prompt: str, system_prompt: str, json_mode: bool = False
+        self,
+        prompt: str,
+        system_prompt: str,
+        json_mode: bool = False,
+        phase: str = LIMIT_UP_LLM_PHASE,
     ) -> str:
         # 打板报告使用独立配置模型，不影响项目当前默认问答模型；
         # reasoning_effort 随 payload 透传给兼容接口，便于 DeepSeek Pro 用更强推理预算生成复盘。
@@ -2774,9 +3082,12 @@ class LimitUpPushService:
                 request_payload_json,
                 self._truncate_llm_response(response_body_text),
                 str(exc)[:500],
+                phase=phase,
             )
             raise
-        self._record_llm_metric(question_id, True, started_at, request_payload_json, content, None)
+        self._record_llm_metric(
+            question_id, True, started_at, request_payload_json, content, None, phase=phase
+        )
         return str(content or "")
 
     def _record_llm_metric(
@@ -2787,13 +3098,15 @@ class LimitUpPushService:
         request_payload_json: str,
         response_content: str | None,
         error_message: str | None,
+        phase: str = LIMIT_UP_LLM_PHASE,
     ) -> None:
+        # phase 默认保持 limit_up_analysis 兼容既有阶段；建议阶段传 limit_up_advice 单列统计。
         metric = LlmCallMetric(
             question_id=question_id,
             conversation_title=LIMIT_UP_LLM_TITLE,
-            phase=LIMIT_UP_LLM_PHASE,
-            phase_label=phase_label(LIMIT_UP_LLM_PHASE),
-            phase_description=phase_description(LIMIT_UP_LLM_PHASE),
+            phase=phase,
+            phase_label=phase_label(phase),
+            phase_description=phase_description(phase),
             provider="DeepSeek",
             model=self.settings.limit_up_push_model,
             success=1 if success else 0,

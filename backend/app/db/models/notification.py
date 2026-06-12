@@ -143,6 +143,15 @@ class LimitUpAnalysisCache(TimestampMixin, Base):
     data_quality_json: Mapped[str | None] = mapped_column(Text().with_variant(LONGTEXT, "mysql"))
     error_message: Mapped[str | None] = mapped_column(Text)
     generated_at: Mapped[datetime | None] = mapped_column(DateTime)
+    # 投资建议附加产物列：建议失败不影响报告本体状态机；
+    # 存量行默认 PENDING，由推送/发布链路按需回填（ensure_advice_for_analysis）。
+    advice_status: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="PENDING", server_default="PENDING"
+    )
+    advice_html: Mapped[str | None] = mapped_column(Text().with_variant(LONGTEXT, "mysql"))
+    advice_markdown: Mapped[str | None] = mapped_column(Text().with_variant(LONGTEXT, "mysql"))
+    advice_generated_at: Mapped[datetime | None] = mapped_column(DateTime)
+    advice_error: Mapped[str | None] = mapped_column(Text)
 
 
 class LimitUpAnalysisStageCache(TimestampMixin, Base):

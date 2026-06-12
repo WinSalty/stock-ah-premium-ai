@@ -27,6 +27,7 @@ PHASE_LABELS: dict[str, str] = {
     "threshold_answer_stream_first_chunk": "阈值推荐首包",
     "threshold_answer_stream": "阈值推荐流式回答",
     "limit_up_analysis": "打板报告分析",
+    "limit_up_advice": "打板投资建议生成",
     "nine_turn_analysis": "神奇九转报告分析",
     "xueqiu_title": "雪球短标题",
     "xueqiu_html_convert": "雪球 HTML 转换",
@@ -90,6 +91,11 @@ PHASE_DESCRIPTIONS: dict[str, str] = {
         "AI 阈值推荐快路径的流式回答主体完成记录，不经过通用路由、补数和辅助视图查询。"
     ),
     "limit_up_analysis": "打板报告生成阶段，使用 KPL 与涨停专题数据生成完整 HTML 推送报告。",
+    # 建议阶段独立 phase（创建日期：2026-06-12，author: claude）：
+    # 与 limit_up_analysis 同为推送服务直连调用，不计入问答日限额。
+    "limit_up_advice": (
+        "打板投资建议生成阶段，基于报告流水线结构化结果生成风险前置的结论化投资建议。"
+    ),
     "nine_turn_analysis": "神奇九转报告生成阶段，使用 Tushare 九转指标生成完整 HTML 推送报告。",
     "xueqiu_title": "问答回答发布雪球前的短标题生成阶段，标题需满足雪球 50 字限制。",
     "xueqiu_html_convert": (
