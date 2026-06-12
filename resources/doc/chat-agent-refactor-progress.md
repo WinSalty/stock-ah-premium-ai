@@ -142,6 +142,12 @@
 - **耗时页追踪 ID 列**：头 6 尾 6 中间省略 + 等宽字体 + 悬停 Tooltip 全文 + 复制按钮保留。
 - 提示词版本 `agent-v2` → `agent-v3`。
 
+## 试用反馈修复·第四轮（2026-06-13，已提交未部署）
+
+- **回答被拦截成兜底文案（追踪 61a22784）**：深度对比分析下 8 次迭代全部用于工具调用（取数16/搜索8 的新额度放大了规划长度），迭代耗尽后的流式收尾不带 tools，模型继续输出 DSML 工具语法被防护拦截、无重试机会。修复：①`agent_max_iterations` 默认 8→16；②收尾路径弃用流式，改为非流式生成（新 phase `answer_finalize`，计入日限额）——下发前完整检测泄漏，泄漏时回填纠错指令重试一次，重试仍失败才兜底文案；生成内容经占位符净化后分片下发。
+- **HTTP 访问下复制按钮失效**：`navigator.clipboard` 仅在安全上下文（HTTPS/localhost）可用，IP 直连时为 undefined。新增 `utils/clipboard.ts` 统一封装（Clipboard API 优先，降级 textarea+execCommand），修复 LlmMetricsPage 追踪 ID 复制、SyncPage 错误详情复制、LimitUpPushPage 分享链接复制（2 处）共 4 个调用点；真实浏览器带点击手势验证降级路径可用。
+- 测试：329 passed（收尾路径 3 用例改写 + 新增泄漏重试用例）；前端 build 通过。**按用户要求本轮未部署服务器**，下次部署生效。
+
 ## 重构完成总结
 
 七个阶段（准备 + 阶段 0~5）全部交付：旧的固定流水线问答已彻底替换为 LLM 通过 function calling 自主编排工具的 Agent 引擎，新增联网搜索、Python 沙箱计算、受控图表三类能力，前端从假进度升级为真实执行时间线与内嵌图表。后端 294 passed + 1 skipped（macOS 平台跳过），前端 `npm run build` 通过，全程 `scripts/check.sh` 口径绿。旧链路删除为独立 commit，回滚 tag `pre-agent-refactor` 可用，DB 变更全为增列无损。金标集（58 用例）与跑批器就位，全量回归/基线跑批因真实 LLM 费用由使用者按需触发。

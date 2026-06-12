@@ -79,7 +79,7 @@ def test_agent_settings_have_safe_defaults() -> None:
     settings = _settings_without_local_files()
 
     assert settings.agent_model == "deepseek-v4-pro"
-    assert settings.agent_max_iterations == 8
+    assert settings.agent_max_iterations == 16
     assert settings.agent_context_budget_chars == 48000
     assert settings.chat_daily_round_limit == 50
     assert settings.bocha_base_url == "https://api.bochaai.com"

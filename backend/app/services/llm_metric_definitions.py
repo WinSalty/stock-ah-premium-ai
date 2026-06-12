@@ -60,6 +60,11 @@ PHASE_DESCRIPTIONS: dict[str, str] = {
     "answer": "非流式回答阶段，用于 AI 阈值推荐等一次性返回场景；字符表示模型回答字符数。",
     "answer_stream_first_chunk": "流式回答首包记录，只记录首包耗时；其它计数字段通常为 0。",
     "answer_stream": "流式回答主体完成记录；Chunk 是流式片段数，字符是累计输出字符数。",
+    # 收尾回答（创建日期：2026-06-13，author: claude）：迭代耗尽或迭代内容异常时
+    # 注入禁止工具指令后的非流式收尾生成，含工具语法泄漏的一次重试；计入日限额。
+    "answer_finalize": (
+        "Agent 引擎收尾回答：迭代耗尽/内容异常时的非流式补救生成（禁工具指令 + 泄漏重试）。"
+    ),
     # Agent 引擎新增 phase 说明（创建日期：2026-06-12，author: claude）。
     "agent_iteration": (
         "Agent 引擎单次外部 LLM 迭代调用，模型决定继续调工具或直接给出回答；"

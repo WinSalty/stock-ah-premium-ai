@@ -21,6 +21,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import dayjs from 'dayjs';
 import { useMemo, useState } from 'react';
 import PageHeader from '../components/PageHeader';
+import { copyTextToClipboard } from '../utils/clipboard';
 import OverflowCell from '../components/OverflowCell';
 import {
   createAhPremiumSyncBatch,
@@ -829,10 +830,10 @@ function copyRunDetail(run: SyncRun | null) {
     `参数: ${formatJson(run.params_json)}`,
     `错误: ${run.error_message || '-'}`
   ].join('\n');
-  navigator.clipboard
-    .writeText(content)
-    .then(() => message.success('已复制错误详情'))
-    .catch(() => message.error('复制失败'));
+  // 经 copyTextToClipboard 兼容 HTTP 非安全上下文（IP 直连时 Clipboard API 不可用）。
+  void copyTextToClipboard(content).then((ok) =>
+    ok ? message.success('已复制错误详情') : message.error('复制失败')
+  );
 }
 
 export default SyncPage;

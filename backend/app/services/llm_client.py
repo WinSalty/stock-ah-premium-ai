@@ -46,6 +46,7 @@ LLM_LIMIT_EXCEEDED_MESSAGE = (
 # 对新引擎失效（设计 v3 修订 2）；旧链路 phase 在旧链路退役后移除。
 LLM_EXTERNAL_CALL_PHASES = (
     "agent_iteration",
+    "answer_finalize",
     "question_router",
     "stock_code_extraction",
     "stock_disambiguation",

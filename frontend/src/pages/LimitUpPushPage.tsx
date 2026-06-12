@@ -37,6 +37,7 @@ import type {
   UserInfo
 } from '../types/domain';
 import { formatEast8DateTime } from '../utils/datetime';
+import { copyTextToClipboard } from '../utils/clipboard';
 
 const NINE_TURN_FEATURE_DISABLED = true;
 const NINE_TURN_DISABLED_TEXT = 'Tushare stk_nineturn 权限尚未开通，神奇九转同步和推送入口暂时关闭';
@@ -288,7 +289,8 @@ function LimitUpPushPage({ currentUser }: LimitUpPushPageProps) {
     onSuccess: async (result) => {
       // 分享链接始终使用当前前端域名拼接，避免开发态后端代理端口被复制给外部查看人。
       const shareUrl = new URL(`/limit-up-share/${result.token}`, window.location.origin).toString();
-      await navigator.clipboard?.writeText(shareUrl).catch(() => undefined);
+      // 经 copyTextToClipboard 兼容 HTTP 非安全上下文；失败不阻断弹窗（弹窗内可手动复制）。
+      await copyTextToClipboard(shareUrl).catch(() => false);
       queryClient.invalidateQueries({ queryKey: ['limit-up-report-shares', shareTargetReportId] });
       Modal.success({
         title: '分享链接已生成',
@@ -365,8 +367,13 @@ function LimitUpPushPage({ currentUser }: LimitUpPushPageProps) {
   };
 
   const copyShareUrl = async (shareUrl: string) => {
-    await navigator.clipboard?.writeText(shareUrl).catch(() => undefined);
-    message.success('分享链接已复制');
+    // 经 copyTextToClipboard 兼容 HTTP 非安全上下文，并按真实结果提示。
+    const ok = await copyTextToClipboard(shareUrl);
+    if (ok) {
+      message.success('分享链接已复制');
+    } else {
+      message.error('复制失败，请手动选择链接复制');
+    }
   };
 
   const submitPush = (values: LimitUpPushRequest) => {

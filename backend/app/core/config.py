@@ -119,7 +119,9 @@ class Settings(BaseSettings):
     # Agent 循环模型独立于 legacy 问答模型：工具调用准确性优先，默认用 pro 档。
     agent_model: str = Field(default="deepseek-v4-pro", alias="AGENT_MODEL")
     # 单轮回答内工具迭代上限；达到上限后强制模型基于已有材料收尾作答。
-    agent_max_iterations: int = Field(default=8, alias="AGENT_MAX_ITERATIONS")
+    # 2026-06-13 调整 8→16：取数 16/搜索 8 的新工具额度下，深度对比分析 8 次迭代
+    # 全花在取材料上、轮不到作答（生产缺陷 61a22784），强制收尾体验差。
+    agent_max_iterations: int = Field(default=16, alias="AGENT_MAX_ITERATIONS")
     # 单轮 messages 材料字符预算；超限时从最早的工具结果开始压缩为摘要。
     agent_context_budget_chars: int = Field(
         default=48000,

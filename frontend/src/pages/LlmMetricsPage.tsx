@@ -22,6 +22,7 @@ import { useIsFetching, useQuery, useQueryClient } from '@tanstack/react-query';
 import dayjs from 'dayjs';
 import PageHeader from '../components/PageHeader';
 import { fetchLlmMetricDetail, fetchLlmMetricRounds, fetchLlmMetricSummary, fetchLlmMetrics } from '../api/llmMetrics';
+import { copyTextToClipboard } from '../utils/clipboard';
 import type { LlmMetricItem, LlmRoundItem } from '../types/domain';
 import { formatEast8DateTime } from '../utils/datetime';
 
@@ -1128,13 +1129,12 @@ function formatTraceId(value: string) {
 
 /**
  * 一键复制完整追踪 ID：列表内缩略展示，复制时写入完整值，便于粘贴到筛选框或日志检索。
- * 剪贴板写入失败（如非安全上下文）时给出错误提示，不中断页面操作。
+ * 经 copyTextToClipboard 兼容 HTTP 非安全上下文（试用反馈：IP 直连时复制按钮失效）。
  */
 function copyQuestionId(value: string) {
-  navigator.clipboard
-    .writeText(value)
-    .then(() => message.success('已复制追踪 ID'))
-    .catch(() => message.error('复制失败'));
+  void copyTextToClipboard(value).then((ok) =>
+    ok ? message.success('已复制追踪 ID') : message.error('复制失败')
+  );
 }
 
 /**

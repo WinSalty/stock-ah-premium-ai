@@ -63,8 +63,16 @@ FINAL_ANSWER_NUDGE = (
     "请用自然语言直接输出最终回答；禁止再调用任何工具，"
     "禁止输出工具调用标记、XML 或内部协议语法。"
 )
-# 流式收尾仍泄漏工具语法时的兜底文案（生产缺陷 219bddf9 的最后防线）。
+# 收尾生成仍泄漏工具语法时的重试纠错指令（生产缺陷 61a22784：迭代耗尽后模型
+# 在收尾生成里继续输出 DSML 工具调用语法）。
+FINALIZE_RETRY_NUDGE = (
+    "你刚才的输出包含工具调用语法，已被丢弃。现在工具不可用，"
+    "请只输出面向用户的自然语言回答正文，基于已有材料直接作答。"
+)
+# 收尾重试仍泄漏时的兜底文案（最后防线，正常情况下不应触达）。
 MARKUP_FALLBACK_MESSAGE = "本轮回答生成出现异常内容已被拦截，请重试或换一种问法。"
+# 收尾生成的最大尝试次数：1 次正常生成 + 1 次泄漏纠错重试。
+FINALIZE_MAX_ATTEMPTS = 2
 # 回答只剩无效图表占位符时的纠错指令（生产缺陷 977cf4a3：模型引用历史轮次占位符，
 # 前端按安全口径渲染为空，用户看到空回答）。回填后模型可重新调 render_chart 出图。
 INVALID_CHART_NUDGE = (
@@ -74,8 +82,6 @@ INVALID_CHART_NUDGE = (
 )
 # 图表占位符匹配（与前端 CHART_PLACEHOLDER_PATTERN 口径一致）。
 _CHART_PLACEHOLDER_PATTERN = re.compile(r"\{\{chart:([a-zA-Z0-9_-]+)\}\}")
-# 流式头部缓冲长度：攒够这些字符先做协议泄漏检测，再开始向前端下发。
-STREAM_GUARD_BUFFER_CHARS = 64
 # 复用迭代内容下发时的分片长度：保持前端打字机渐进渲染体验。
 PREPARED_ANSWER_CHUNK_CHARS = 48
 # 工具调用语法泄漏特征：模型把 function calling 协议当正文输出时的标记
@@ -188,13 +194,12 @@ class AgentEngine:
                     messages.append({"role": "assistant", "content": content})
                     messages.append({"role": "system", "content": INVALID_CHART_NUDGE})
                     continue
-                # 内容为空或疑似协议泄漏：注入禁止工具指令后改走流式补救。
+                # 内容为空或疑似协议泄漏：注入禁止工具指令后走非流式收尾补救。
                 logger.warning(
-                    "Agent 迭代内容异常（空或疑似工具语法泄漏），走流式补救 question_id=%s",
+                    "Agent 迭代内容异常（空或疑似工具语法泄漏），走收尾补救 question_id=%s",
                     turn_state.question_id,
                 )
-                messages.append({"role": "system", "content": FINAL_ANSWER_NUDGE})
-                yield from self._stream_final_answer(messages, turn_state)
+                yield from self._finalize_answer(messages, turn_state, FINAL_ANSWER_NUDGE)
                 return
             messages.append(self._assistant_tool_call_message(result))
             for raw_call in result.tool_calls:
@@ -234,9 +239,9 @@ class AgentEngine:
                         "content": truncate_text(tool_result.payload, TOOL_MESSAGE_MAX_CHARS),
                     }
                 )
-        # 迭代耗尽：注入收尾指令后做最后一次流式作答。
-        messages.append({"role": "system", "content": FORCE_FINISH_INSTRUCTION})
-        yield from self._stream_final_answer(messages, turn_state)
+        # 迭代耗尽：注入收尾指令后做非流式收尾作答（生产缺陷 61a22784：
+        # 此前的流式收尾不带 tools，模型继续输出工具调用语法被拦后无重试机会）。
+        yield from self._finalize_answer(messages, turn_state, FORCE_FINISH_INSTRUCTION)
 
     def _emit_prepared_answer(
         self,
@@ -260,77 +265,51 @@ class AgentEngine:
             tool_trace=[item.to_payload() for item in turn_state.tool_trace],
         )
 
-    def _stream_final_answer(
+    def _finalize_answer(
         self,
         messages: list[dict[str, Any]],
         turn_state: TurnState,
+        instruction: str,
     ) -> Iterator[AgentEvent]:
-        """流式生成最终回答并产出终态 DoneEvent（phase 记 answer_stream）。
+        """非流式收尾生成最终回答（phase 记 answer_finalize），含泄漏纠错重试。
 
         仅两条路径走到这里：迭代耗尽强制收尾、迭代内容异常的补救生成。
-        头部先攒 STREAM_GUARD_BUFFER_CHARS 字符做协议泄漏检测：流式请求不带
-        tools，模型若试图调工具会把工具调用语法当正文输出；命中特征则吞掉
-        整段输出，改下发兜底文案，避免把内部协议渲染到页面（缺陷 219bddf9）。
+        此前的流式收尾在模型泄漏工具语法时只能拦截放弃（缺陷 61a22784）；
+        改为非流式后可在下发前完整检测，泄漏时回填纠错指令重试一次，
+        重试仍失败才下发兜底文案。生成内容经占位符净化后按分片下发。
 
-        创建日期：2026-06-12
+        创建日期：2026-06-13
         author: claude
         """
 
-        messages = compress_messages_for_budget(
-            messages, self.settings.agent_context_budget_chars
-        )
-        answer_parts: list[str] = []
-        head_buffer: list[str] = []
-        head_chars = 0
-        head_flushed = False
-        markup_detected = False
-        for chunk in self.llm_client.chat_completion_stream_messages(
-            messages,
-            model=self.settings.agent_model,
-            trace=self._trace(turn_state, "answer_stream"),
-        ):
-            if markup_detected:
-                # 已确认泄漏：吞掉剩余流（不中断上游迭代器，保证指标正常收尾）。
-                continue
-            if head_flushed:
-                answer_parts.append(chunk)
-                yield DeltaEvent(content=chunk)
-                continue
-            head_buffer.append(chunk)
-            head_chars += len(chunk)
-            head_text = "".join(head_buffer)
-            if self._looks_like_tool_markup(head_text):
-                markup_detected = True
-                continue
-            if head_chars >= STREAM_GUARD_BUFFER_CHARS:
-                # 头部检测通过：补发缓冲并转入透传模式。
-                answer_parts.append(head_text)
-                head_flushed = True
-                yield DeltaEvent(content=head_text)
-        if markup_detected:
+        messages.append({"role": "system", "content": instruction})
+        for attempt in range(FINALIZE_MAX_ATTEMPTS):
+            compressed = compress_messages_for_budget(
+                messages, self.settings.agent_context_budget_chars
+            )
+            result = self.llm_client.chat_completion_messages(
+                compressed,
+                tools=None,
+                model=self.settings.agent_model,
+                trace=self._trace(turn_state, "answer_finalize"),
+            )
+            content = (result.content or "").strip()
+            if content and not self._looks_like_tool_markup(content):
+                sanitized = self._strip_invalid_chart_placeholders(content, turn_state)
+                if sanitized.strip():
+                    yield from self._emit_prepared_answer(sanitized, turn_state)
+                    return
+            # 泄漏/空内容：回填本次输出 + 纠错指令后重试（最多一次）。
             logger.warning(
-                "Agent 流式收尾检测到工具语法泄漏，已拦截 question_id=%s",
+                "Agent 收尾生成异常（第 %s 次，空或工具语法泄漏） question_id=%s",
+                attempt + 1,
                 turn_state.question_id,
             )
-            answer_parts = [MARKUP_FALLBACK_MESSAGE]
-            yield DeltaEvent(content=MARKUP_FALLBACK_MESSAGE)
-        elif not head_flushed and head_buffer:
-            # 整段回答不足缓冲长度：流结束时一次性补发。
-            head_text = "".join(head_buffer)
-            answer_parts.append(head_text)
-            yield DeltaEvent(content=head_text)
-        # 终态再净化一次无效占位符：流式路径无法在 delta 阶段拦截，
-        # 但落库与 done.answer（前端以其覆盖展示）保持干净。
-        final_answer = self._strip_invalid_chart_placeholders(
-            "".join(answer_parts), turn_state
-        )
-        if not final_answer.strip():
-            final_answer = MARKUP_FALLBACK_MESSAGE
-        yield DoneEvent(
-            answer=final_answer,
-            charts=list(turn_state.charts),
-            tool_trace=[item.to_payload() for item in turn_state.tool_trace],
-        )
+            if content:
+                messages.append({"role": "assistant", "content": content})
+            messages.append({"role": "system", "content": FINALIZE_RETRY_NUDGE})
+        # 重试仍失败：下发兜底文案（最后防线）。
+        yield from self._emit_prepared_answer(MARKUP_FALLBACK_MESSAGE, turn_state)
 
     # ------------------------------------------------------------------
     # 消息组装

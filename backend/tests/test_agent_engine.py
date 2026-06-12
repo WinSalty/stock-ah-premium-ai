@@ -283,7 +283,7 @@ def test_engine_executes_single_tool_call_then_answers(monkeypatch) -> None:
 
 
 def test_engine_forces_final_answer_when_iterations_exhausted(monkeypatch) -> None:
-    """确认迭代耗尽后仍走流式收尾，且末尾注入强制收尾 system 指令。
+    """确认迭代耗尽后走非流式收尾生成，且末尾注入强制收尾 system 指令。
 
     创建日期：2026-06-12
     author: claude
@@ -298,8 +298,8 @@ def test_engine_forces_final_answer_when_iterations_exhausted(monkeypatch) -> No
         results=[
             _chat_result(tool_calls=(make_call(1),)),
             _chat_result(tool_calls=(make_call(2),)),
+            _chat_result(content="基于已有材料的结论"),
         ],
-        chunks=["基于已有材料的结论"],
     )
     engine = _make_engine(
         monkeypatch,
@@ -310,11 +310,16 @@ def test_engine_forces_final_answer_when_iterations_exhausted(monkeypatch) -> No
 
     events = list(engine.run("一直调用工具"))
 
-    # 两轮迭代后不再发起第三次非流式调用，直接进入强制收尾流式作答。
-    assert len(fake_client.chat_calls) == 2
-    assert len(fake_client.stream_calls) == 1
-    last_message = fake_client.stream_calls[0]["messages"][-1]
-    assert last_message == {"role": "system", "content": FORCE_FINISH_INSTRUCTION}
+    # 两轮迭代耗尽后，第三次调用是不带 tools 的收尾生成（缺陷 61a22784 修复：
+    # 弃用流式收尾，改非流式以便下发前完整检测泄漏）。
+    assert len(fake_client.chat_calls) == 3
+    assert len(fake_client.stream_calls) == 0
+    finalize_call = fake_client.chat_calls[2]
+    assert finalize_call["tools"] is None
+    assert finalize_call["messages"][-1] == {
+        "role": "system",
+        "content": FORCE_FINISH_INSTRUCTION,
+    }
     assert events[-1].type == "done"
     assert events[-1].answer == "基于已有材料的结论"
 
@@ -386,8 +391,8 @@ def test_strip_invalid_chart_placeholders_keeps_registered_ids(monkeypatch) -> N
     assert "{{chart:c9}}" not in cleaned
 
 
-def test_engine_streams_fallback_when_iteration_content_empty(monkeypatch) -> None:
-    """确认迭代内容为空时注入禁止工具指令并走流式补救生成。
+def test_engine_finalizes_when_iteration_content_empty(monkeypatch) -> None:
+    """确认迭代内容为空时注入禁止工具指令并走非流式收尾补救生成。
 
     创建日期：2026-06-12
     author: claude
@@ -395,24 +400,62 @@ def test_engine_streams_fallback_when_iteration_content_empty(monkeypatch) -> No
 
     from app.services.agent.engine import FINAL_ANSWER_NUDGE
 
-    fake_client = FakeLlmClient(results=[_chat_result(content="")], chunks=["补救回答"])
+    fake_client = FakeLlmClient(
+        results=[_chat_result(content=""), _chat_result(content="补救回答")],
+    )
     engine = _make_engine(monkeypatch, fake_client)
 
     events = list(engine.run("内容为空"))
 
-    assert len(fake_client.stream_calls) == 1
-    # 补救流式调用的末尾必须是禁止工具语法的 system 指令。
-    last_message = fake_client.stream_calls[0]["messages"][-1]
-    assert last_message == {"role": "system", "content": FINAL_ANSWER_NUDGE}
+    assert len(fake_client.chat_calls) == 2
+    assert len(fake_client.stream_calls) == 0
+    # 收尾补救调用不带 tools，且末尾是禁止工具语法的 system 指令。
+    finalize_call = fake_client.chat_calls[1]
+    assert finalize_call["tools"] is None
+    assert finalize_call["messages"][-1] == {"role": "system", "content": FINAL_ANSWER_NUDGE}
     assert events[-1].type == "done"
     assert events[-1].answer == "补救回答"
 
 
-def test_engine_intercepts_tool_markup_leak(monkeypatch) -> None:
-    """确认工具语法泄漏被双层拦截：迭代内容泄漏走补救，流式仍泄漏则兜底文案。
+def test_engine_finalize_retries_once_on_markup_leak(monkeypatch) -> None:
+    """确认收尾生成泄漏工具语法时回填纠错指令重试一次，重试成功输出干净回答。
 
-    复现生产缺陷 219bddf9：模型把 DSML 工具调用语法当正文输出，
-    任何 delta 事件都不得包含协议标记。
+    复现生产缺陷 61a22784：迭代耗尽后模型在收尾生成里继续输出 DSML 语法，
+    旧流式收尾只能拦截放弃；新口径给一次纠错重试机会。
+
+    创建日期：2026-06-13
+    author: claude
+    """
+
+    from app.services.agent.engine import FINALIZE_RETRY_NUDGE
+
+    leaked = '<｜｜DSML｜｜tool_calls>\n<｜｜DSML｜｜invoke name="web_search">'
+    fake_client = FakeLlmClient(
+        # 迭代内容泄漏 → 收尾第 1 次仍泄漏 → 纠错重试第 2 次给出干净回答。
+        results=[
+            _chat_result(content=leaked),
+            _chat_result(content=leaked),
+            _chat_result(content="基于材料的干净回答"),
+        ],
+    )
+    engine = _make_engine(monkeypatch, fake_client)
+
+    events = list(engine.run("泄漏后重试成功"))
+
+    assert len(fake_client.chat_calls) == 3
+    # 重试调用的末尾必须是泄漏纠错指令。
+    retry_call = fake_client.chat_calls[2]
+    assert retry_call["messages"][-1] == {"role": "system", "content": FINALIZE_RETRY_NUDGE}
+    deltas = [event.content for event in events if event.type == "delta"]
+    assert all("DSML" not in chunk for chunk in deltas)
+    assert events[-1].type == "done"
+    assert events[-1].answer == "基于材料的干净回答"
+
+
+def test_engine_intercepts_tool_markup_leak(monkeypatch) -> None:
+    """确认工具语法持续泄漏时的最后防线：重试仍泄漏则下发兜底文案。
+
+    复现生产缺陷 219bddf9/61a22784：任何 delta 事件都不得包含协议标记。
 
     创建日期：2026-06-12
     author: claude
@@ -422,14 +465,18 @@ def test_engine_intercepts_tool_markup_leak(monkeypatch) -> None:
 
     leaked = '<｜｜DSML｜｜tool_calls>\n<｜｜DSML｜｜invoke name="web_search">'
     fake_client = FakeLlmClient(
-        # 迭代内容即泄漏 → 触发补救流式；补救流式头部仍泄漏 → 兜底文案。
-        results=[_chat_result(content=leaked)],
-        chunks=[leaked[:20], leaked[20:], "后续内容"],
+        # 迭代泄漏 → 收尾第 1 次泄漏 → 纠错重试第 2 次仍泄漏 → 兜底文案。
+        results=[
+            _chat_result(content=leaked),
+            _chat_result(content=leaked),
+            _chat_result(content=leaked),
+        ],
     )
     engine = _make_engine(monkeypatch, fake_client)
 
     events = list(engine.run("泄漏场景"))
 
+    assert len(fake_client.chat_calls) == 3
     deltas = [event.content for event in events if event.type == "delta"]
     # 任何下发给前端的增量都不得含协议标记。
     assert all("DSML" not in chunk and "tool_calls" not in chunk for chunk in deltas)
