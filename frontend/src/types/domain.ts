@@ -901,6 +901,8 @@ export interface LimitUpReportListItem {
   created_at: string;
   updated_at: string;
   error_message: string | null;
+  /** 投资建议附加产物生成状态：PENDING 待生成 / GENERATING 生成中 / READY 已生成 / FAILED 失败。 */
+  advice_status: string;
 }
 
 export interface LimitUpReportDetail extends LimitUpReportListItem {
@@ -911,6 +913,16 @@ export interface LimitUpReportDetail extends LimitUpReportListItem {
   stage_quality: Array<Record<string, unknown>>;
   selected_chain_stocks: Array<Record<string, unknown>>;
   selected_high_board_stocks: Array<Record<string, unknown>>;
+  /** 首板精选名单，结构与 selected_chain_stocks 一致（含 ts_code、name、status、theme、selection.selection_reason 等）。 */
+  selected_first_board_stocks: Array<Record<string, unknown>>;
+  /** 投资建议 HTML 正文；建议未生成（PENDING/GENERATING）或生成失败时为空。 */
+  advice_html?: string | null;
+  /** 投资建议 Markdown 原文，便于核对 LLM 输出结构；与 advice_html 同生命周期。 */
+  advice_markdown?: string | null;
+  /** 投资建议生成完成时间，后端返回 UTC 字符串，展示时需经 formatEast8DateTime 转东八区。 */
+  advice_generated_at?: string | null;
+  /** 投资建议生成失败的错误信息，仅 advice_status=FAILED 时有值，用于弹窗内提示排查。 */
+  advice_error?: string | null;
 }
 
 export interface LimitUpShareCreateRequest {

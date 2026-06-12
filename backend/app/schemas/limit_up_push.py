@@ -74,6 +74,8 @@ class LimitUpReportListItem(BaseModel):
     updated_at: datetime
     error_message: str | None = None
     has_stage_fallback: bool = False
+    # 投资建议状态：存量报告默认 PENDING（缺失待回填），前端按状态渲染标签。
+    advice_status: str = "PENDING"
 
 
 class LimitUpReportDetail(LimitUpReportListItem):
@@ -85,6 +87,11 @@ class LimitUpReportDetail(LimitUpReportListItem):
 
     content_html: str | None = None
     content_markdown: str | None = None
+    # 投资建议附加产物：失败时 advice_error 供前端展示并引导重生成。
+    advice_html: str | None = None
+    advice_markdown: str | None = None
+    advice_generated_at: datetime | None = None
+    advice_error: str | None = None
     context: dict[str, Any] | None = None
     data_quality: list[dict[str, Any]] = Field(default_factory=list)
     stage_quality: list[dict[str, Any]] = Field(default_factory=list)

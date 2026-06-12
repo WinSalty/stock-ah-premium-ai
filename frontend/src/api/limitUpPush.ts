@@ -68,6 +68,19 @@ export function pushLimitUpReport(reportId: number, payload: LimitUpPushRequest 
   });
 }
 
+/**
+ * 强制重新生成指定报告的投资建议附加产物（仅管理员可调用）。
+ * 业务意图：建议生成失败或提示词调整后允许人工重跑；后端会覆盖旧建议并重置 advice_status，
+ * 因此调用方成功后必须同时刷新报告详情与列表查询，保证弹窗内容与列表状态标签一致。
+ * 创建日期：2026-06-12
+ * author: sunshengxian
+ */
+export function regenerateLimitUpAdvice(reportId: number) {
+  return requestJson<LimitUpActionResponse>(`/api/limit-up-push/reports/${reportId}/advice/regenerate`, {
+    method: 'POST'
+  });
+}
+
 export function createLimitUpReportShare(reportId: number, payload: LimitUpShareCreateRequest) {
   return requestJson<LimitUpShareResponse>(`/api/limit-up-push/reports/${reportId}/shares`, {
     method: 'POST',

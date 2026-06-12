@@ -1,4 +1,4 @@
-import { Button, Checkbox, DatePicker, Form, Input, Modal, Popconfirm, Select, Space, Table, Tabs, Tag, Typography, message } from 'antd';
+import { Alert, Button, Checkbox, DatePicker, Form, Input, Modal, Popconfirm, Select, Space, Table, Tabs, Tag, Typography, message } from 'antd';
 import { Ban, Eye, RefreshCw, RotateCcw, Search, Send, Share2, Sparkles } from 'lucide-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { Dayjs } from 'dayjs';
@@ -19,6 +19,7 @@ import {
   publishNineTurnReportToXueqiu,
   pushLimitUpReport,
   pushNineTurnReport,
+  regenerateLimitUpAdvice,
   revokeLimitUpReportShare,
   updateLimitUpRecipients,
   type LimitUpDeliveryFilters,
@@ -39,6 +40,31 @@ import { formatEast8DateTime } from '../utils/datetime';
 
 const NINE_TURN_FEATURE_DISABLED = true;
 const NINE_TURN_DISABLED_TEXT = 'Tushare stk_nineturn 权限尚未开通，神奇九转同步和推送入口暂时关闭';
+// 投资建议尚未生成时的空态说明：建议由推送流程懒生成回填，不代表报告本身异常。
+const ADVICE_EMPTY_TEXT = '建议尚未生成，推送时将自动回填';
+// 推送确认弹窗顶部说明：推送正文（建议优先还是完整报告）由服务端配置决定，前端只负责选接收人。
+const PUSH_CONTENT_HINT = '推送内容由服务端配置决定：默认推送投资建议（高风险），建议未就绪时可能降级为完整报告。';
+
+// 投资建议生成状态到标签颜色/文案的映射，与后端 advice_status 枚举（PENDING/GENERATING/READY/FAILED）一一对应。
+const ADVICE_STATUS_TAG_MAP: Record<string, { color: string; label: string }> = {
+  READY: { color: 'green', label: '已生成' },
+  FAILED: { color: 'red', label: '失败' },
+  GENERATING: { color: 'blue', label: '生成中' },
+  PENDING: { color: 'default', label: '待生成' }
+};
+
+/**
+ * 渲染投资建议状态标签；未知状态（如后端新增枚举或字段缺失）按原值灰色兜底展示，避免页面报错。
+ * 创建日期：2026-06-12
+ * author: sunshengxian
+ */
+function renderAdviceStatusTag(status: string | null | undefined) {
+  const config = ADVICE_STATUS_TAG_MAP[status || 'PENDING'];
+  if (!config) {
+    return <Tag>{status}</Tag>;
+  }
+  return <Tag color={config.color}>{config.label}</Tag>;
+}
 
 function recordText(record: Record<string, unknown>, key: string) {
   const value = record[key];
@@ -58,6 +84,8 @@ function nestedRecordText(record: Record<string, unknown>, objectKey: string, ke
 
 function renderStagePanel(report: LimitUpReportDetail) {
   const stageRows = report.stage_quality.map((item, index) => ({ ...item, row_key: `${recordText(item, 'stage_key')}-${index}` }));
+  // 首板名单为本次后端重构新增字段，旧报告详情可能不返回，这里兜底为空数组避免历史数据渲染报错。
+  const firstBoardRows = (report.selected_first_board_stocks || []).map((item, index) => ({ ...item, row_key: `${recordText(item, 'ts_code')}-${index}` }));
   const chainRows = report.selected_chain_stocks.map((item, index) => ({ ...item, row_key: `${recordText(item, 'ts_code')}-${index}` }));
   const highRows = report.selected_high_board_stocks.map((item, index) => ({ ...item, row_key: `${recordText(item, 'ts_code')}-${index}` }));
 
@@ -81,6 +109,24 @@ function renderStagePanel(report: LimitUpReportDetail) {
                 render: (value) => <Tag color={String(value).includes('FAILED') ? 'red' : String(value).includes('FALLBACK') ? 'orange' : 'green'}>{String(value || '-')}</Tag>
               },
               { title: '说明', dataIndex: 'message' }
+            ]}
+          />
+        </div>
+        <div>
+          <Typography.Title level={5}>首板入选名单</Typography.Title>
+          <Table<Record<string, unknown>>
+            rowKey="row_key"
+            size="small"
+            pagination={false}
+            dataSource={firstBoardRows}
+            locale={{ emptyText: '暂无首板入选记录' }}
+            columns={[
+              { title: '股票', dataIndex: 'name', width: 130 },
+              { title: '代码', dataIndex: 'ts_code', width: 120 },
+              { title: '状态', dataIndex: 'status', width: 100 },
+              { title: '题材', dataIndex: 'theme', width: 160 },
+              { title: 'LLM 角色', render: (_, record) => nestedRecordText(record, 'selection', 'theme_role') },
+              { title: '入选理由', render: (_, record) => nestedRecordText(record, 'selection', 'selection_reason') }
             ]}
           />
         </div>
@@ -218,6 +264,17 @@ function LimitUpPushPage({ currentUser }: LimitUpPushPageProps) {
       queryClient.invalidateQueries({ queryKey: ['limit-up-deliveries'] });
     },
     onError: (error) => message.error(error instanceof Error ? error.message : '推送失败')
+  });
+  // 管理员强制重跑投资建议：后端会覆盖旧建议并重置 advice_status，
+  // 成功后必须同时刷新报告详情（弹窗建议正文）与报告列表（建议状态标签），避免两处状态不一致。
+  const regenerateAdviceMutation = useMutation({
+    mutationFn: (reportId: number) => regenerateLimitUpAdvice(reportId),
+    onSuccess: (result) => {
+      message.success(result.message);
+      queryClient.invalidateQueries({ queryKey: ['limit-up-report-detail'] });
+      queryClient.invalidateQueries({ queryKey: ['limit-up-reports'] });
+    },
+    onError: (error) => message.error(error instanceof Error ? error.message : '重新生成建议失败')
   });
   const shareMutation = useMutation({
     mutationFn: ({ reportId, expiresInHours }: { reportId: number; expiresInHours: number | null }) =>
@@ -415,7 +472,7 @@ function LimitUpPushPage({ currentUser }: LimitUpPushPageProps) {
                     className="limit-up-report-table"
                     loading={reports.isLoading}
                     dataSource={reports.data || []}
-                    scroll={{ x: 1080 }}
+                    scroll={{ x: 1180 }}
                     pagination={{ pageSize: 10 }}
                     rowClassName={(record) => (record.id === selectedReportId ? 'selected-row' : '')}
                     onRow={(record) => ({ onClick: () => setSelectedReportId(record.id) })}
@@ -432,6 +489,13 @@ function LimitUpPushPage({ currentUser }: LimitUpPushPageProps) {
                         dataIndex: 'status',
                         width: 104,
                         render: (value) => <Tag color={value === 'READY' ? 'green' : value === 'FAILED' ? 'red' : 'blue'}>{value}</Tag>
+                      },
+                      {
+                        // 建议列展示投资建议附加产物的生成状态，便于管理员判断推送时会发建议还是降级发完整报告。
+                        title: '建议',
+                        dataIndex: 'advice_status',
+                        width: 96,
+                        render: (value) => renderAdviceStatusTag(value)
                       },
                       { title: '模型', dataIndex: 'model', width: 160 },
                       { title: '提示词版本', dataIndex: 'prompt_version', width: 130 },
@@ -509,6 +573,57 @@ function LimitUpPushPage({ currentUser }: LimitUpPushPageProps) {
                             key: 'stages',
                             label: '阶段',
                             children: renderStagePanel(selectedReport.data)
+                          },
+                          {
+                            key: 'advice',
+                            label: '建议',
+                            children: (
+                              <div className="limit-up-report-modal-body">
+                                <Space direction="vertical" size={12} style={{ width: '100%' }}>
+                                  {/* 顶部操作区：仅管理员可强制重跑建议；生成时间帮助判断建议是否基于最新一次报告生成。 */}
+                                  {isAdmin || selectedReport.data.advice_generated_at ? (
+                                    <Space wrap>
+                                      {isAdmin ? (
+                                        <Button
+                                          size="small"
+                                          icon={<Sparkles size={14} />}
+                                          loading={regenerateAdviceMutation.isPending}
+                                          onClick={() => {
+                                            // 弹窗内重跑时一定已有选中报告；空值兜底防御异常状态下误发请求。
+                                            if (selectedReportId) {
+                                              regenerateAdviceMutation.mutate(selectedReportId);
+                                            }
+                                          }}
+                                        >
+                                          重新生成建议
+                                        </Button>
+                                      ) : null}
+                                      {selectedReport.data.advice_generated_at ? (
+                                        <Typography.Text type="secondary">
+                                          建议生成时间：{formatEast8DateTime(selectedReport.data.advice_generated_at)}
+                                        </Typography.Text>
+                                      ) : null}
+                                    </Space>
+                                  ) : null}
+                                  {/* 失败态优先展示错误原因，方便管理员决定是否点击重跑。 */}
+                                  {selectedReport.data.advice_status === 'FAILED' ? (
+                                    <Alert
+                                      type="error"
+                                      showIcon
+                                      message="投资建议生成失败"
+                                      description={selectedReport.data.advice_error || '未返回错误详情'}
+                                    />
+                                  ) : null}
+                                  {selectedReport.data.advice_html ? (
+                                    // 建议正文与"预览"Tab 同源渲染方式：后端产出的受信 HTML 直接注入并复用同一套弹窗样式。
+                                    <div dangerouslySetInnerHTML={{ __html: selectedReport.data.advice_html }} />
+                                  ) : selectedReport.data.advice_status !== 'FAILED' ? (
+                                    // 空态仅覆盖待生成/生成中：失败场景已由上方 Alert 说明，避免"自动回填"文案误导。
+                                    <Typography.Text type="secondary">{ADVICE_EMPTY_TEXT}</Typography.Text>
+                                  ) : null}
+                                </Space>
+                              </div>
+                            )
                           }
                         ]}
                       />
@@ -527,6 +642,8 @@ function LimitUpPushPage({ currentUser }: LimitUpPushPageProps) {
                       confirmLoading={pushMutation.isPending}
                       destroyOnClose
                     >
+                      {/* 推送正文形态（建议优先/降级完整报告）由服务端配置控制，这里提示管理员实际推送内容可能与列表建议状态相关。 */}
+                      <Alert type="info" showIcon message={PUSH_CONTENT_HINT} style={{ marginBottom: 16 }} />
                       <Form form={pushForm} layout="vertical" initialValues={{ send_all: true, user_ids: [] }} onFinish={submitPush}>
                         <Form.Item name="send_all" valuePropName="checked">
                           <Checkbox>一键推送给所有已配置且可推送的接收人</Checkbox>

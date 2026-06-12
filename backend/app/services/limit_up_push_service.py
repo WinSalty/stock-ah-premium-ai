@@ -879,6 +879,10 @@ class LimitUpPushService:
             **self._report_list_item(report).model_dump(),
             content_html=report.content_html,
             content_markdown=report.content_markdown,
+            advice_html=report.advice_html,
+            advice_markdown=report.advice_markdown,
+            advice_generated_at=report.advice_generated_at,
+            advice_error=report.advice_error,
             context=context,
             data_quality=self._json_loads_list(report.data_quality_json),
             stage_quality=self._json_loads_list(
@@ -3601,6 +3605,7 @@ class LimitUpPushService:
             updated_at=report.updated_at,
             error_message=report.error_message,
             has_stage_fallback=self._has_stage_fallback(context),
+            advice_status=report.advice_status or ADVICE_STATUS_PENDING,
         )
 
     def _has_stage_fallback(self, context: dict[str, Any]) -> bool:
