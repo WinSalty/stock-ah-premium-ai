@@ -1,6 +1,7 @@
 # 打板报告推送投资建议重构开发方案
 
 - 创建日期：2026-06-12
+- 更新日期：2026-06-12（v2：按用户需求新增首板个股精选与重点分析扩展（3.9），首板候选纳入报告与投资建议，实施阶段重排为五个阶段）
 - 关联文档：`limit-up-llm-push-design.md`（首版设计）、`limit-up-multi-stage-analysis-refactor-plan.md`（多阶段改造）、`limit-up-analysis-improvement-implementation-summary.md`（落地说明）、`chat-agent-refactor-design-and-plan.md`（问答 Agent 化，输出口径参照系）
 - 目标：把打板报告推送链路（PushPlus + 雪球）的推送内容，从"完整复盘报告"重构为"基于报告结果生成的最终投资建议"，建议的内容口径对齐问答模块"风险高收益型推荐"的回答标准（风险前置、候选标的分层、晋级理由、触发/失败条件、非模板化风险提示）。
 - 本方案只做方案设计与任务划分，不修改任何业务代码；不含工时估算，按阶段与依赖顺序排列。
@@ -27,12 +28,13 @@
 1. 新增"投资建议"生成环节：以多阶段流水线的结构化结果为输入，生成一份独立的、结论化的投资建议内容，落库缓存。
 2. PushPlus 与雪球两个渠道默认推送投资建议，保留按配置回退推完整报告的能力。
 3. 建议内容口径对齐问答"风险高收益型推荐"：风险前置、候选分层、每只标的给晋级逻辑与触发/失败条件、禁止模板化免责句但必须有真实风险提示段、不暴露底层数据来源。
-4. 完整报告的生成、缓存、后台查看、公开分享能力全部保留不变（建议是"附加产物"，不是替换报告本体）。
+4. 首板阶段从"仅题材级结论"升级为"题材结论 + 少量个股精选与重点分析"（见 3.9）：首板精选标的与两三连、高连板候选一样进入筹码补数、最终报告和投资建议。
+5. 完整报告的生成、缓存、后台查看、公开分享能力全部保留不变（建议是"附加产物"，不是替换报告本体）。
 
 ### 1.4 非目标
 
 - 不做按接收人风险偏好的个性化建议（现有架构中所有接收人收同一份内容，个性化口径只存在于问答模块；如需个性化属架构级新增，另行立项）。
-- 不改报告六阶段流水线本身的分析逻辑与提示词。
+- 除 3.9 首板个股精选扩展涉及的环节（新增两个首板阶段、补数范围、最终合成提示词）外，不改其余阶段的分析逻辑与提示词。
 - 不新增推送渠道（企业微信等维持搁置状态）。
 - 不动神奇九转链路（保持软关闭现状，但方案预留同构扩展点）。
 
@@ -114,7 +116,7 @@
               └── advice GENERATING（他方在生成且未僵死）→ 本次跳过，下轮重试
 ```
 
-报告六阶段流水线、报告缓存状态机、推送/发布幂等流水全部保持不变；`ensure_analysis_for_trade_date` 不感知建议（报告生成与建议生成解耦，建议失败永不影响报告 READY）。
+报告缓存状态机、推送/发布幂等流水全部保持不变；报告流水线本身仅按 3.9 扩展首板精选（其余阶段分析逻辑不动）；`ensure_analysis_for_trade_date` 不感知建议（报告生成与建议生成解耦，建议失败永不影响报告 READY）。
 
 ### 3.2 投资建议生成：新增 `INVESTMENT_ADVICE` 阶段
 
@@ -124,7 +126,7 @@
 
 - 前置条件：`analysis.status == READY` 且 `content_html` 非空；否则直接返回（建议依附于已完成报告）。
 - 幂等与并发抢占：`advice_status == READY` 且 `advice_html` 非空时直接返回，不重调 LLM。生成前先以**条件更新抢占锁**进入 GENERATING：`UPDATE ... SET advice_status='GENERATING' WHERE id=? AND advice_status IN ('PENDING','FAILED')` 并立即 commit；读到他方未僵死的 GENERATING 时直接返回不生成。僵死判定仿照报告既有机制（`_is_generating_stale`，service:2740-2753）：基于 `_now_naive` 与该行 `updated_at` 比对，阈值复用 `LIMIT_UP_PUSH_GENERATING_STALE_MINUTES`。该锁是必选项——早盘轮询（5 分钟一次）与雪球调度（每分钟触发，`xueqiu_publish_jobs.py:28-31`，时点过后全天补发窗口）会在同进程线程池并发进入本方法；阶段缓存唯一键只保证"落库幂等"（`_save_stage_cache` 撞唯一键即吞掉，service:1989-1992），**拦不住并发窗口内的重复 LLM 调用**，必须靠状态机抢占。
-- 输入组装：优先从 `context_json.pipeline` 还原 `final_input` 同构材料（market_context + first_board + 入选股压缩行 + 两个重点阶段 HTML 片段）；**兼容兜底**：旧报告（多阶段改造前生成）`context_json` 无 `pipeline` 时，退化为以 `content_markdown` 为材料——注意该列实际存的是 FINAL_REPORT 阶段的原始 LLM 输出，即**整篇 HTML 报告正文**（service:1767-1768），并非 Markdown。兜底分支须先剥 ``` 代码块围栏（复用 `_normalize_report_html` 的清洗逻辑）、设定输入截断上限（整报体积远大于 final_input 压缩材料），且 user prompt 为该路径单独写"从报告正文提取观察标的、晋级理由、触发条件和风险"的指令段（对齐 data_catalog.py:149 口径）。
+- 输入组装：优先从 `context_json.pipeline` 还原 `final_input` 同构材料（market_context + first_board 题材结论 + 首板/两三连/高连板入选股压缩行 + 各重点分析阶段 HTML 片段；首板精选字段见 3.9，旧报告无该字段时容忍缺失）；**兼容兜底**：旧报告（多阶段改造前生成）`context_json` 无 `pipeline` 时，退化为以 `content_markdown` 为材料——注意该列实际存的是 FINAL_REPORT 阶段的原始 LLM 输出，即**整篇 HTML 报告正文**（service:1767-1768），并非 Markdown。兜底分支须先剥 ``` 代码块围栏（复用 `_normalize_report_html` 的清洗逻辑）、设定输入截断上限（整报体积远大于 final_input 压缩材料），且 user prompt 为该路径单独写"从报告正文提取观察标的、晋级理由、触发条件和风险"的指令段（对齐 data_catalog.py:149 口径）。
 - 执行：调用 `_run_text_stage(LIMIT_UP_STAGE_INVESTMENT_ADVICE, ...)`，system prompt 复用 `_stage_system_prompt`（注入情绪周期定位与"退潮/冰点不得激进接力"约束，service:1994-2007），user prompt 见 3.2.2。注意 `_run_text_stage` 对非 focus 阶段失败是直接 raise 不落失败缓存（service:1842-1854），建议阶段的失败兜底在本方法内 try/except 收口，不依赖阶段缓存的 failed 语义。
 - 落库：`advice_html`（经 `_normalize_report_html` + `_wrap_html` 规整，与报告同样适配 PushPlus 容器样式）、`advice_markdown`（LLM 原始输出，对齐主表双存惯例）、`advice_status=READY`、`advice_generated_at`、清空 `advice_error`。
 - 失败处理：**建议失败不改变报告状态**。捕获异常后 `advice_status=FAILED`、`advice_error` 截断 1000 字，并把一条 `INVESTMENT_ADVICE / FAILED_FALLBACK` 阶段质量项（`_stage_quality_item`，service:2555-2562）写入 **`context_json.pipeline.stage_quality`**（旧报告无 pipeline 结构时先补建只含 stage_quality 的空 pipeline）——列表页降级标识 `_has_stage_fallback`（service:3113-3127）只读这条路径、不读 `data_quality_json`，写错位置标识不会点亮。
@@ -138,7 +140,7 @@ user prompt 要点（移植问答口径 + 推送场景约束）：
 2. 结构硬约束（顺序固定）：
    - **风险提示段置于全文最前**（对齐 prompts.py:56-57"把风险放在结论之前"）：当日情绪周期定位、整体仓位态度、高波动/高回撤/失败风险的明确提示；禁止"不构成投资建议""仅供参考"等模板句（对齐 prompts.py:85-86）。
    - **核心结论**：3-5 条要点，给出当日参与/观望的总判断。
-   - **候选标的分层**：重点观察 / 谨慎观察 / 放弃观察（对齐高连板阶段既有分层口径），每只标的限 100 字内，必须含：晋级逻辑、次日竞价触发条件（竞价弱于 X% 放弃 / X%~Y% 低吸观察 / 高开超 Y% 警惕，对齐评审固化的竞价观察清单口径）、失败/止损条件、筹码压力提示（来自 next_day_premium_bias）。
+   - **候选标的分层**：重点观察 / 谨慎观察 / 放弃观察（对齐高连板阶段既有分层口径），每只标的限 100 字内，必须含：晋级逻辑、次日竞价触发条件（竞价弱于 X% 放弃 / X%~Y% 低吸观察 / 高开超 Y% 警惕，对齐评审固化的竞价观察清单口径）、失败/止损条件、筹码压力提示（来自 next_day_premium_bias）。首板精选候选（3.9）单列小节呈现，并额外标注更高不确定性：首板次日溢价失败率高于连板接力，参与方式与试错幅度须更克制。
    - **反证信号**：什么情况下整套建议作废（如情绪周期跌入退潮期的具体数值信号）。
 3. 周期约束：退潮期、分歧期默认下调所有接力评级；冰点期只输出观察清单、不输出参与建议（对齐评审已固化口径）。
 4. 数据纪律：精确数值必须来自给定材料，缺失标注不确定性，不编造；不提及 JSON、阶段、数据库等底层来源（对齐 prompts.py:83-84、:88）。
@@ -147,7 +149,7 @@ user prompt 要点（移植问答口径 + 推送场景约束）：
 #### 3.2.3 阶段常量与版本
 
 - 新增 `LIMIT_UP_STAGE_INVESTMENT_ADVICE = "INVESTMENT_ADVICE"`（与既有常量并列，service:83-88）。
-- 阶段版本：现有 `_stage_prompt_version`（service:2564-2571）**不是按阶段的映射，而是统一公式** `f"{final_prompt_version}:{stage_key.lower()}:v3"`——直接套用会让建议阶段落为 `:v3`，且无法单独 bump。本任务需先把该方法重构为"按 stage_key 查映射、缺省回退统一公式"的结构：既有六阶段的版本串必须逐字节不变（保持 `:v3`，否则击穿全部阶段缓存），`INVESTMENT_ADVICE` 单列独立起版（如 `:investment_advice-v1`），后续仅调建议提示词时只 bump 该条目。
+- 阶段版本：现有 `_stage_prompt_version`（service:2564-2571）**不是按阶段的映射，而是统一公式** `f"{final_prompt_version}:{stage_key.lower()}:v3"`——直接套用会让建议阶段落为 `:v3`，且无法单独 bump。本任务需先把该方法重构为"按 stage_key 查映射、缺省回退统一公式"的结构：既有阶段的版本串不得因结构重构而隐性变化（后缀保持 `:v3`，否则击穿对应阶段缓存），`INVESTMENT_ADVICE` 单列独立起版（如 `:investment_advice-v1`），后续仅调建议提示词时只 bump 该条目。
 - LLM 指标：现状 `_record_llm_metric` 把 phase 硬编码为 `limit_up_analysis`（service:2658-2683），`_chat_completion_with_reasoning`（service:2599-2656）与 `_run_text_stage` 均无 phase 入参。需为这三层增加可选 `phase` 参数（默认 `limit_up_analysis` 保持既有阶段兼容），建议阶段传 `limit_up_advice`，并在 `backend/app/services/llm_metric_definitions.py` 登记 label/描述（未登记会回退原名，不阻断）；**不加入** `LLM_EXTERNAL_CALL_PHASES`（与 `limit_up_analysis` 同口径，不占问答日限额）。
 
 ### 3.3 数据模型变更
@@ -212,7 +214,7 @@ user prompt 要点（移植问答口径 + 推送场景约束）：
 
 - `LimitUpReportListItem`（schemas/limit_up_push.py:58-76）：新增 `advice_status: str = "PENDING"`。
 - `LimitUpReportDetail`（:79-92）：新增 `advice_html?`、`advice_markdown?`、`advice_generated_at?`、`advice_error?`。
-- 新增端点 `POST /api/limit-up-push/reports/{report_id}/advice/regenerate`（管理员）：强制重新生成指定报告的建议（绕过 `advice_status==READY` 幂等与 FAILED 冷却，阶段缓存允许失败重跑语义不变），响应复用 `LimitUpActionResponse`。用于建议质量不满意或失败后的人工介入。**该端点随阶段二交付**（ADVICE 模式上线即需要人工恢复通道），前端按钮在阶段三补齐，期间可经 API 直调。
+- 新增端点 `POST /api/limit-up-push/reports/{report_id}/advice/regenerate`（管理员）：强制重新生成指定报告的建议（绕过 `advice_status==READY` 幂等与 FAILED 冷却，阶段缓存允许失败重跑语义不变），响应复用 `LimitUpActionResponse`。用于建议质量不满意或失败后的人工介入。**该端点随阶段三（推送切换）同批交付**（ADVICE 模式上线即需要人工恢复通道），前端按钮在阶段四补齐，期间可经 API 直调。
 - 推送、分享、流水、接收人端点请求/响应结构不变。
 
 #### 3.6.2 前端（`frontend/src/pages/LimitUpPushPage.tsx`、`frontend/src/api/limitUpPush.ts`）
@@ -234,6 +236,8 @@ XUEQIU_LIMIT_UP_CONTENT_MODE=ADVICE
 # 雪球渠道：建议失败时是否降级发布完整报告（默认关——公开平台宁可当日不发，
 # 也不在"建议模式"下发出与预期不符的整报；与 PushPlus 降级开关独立）
 XUEQIU_LIMIT_UP_ADVICE_FALLBACK_TO_REPORT=false
+# 首板重点入选上限（"少量"口径，对齐两三连 20 / 高连板 10 的同族配置）
+LIMIT_UP_PUSH_FIRST_BOARD_FOCUS_STOCK_LIMIT=5
 ```
 
 - 建议阶段的模型与推理力度沿用 `LIMIT_UP_PUSH_MODEL` / `LIMIT_UP_PUSH_REASONING_EFFORT`，不另设配置（与报告各阶段一致，减少口径分叉）。
@@ -243,54 +247,98 @@ XUEQIU_LIMIT_UP_ADVICE_FALLBACK_TO_REPORT=false
 
 - `data_catalog.py:146-152` 对 `limit_up_analysis_cache` 的列描述与真实表结构不符（声称存在 `report_type`、`source_payload_json` 列，实际没有）。本次为该表新增建议列，必须同步修正该数据字典条目（真实列清单 + 新增 advice 列），否则问答模型可能写出查询不存在列的 SQL。修正后问答侧"风险高收益型推荐"还可优先引用 `advice_markdown`（已是结论化内容），该优化作为字典描述的引导性说明，不改问答代码。
 
+### 3.9 首板个股精选与重点分析扩展（报告流水线）
+
+#### 3.9.1 现状与数据基础
+
+现状 `FIRST_BOARD` 阶段只产出题材级结论：提示词明确"只分析首板题材发酵价值，不要逐股长篇展开"（`_first_board_prompt`，service:2009-2026），输出 `theme_candidates`（题材 + 代表股名单），首板个股不进入筹码补数和重点分析。而个股精选所需的数据基础已经存在：`first_board_context.stocks` 即首板层（board_level=1）的 compact 个股行（`_assemble_context`，service:1171-1175），与两三连/高连板上下文同构；筛选兜底 `_fallback_selection_stage`（service:2165-2192，tag 参数泛型）、入选截断 `_select_stage_stocks`（service:2194-2222）、补数去重 `_dedupe_selected_stocks`（service:2280-2295）均为泛型基建，可直接复用。
+
+#### 3.9.2 新增两个首板阶段（完全镜像两三连模式）
+
+保持 `FIRST_BOARD` 阶段本身不动（题材级结论继续服务报告"首板题材发酵"段与建议输入），新增独立阶段而非在原阶段混入个股输出——避免破坏其既有缓存键、JSON 结构与兜底逻辑：
+
+1. **`FIRST_BOARD_SELECTION`（JSON 阶段）**，顺位在 `FIRST_BOARD` 之后：
+   - 输入：`first_board_context`（stocks + themes + market_emotion）+ `FIRST_BOARD` 阶段输出的 `theme_candidates`（发酵价值"强"的题材代表股优先）。
+   - 任务：挑选最多 `LIMIT_UP_PUSH_FIRST_BOARD_FOCUS_STOCK_LIMIT`（默认 5，"少量"口径）只首板重点标的；筛选维度：题材发酵价值与题材内卡位、封板质量（封流比/首封时间/开板次数）、资金信号（龙虎榜）、辨识度与晋级二板潜力；`score_detail` 沿用 强/中/弱 枚举，输出结构镜像 `_chain_selection_prompt`（service:2028-2046）。
+   - 容错：JSON 解析失败/调用异常复用 `_fallback_selection_stage(first_board_context, limit, "first_board")` 确定性兜底 + `PARSE_FALLBACK`/`FAILED_FALLBACK` 质量项；入选经 `_select_stage_stocks` 映射回原始行并截断。
+   - 输入体积：首板池通常远大于连板池（百余只 compact 行），沿用总池截断口径（`LIMIT_UP_CONTEXT_STOCK_LIMIT`）；若联调发现 prompt 超长，按封单额/题材热度预排序后截断进入 prompt 的行数（实施时定参）。
+2. **`FIRST_BOARD_FOCUS`（文本/HTML 阶段）**，顺位与 `CHAIN_FOCUS`/`HIGH_BOARD_FOCUS` 并列：
+   - 输入：入选首板股 + supplements（筹码摘要）+ market_context。
+   - 口径：每股 ≤150 字，覆盖题材发酵逻辑、晋级二板条件、次日竞价观察清单（竞价区间口径与两三连一致）、失败/止损条件；周期约束同 system prompt（退潮/冰点不得激进）。
+   - 容错：需把该 stage_key 接入 `_fallback_text_stage`（service:1860-1915，现仅 CHAIN_FOCUS/HIGH_BOARD_FOCUS 两个分支）降级为静态 HTML 表格。
+
+#### 3.9.3 下游接入
+
+- 筹码补数：补数去重集合从 `[*selected_chain, *selected_high]`（service:1709-1713）扩为 `[*selected_first_board, *selected_chain, *selected_high]`；单股失败不阻塞、补数缓存幂等不变；补数股票上限从 30 升至 35（20+10+5），Tushare 调用量小幅增加。
+- 最终合成：`final_input` 与 `context["pipeline"]` 增加 `selected_first_board_stocks`（经 `_stocks_for_final_prompt` 压缩）与 `first_board_focus_html`；最终报告六段中"首板题材发酵价值"扩展为"首板题材发酵价值与首板重点个股"。
+- 投资建议：3.2.1 输入组装与 3.2.2 候选分层均已纳入首板字段；首板候选在建议中单列小节并带更高不确定性提示。
+- 展示：`LimitUpReportDetail` 增加 `selected_first_board_stocks`；前端"阶段"Tab 在两三连/高连板入选名单旁新增首板入选名单表。
+
+#### 3.9.4 版本与缓存口径
+
+- 最终合成提示词发生变化，按既定规约 bump `LIMIT_UP_PUSH_FINAL_PROMPT_VERSION`（`limit-up-multi-stage-v2` → `limit-up-multi-stage-v3`，评审文档固化"任何提示词改动必须同步 bump"）；全部阶段缓存随之失效属**有意为之**（新口径需重新生成）。与 3.2.3"既有阶段版本串不得隐性变化"约束的关系：该约束针对的是 `_stage_prompt_version` 结构重构本身不得隐性改变版本串，以"未主动 bump final_prompt_version"为前提；本扩展是显式 bump，两者不矛盾。
+- 主表 `LIMIT_UP_PUSH_PROMPT_VERSION` 不动：已 READY 的存量报告不受影响、不重算（其建议生成按 3.2.1 口径容忍首板字段缺失），新口径自下一个生成的交易日起生效。
+
 ---
 
 ## 4. 实施阶段与任务划分
 
 > 不含工时估算；任务按依赖顺序排列，每阶段验收通过后进入下一阶段。
 
-### 阶段一：建议生成链路（纯后端，不动推送行为）
+### 阶段一：报告流水线首板个股精选扩展（3.9，报告侧）
 
 | 任务 | 内容 | 验收标准 |
 |---|---|---|
-| S1-1 | Alembic 迁移 0049 新增主表 advice 五列；同步 SQLAlchemy 模型、`database-schema.md`、`03_full_schema_with_comments.sql` | 迁移可升可降；存量行 advice_status=PENDING（server_default 与 ORM default 一致）；四处文档/模型一致 |
-| S1-2 | 新增 `LIMIT_UP_STAGE_INVESTMENT_ADVICE` 常量；把 `_stage_prompt_version` 重构为按 stage_key 映射（缺省回退统一公式）；建议 user prompt 构造函数（含旧报告兜底路径专用指令段） | prompt 含 3.2.2 全部结构硬约束；既有六阶段版本串逐字节不变（阶段缓存不击穿）；建议阶段版本独立可 bump |
-| S1-3 | 实现 `ensure_advice_for_analysis`：GENERATING 条件更新抢占锁 + 僵死恢复、输入组装（pipeline 优先、content_markdown 兜底含围栏剥离与截断）、`_run_text_stage` 执行、规整落库、失败置 FAILED + 质量项写入 context_json.pipeline.stage_quality、FAILED 冷却重试口径 | 同输入命中阶段缓存不重调 LLM；并发双入口只产生一次 LLM 调用（抢占锁测试）；GENERATING 僵死可恢复；建议失败不影响报告 READY 且列表 has_stage_fallback=true；旧报告（无 pipeline）可生成建议 |
-| S1-4 | `_chat_completion_with_reasoning` / `_record_llm_metric` / `_run_text_stage` 增加可选 phase 参数（默认 limit_up_analysis）；`llm_metric_definitions.py` 登记 `limit_up_advice` | 既有六阶段指标 phase 不变；建议阶段指标记为 limit_up_advice；不计入日限额 |
-| S1-5 | 单元测试：生成成功/失败/幂等/并发抢占/僵死恢复/旧报告兜底/缓存复用 | 新增测试全绿；既有 `test_limit_up_push_service.py` 26 个测试不回归 |
+| S1-1 | 新增 `FIRST_BOARD_SELECTION` JSON 阶段：prompt 镜像两三连筛选、`_fallback_selection_stage(tag="first_board")` 兜底、`_select_stage_stocks` 截断；新增配置 `LIMIT_UP_PUSH_FIRST_BOARD_FOCUS_STOCK_LIMIT`（默认 5） | 入选不超上限；解析失败/调用异常走确定性兜底并记 PARSE_FALLBACK/FAILED_FALLBACK；阶段缓存幂等（同输入不重调） |
+| S1-2 | 首板入选并入筹码补数去重集合（service:1709-1713 调用点） | 仅入选股触发 cyq 补数；单股失败不阻塞；补数缓存幂等不变 |
+| S1-3 | 新增 `FIRST_BOARD_FOCUS` 文本阶段（每股≤150字、竞价观察清单、失败条件）并接入 `_fallback_text_stage` 降级分支 | LLM 失败降级静态 HTML 表格并记 FAILED_FALLBACK；has_stage_fallback 点亮 |
+| S1-4 | `final_input`/`pipeline` 增加 `selected_first_board_stocks` 与 `first_board_focus_html`；最终合成提示词扩展首板重点个股小节；bump `LIMIT_UP_PUSH_FINAL_PROMPT_VERSION` → `limit-up-multi-stage-v3`；`LimitUpReportDetail` 增加 `selected_first_board_stocks` | 新生成报告含首板重点个股内容；存量 READY 报告不重算；详情接口返回首板入选名单 |
+| S1-5 | 单元测试：首板筛选截断/兜底/补数范围扩展/报告合成含首板段 | 新增测试全绿；既有 `test_limit_up_push_service.py` 26 个测试不回归 |
 
-依赖：S1-1 先行；S1-3 依赖 S1-1、S1-2；S1-4 可与 S1-3 并行；S1-5 收尾。
+依赖：S1-1 先行；S1-2、S1-3 依赖 S1-1；S1-4 依赖 S1-3；S1-5 收尾。
 
-### 阶段二：推送与发布切换（行为变更）
-
-| 任务 | 内容 | 验收标准 |
-|---|---|---|
-| S2-1 | 新增四个配置项（3.7），默认值按表 | 配置缺省时行为=ADVICE+PushPlus 降级开+雪球降级关；显式 REPORT 时与现行为逐字节一致（不触发建议生成、不写新列） |
-| S2-2 | `push_report` 内部收口：内容模式分支 + 标题口径 + PENDING 同步回填 + FAILED/GENERATING 分支（含 MANUAL 行为，3.4.1） | ADVICE 模式推送正文为 advice_html；PENDING→现场回填后推送（含 MANUAL 与历史报告）；FAILED+降级开→推整报且流水 SENT；FAILED+降级关→定时不建流水、MANUAL 返回明确错误；推送幂等不回归（同计划只发一次）；周末复推命中缓存建议时零新增 LLM 调用；建议失败报告列表 has_stage_fallback=true |
-| S2-3 | 雪球：`_resolve_analysis` 收口回填/`_build_article`/两级幂等闸门（调度层 :410 已发检查 + `_get_or_create_record`）按 3.5 改造，新增 `LIMIT_UP_ADVICE` source_type | ADVICE 模式发布正文为建议+免责段；标题不超 50 字；同 analysis 同 mode 任意 source_type 已 DRAFTED/PUBLISHED 不重复自动发文（降级整报后不追发建议）；force 通道可按 source_type 新建流水；手动发布与预览路径可触发回填；雪球 FAILED 不重试、按独立降级开关处理；REPORT 模式行为不变 |
-| S2-4 | 新增 `POST /reports/{report_id}/advice/regenerate` 端点（管理员，3.6.1） | FAILED/质量不满意场景可经 API 强制重生成；非管理员 403 |
-| S2-5 | 单元测试：内容模式矩阵（ADVICE 就绪/PENDING 回填/FAILED 降级/降级关闭/REPORT）、MANUAL 分支、周末复推、切回 ADVICE 首日补生成、雪球两级闸门 | 新增测试全绿；既有推送/雪球测试不回归 |
-
-依赖：阶段一全部验收通过后开始；S2-2、S2-3、S2-4 依赖 S2-1；S2-5 收尾。
-
-### 阶段三：API 与前端
+### 阶段二：建议生成链路（纯后端，不动推送行为）
 
 | 任务 | 内容 | 验收标准 |
 |---|---|---|
-| S3-1 | schema 扩展（列表 advice_status、详情 advice 四字段） | 详情接口返回建议内容；列表接口返回建议状态 |
-| S3-2 | 前端：报告表格建议状态列、查看弹窗"建议"Tab（预览/错误/重生成按钮，调 S2-4 端点）、推送弹窗模式提示 | 管理员可在后台查看并重生成建议；非管理员只读 |
-| S3-3 | 路由/服务层测试 + 前端构建 | 后端测试全绿；`npm run build` 通过 |
+| S2-1 | Alembic 迁移 0049 新增主表 advice 五列；同步 SQLAlchemy 模型、`database-schema.md`、`03_full_schema_with_comments.sql` | 迁移可升可降；存量行 advice_status=PENDING（server_default 与 ORM default 一致）；四处文档/模型一致 |
+| S2-2 | 新增 `LIMIT_UP_STAGE_INVESTMENT_ADVICE` 常量；把 `_stage_prompt_version` 重构为按 stage_key 映射（缺省回退统一公式）；建议 user prompt 构造函数（含首板候选单列小节与旧报告兜底路径专用指令段） | prompt 含 3.2.2 全部结构硬约束；未被本次显式 bump 的阶段版本串不因结构重构而隐性变化；建议阶段版本独立可 bump |
+| S2-3 | 实现 `ensure_advice_for_analysis`：GENERATING 条件更新抢占锁 + 僵死恢复、输入组装（pipeline 优先含首板字段、content_markdown 兜底含围栏剥离与截断）、`_run_text_stage` 执行、规整落库、失败置 FAILED + 质量项写入 context_json.pipeline.stage_quality、FAILED 冷却重试口径 | 同输入命中阶段缓存不重调 LLM；并发双入口只产生一次 LLM 调用（抢占锁测试）；GENERATING 僵死可恢复；建议失败不影响报告 READY 且列表 has_stage_fallback=true；旧报告（无 pipeline）可生成建议；无首板字段的报告可生成建议 |
+| S2-4 | `_chat_completion_with_reasoning` / `_record_llm_metric` / `_run_text_stage` 增加可选 phase 参数（默认 limit_up_analysis）；`llm_metric_definitions.py` 登记 `limit_up_advice` | 既有阶段指标 phase 不变；建议阶段指标记为 limit_up_advice；不计入日限额 |
+| S2-5 | 单元测试：生成成功/失败/幂等/并发抢占/僵死恢复/旧报告兜底/缓存复用 | 新增测试全绿；既有测试不回归 |
 
-依赖：阶段二验收通过后开始；S3-2 依赖 S3-1。
+依赖：阶段一验收通过后联调（开发可与阶段一并行，但建议输入需覆盖首板字段后才能验收）；S2-1 先行；S2-3 依赖 S2-1、S2-2；S2-4 可与 S2-3 并行；S2-5 收尾。
 
-### 阶段四：数据字典修正与文档同步
+### 阶段三：推送与发布切换（行为变更）
 
 | 任务 | 内容 | 验收标准 |
 |---|---|---|
-| S4-1 | 修正 `data_catalog.py` 打板表条目（真实列 + advice 列 + 引导优先读 advice_markdown） | 字典列清单与 ORM 模型逐列一致；问答金标 g004 用例回归通过 |
-| S4-2 | 更新本方案实施状态、`development-progress.md` 等关联文档 | 文档与落地行为一致 |
+| S3-1 | 新增四个渠道/降级配置项（3.7），默认值按表 | 配置缺省时行为=ADVICE+PushPlus 降级开+雪球降级关；显式 REPORT 时与现行为逐字节一致（不触发建议生成、不写新列） |
+| S3-2 | `push_report` 内部收口：内容模式分支 + 标题口径 + PENDING 同步回填 + FAILED/GENERATING 分支（含 MANUAL 行为，3.4.1） | ADVICE 模式推送正文为 advice_html；PENDING→现场回填后推送（含 MANUAL 与历史报告）；FAILED+降级开→推整报且流水 SENT；FAILED+降级关→定时不建流水、MANUAL 返回明确错误；推送幂等不回归（同计划只发一次）；周末复推命中缓存建议时零新增 LLM 调用；建议失败报告列表 has_stage_fallback=true |
+| S3-3 | 雪球：`_resolve_analysis` 收口回填/`_build_article`/两级幂等闸门（调度层 :410 已发检查 + `_get_or_create_record`）按 3.5 改造，新增 `LIMIT_UP_ADVICE` source_type | ADVICE 模式发布正文为建议+免责段；标题不超 50 字；同 analysis 同 mode 任意 source_type 已 DRAFTED/PUBLISHED 不重复自动发文（降级整报后不追发建议）；force 通道可按 source_type 新建流水；手动发布与预览路径可触发回填；雪球 FAILED 不重试、按独立降级开关处理；REPORT 模式行为不变 |
+| S3-4 | 新增 `POST /reports/{report_id}/advice/regenerate` 端点（管理员，3.6.1） | FAILED/质量不满意场景可经 API 强制重生成；非管理员 403 |
+| S3-5 | 单元测试：内容模式矩阵（ADVICE 就绪/PENDING 回填/FAILED 降级/降级关闭/REPORT）、MANUAL 分支、周末复推、切回 ADVICE 首日补生成、雪球两级闸门 | 新增测试全绿；既有推送/雪球测试不回归 |
 
-依赖：阶段三完成后收尾。
+依赖：阶段二全部验收通过后开始；S3-2、S3-3、S3-4 依赖 S3-1；S3-5 收尾。
+
+### 阶段四：API 与前端
+
+| 任务 | 内容 | 验收标准 |
+|---|---|---|
+| S4-1 | schema 扩展（列表 advice_status、详情 advice 四字段） | 详情接口返回建议内容；列表接口返回建议状态 |
+| S4-2 | 前端：报告表格建议状态列、查看弹窗"建议"Tab（预览/错误/重生成按钮，调 S3-4 端点）、"阶段"Tab 新增首板入选名单表、推送弹窗模式提示 | 管理员可在后台查看并重生成建议、可见首板入选名单；非管理员只读 |
+| S4-3 | 路由/服务层测试 + 前端构建 | 后端测试全绿；`npm run build` 通过 |
+
+依赖：阶段三验收通过后开始；S4-2 依赖 S4-1。
+
+### 阶段五：数据字典修正与文档同步
+
+| 任务 | 内容 | 验收标准 |
+|---|---|---|
+| S5-1 | 修正 `data_catalog.py` 打板表条目（真实列 + advice 列 + 引导优先读 advice_markdown） | 字典列清单与 ORM 模型逐列一致；问答金标 g004 用例回归通过 |
+| S5-2 | 更新本方案实施状态、`development-progress.md` 等关联文档 | 文档与落地行为一致 |
+
+依赖：阶段四完成后收尾。
 
 ---
 
@@ -305,14 +353,15 @@ cd /Users/salty/codeProject/ai/coding/stock-ah-premium-ai/backend
 
 1. 建议生成：成功落库五列；`_run_text_stage` 抛错 → advice_status=FAILED、报告仍 READY、质量项写入 context_json.pipeline.stage_quality、列表 `has_stage_fallback=true`（含旧报告补建 pipeline 场景）。
 2. 并发与僵死：两路并发进入 `ensure_advice_for_analysis` 只产生一次 LLM 调用（抢占锁）；GENERATING 超过 stale 阈值（`_now_naive` 打桩）可被接管重跑；未超阈值不重跑。
-3. 回填收口：已 READY 报告（advice_status=PENDING）经任意入口（定时 `ensure_latest_analysis_and_push`、MANUAL `push_report`、雪球 `_resolve_analysis`）推送/发布前自动补建议，报告六阶段零重调；切回 ADVICE 首日（REPORT 模式期间未生成）现场补生成。
+3. 回填收口：已 READY 报告（advice_status=PENDING）经任意入口（定时 `ensure_latest_analysis_and_push`、MANUAL `push_report`、雪球 `_resolve_analysis`）推送/发布前自动补建议，报告流水线各阶段零重调；切回 ADVICE 首日（REPORT 模式期间未生成）现场补生成。
 4. 内容模式矩阵：ADVICE 就绪 → 正文为 advice_html、标题为建议口径；FAILED+降级开 → 正文为 content_html、流水 SENT；FAILED+降级关 → 定时不建流水、MANUAL 返回明确错误；REPORT → 与现行为一致且零建议生成调用。
 5. 重试节流：FAILED 后冷却窗口内早盘轮询不重试、窗口外重试；雪球调度入口对 FAILED 不触发重试。
 6. 幂等：同计划多轮轮询只推一次（沿用既有 `test_latest_analysis_push_is_idempotent_across_polling` 扩展模式断言）。
 7. 周末复推：周五建议已缓存 → 复推零 LLM 调用；周五建议缺失 → 仅建议阶段补调一次。
 8. 雪球两级闸门：建议模式发布流水 source_type=LIMIT_UP_ADVICE；同 analysis 同 mode 已有任意 source_type 的 DRAFTED/PUBLISHED 流水 → 不重复自动发文（降级整报后建议补好不追发）；force 可新建建议流水。
 9. 旧报告兜底：context_json 无 pipeline 的 READY 报告可用 content_markdown（实为整报 HTML 原文，剥围栏+截断后）生成建议。
-10. 问答回归：`chat_golden_set.json` g004（风险高收益型推荐）行为不回归（阶段四数据字典修正后执行）。
+10. 首板精选：入选截断到配置上限；JSON 解析失败走确定性兜底；补数集合含首板入选且仅入选股；最终报告与建议输入含首板字段；无首板字段的存量报告建议生成不受影响。
+11. 问答回归：`chat_golden_set.json` g004（风险高收益型推荐）行为不回归（阶段五数据字典修正后执行）。
 
 真实 LLM / 真实 PushPlus / 真实雪球的线上验收需用户确认后执行（对齐既有惯例）。
 
@@ -325,14 +374,15 @@ cd /Users/salty/codeProject/ai/coding/stock-ah-premium-ai/backend
 | 雪球公开发布"投资建议"类内容的合规敏感度高于复盘资料 | 发布层免责段保留；标题与正文明示"高风险"；提供 `XUEQIU_LIMIT_UP_CONTENT_MODE=REPORT` 独立回滚；上线首周建议雪球侧先保持 REPORT 或 DRAFT 模式人工审看 |
 | PushPlus 正文长度上限无法从代码确认 | 建议本身显著短于整报，风险低；仍把"建议全文在微信端完整渲染"列为线上验收项，超限再加截断策略 |
 | 建议与报告内容不一致（建议引用了报告里没有的标的/数值） | 建议输入严格限定为 pipeline 结构化材料（与最终报告同源）；prompt 强制"数值必须来自材料"；后台"建议"Tab 便于人工抽查 |
-| 建议生成失败导致早盘无推送 | 默认降级推整报，保障交付；失败质量项写入 pipeline.stage_quality 使 has_stage_fallback 在列表页可见；重生成端点随阶段二交付，管理员修复后可 MANUAL 补推（MANUAL 不受幂等限制） |
+| 建议生成失败导致早盘无推送 | 默认降级推整报，保障交付；失败质量项写入 pipeline.stage_quality 使 has_stage_fallback 在列表页可见；重生成端点随阶段三（推送切换）同批交付，管理员修复后可 MANUAL 补推（MANUAL 不受幂等限制） |
 | 多调度入口并发重复调 LLM / GENERATING 僵死停摆 | GENERATING 条件更新抢占锁为必选项（3.2.1）；阶段缓存唯一键只保证存储幂等、不保证并发去重，不依赖它防并发；僵死基于 `_now_naive` 与 stale 阈值接管；FAILED 重试限早盘轮询 + 冷却窗口，雪球调度不重试 |
 | 切换模式/降级后雪球同源重复发文 | 两级闸门（3.5）：同 analysis 同 mode 任意 source_type 已发即不自动再发；source_type 仅用于流水区分与 force 通道 |
 
 取舍说明：
 
 - **不复用 AgentEngine**：日限额挤兑、输出载体冲突、非确定性三个硬因素（2.4），"类似问答"落在内容口径而非执行引擎。
-- **建议作为附加产物而非替换报告**：保留完整报告的后台/分享/审计价值，回滚成本最低；代价是主表多五列与一次额外 LLM 调用（每交易日 +1 次，不计问答限额，量级可忽略）。
+- **建议作为附加产物而非替换报告**：保留完整报告的后台/分享/审计价值，回滚成本最低；代价是主表多五列与额外 LLM 调用（建议 +1 次/交易日，首板精选与重点分析 +2 次/交易日，均不计问答限额，量级可忽略）。
+- **首板精选独立成阶段而非改造 FIRST_BOARD**：保持题材级结论阶段的缓存键、JSON 结构与兜底逻辑不变，新阶段失败只影响首板候选小节，不波及题材分析；代价是流水线从六个 LLM 阶段增至八个（含建议阶段）。
 - **不 bump 主表 prompt_version**：回填式设计避免整报重算（2.6）。
 
 ---
@@ -340,12 +390,13 @@ cd /Users/salty/codeProject/ai/coding/stock-ah-premium-ai/backend
 ## 7. 总体验收标准
 
 1. 交易日早盘：KPL 数据就绪后，接收人微信收到的是结论化投资建议（风险段前置、候选分层、竞价触发/失败条件），而非完整复盘报告；后台报告详情仍可查看完整报告与建议两份内容。
-2. 雪球定时发布的长文正文为建议内容（含发布层免责段），流水 source_type 为 LIMIT_UP_ADVICE。
-3. 配置切回 `REPORT` 模式后，两渠道行为与重构前一致（回滚通道有效）。
-4. 建议生成失败时：默认配置下整报降级推送成功、列表页可见降级标识、管理员可一键重生成建议。
-5. 周末复推不新增 LLM 调用（建议已缓存场景）。
-6. 既有测试全绿（含问答金标 g004），新增测试覆盖第 5 节用例清单。
-7. 数据库迁移可升可降，`database-schema.md`、`03_full_schema_with_comments.sql`、ORM、data_catalog 四处一致。
+2. 新生成的报告与投资建议均覆盖首板精选标的（数量不超过 `LIMIT_UP_PUSH_FIRST_BOARD_FOCUS_STOCK_LIMIT`），首板候选在建议中单列小节并带更高不确定性提示；首板精选失败时题材级分析与其余候选不受影响。
+3. 雪球定时发布的长文正文为建议内容（含发布层免责段），流水 source_type 为 LIMIT_UP_ADVICE。
+4. 配置切回 `REPORT` 模式后，两渠道行为与重构前一致（回滚通道有效）。
+5. 建议生成失败时：默认配置下整报降级推送成功、列表页可见降级标识、管理员可一键重生成建议。
+6. 周末复推不新增 LLM 调用（建议已缓存场景）。
+7. 既有测试全绿（含问答金标 g004），新增测试覆盖第 5 节用例清单。
+8. 数据库迁移可升可降，`database-schema.md`、`03_full_schema_with_comments.sql`、ORM、data_catalog 四处一致。
 
 ---
 
@@ -354,4 +405,5 @@ cd /Users/salty/codeProject/ai/coding/stock-ah-premium-ai/backend
 1. PushPlus 微信端建议全文渲染效果与长度（线上实测验收项）。
 2. 建议标题与雪球标题的最终文案口径（本方案给出草案，实施时定稿）。
 3. 雪球侧上线节奏：首周是否先 DRAFT/REPORT 模式人工审看再切 ADVICE 自动发布（产品决策）。
-4. 按接收人风险偏好定制建议内容：本方案明确不做（非目标 1.4），如有需要另行立项。
+4. 首板重点入选上限默认 5 是否合适（配置可调，过多会稀释"少量精选"定位并抬升筹码补数调用量）。
+5. 按接收人风险偏好定制建议内容：本方案明确不做（非目标 1.4），如有需要另行立项。
