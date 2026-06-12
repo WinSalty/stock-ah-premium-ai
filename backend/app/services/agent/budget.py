@@ -26,10 +26,12 @@ TOOL_MESSAGE_MAX_CHARS = 12000
 # query_database 与 get_stock_data 共享"取数"配额组，避免模型在两者间来回刷次数。
 # 取数组上限 16（2026-06-12 试用反馈两次上调：6→8→16，个股全景分析+出图场景
 # 需要多视图取数；本地取数成本低，成本安全网由 LLM 日限额与迭代上限承担）。
+# 搜索/抓取各 8（2026-06-12 用户要求 3→8：单轮深度联网检索需要多关键词多页阅读；
+# 外部计费成本由 agent_web_search_daily_limit 日配额兜底）。
 DATA_QUOTA_GROUP = "data_fetch"
 PER_TURN_TOOL_LIMITS: dict[str, int] = {
-    "web_search": 3,
-    "fetch_url": 3,
+    "web_search": 8,
+    "fetch_url": 8,
     "run_python": 3,
     "render_chart": 4,
     DATA_QUOTA_GROUP: 16,

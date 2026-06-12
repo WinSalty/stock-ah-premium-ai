@@ -500,15 +500,22 @@ def test_engine_rejects_invalid_tool_arguments_json(monkeypatch) -> None:
 
 
 def test_engine_enforces_per_turn_tool_quota(monkeypatch) -> None:
-    """确认 web_search 连续调用 4 次时第 4 次被配额拦截（上限 3）。
+    """确认 web_search 超过单轮上限（8）后第 9 次被配额拦截。
+
+    上限随配置演进（3→8，2026-06-12 用户调整），断言从 budget 单点定义取值，
+    避免再次调整时本用例漂移。
 
     创建日期：2026-06-12
     author: claude
     """
 
+    from app.services.agent.budget import PER_TURN_TOOL_LIMITS
+
+    limit = PER_TURN_TOOL_LIMITS["web_search"]
+    assert limit == 8
     calls = tuple(
         LlmToolCallRequest(call_id=f"call_{index}", name="web_search", arguments_json="{}")
-        for index in range(1, 5)
+        for index in range(1, limit + 2)
     )
     fake_client = FakeLlmClient(
         results=[_chat_result(tool_calls=calls), _chat_result(content="收尾")],
@@ -519,15 +526,16 @@ def test_engine_enforces_per_turn_tool_quota(monkeypatch) -> None:
     events = list(engine.run("反复搜索"))
 
     tool_results = [event for event in events if isinstance(event, ToolResultEvent)]
-    assert [event.ok for event in tool_results] == [True, True, True, False]
+    # 前 limit 次成功，第 limit+1 次被拦截。
+    assert [event.ok for event in tool_results] == [True] * limit + [False]
     # 摘要面向用户时间线：不出现"配额"内部术语（试用反馈问题2）。
-    assert tool_results[3].summary == "本轮调用次数已达单轮上限，已基于已有数据继续"
-    # 第 4 次的回填 payload 必须告知模型配额已用尽，让其调整策略。
+    assert tool_results[limit].summary == "本轮调用次数已达单轮上限，已基于已有数据继续"
+    # 超限那次的回填 payload 必须告知模型配额已用尽，让其调整策略。
     tool_messages = [
         item for item in fake_client.chat_calls[1]["messages"] if item["role"] == "tool"
     ]
-    assert len(tool_messages) == 4
-    assert "配额已用尽" in tool_messages[3]["content"]
+    assert len(tool_messages) == limit + 1
+    assert "配额已用尽" in tool_messages[limit]["content"]
     assert events[-1].type == "done"
 
 
