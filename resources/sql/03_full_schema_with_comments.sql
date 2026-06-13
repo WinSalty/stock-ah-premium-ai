@@ -55,6 +55,24 @@ CREATE TABLE IF NOT EXISTS `a_trade_calendar` (
   UNIQUE KEY `uk_a_trade_calendar` (`exchange`, `cal_date`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='A 股交易日历表';
 
+-- A 股每日 ST 名单表：记录每个交易日 ST/*ST/退市整理状态的股票。
+-- 用途：universe_filter L2 层按"信号日 T 当日"判 ST，杜绝用当前状态造成回测未来函数。
+-- 数据来源：Tushare stock_st 接口（按 trade_date 返回当日 ST 名单，已实测为 point-in-time）。
+-- 幂等：按 (ts_code, trade_date) 唯一，重跑/历史回填均 upsert 覆盖，不产生重复行。
+CREATE TABLE IF NOT EXISTS `a_stock_st` (
+  `id` INT NOT NULL AUTO_INCREMENT COMMENT '自增主键',
+  `ts_code` VARCHAR(16) NOT NULL COMMENT '标准证券代码，如 600000.SH',
+  `trade_date` DATE NOT NULL COMMENT 'ST 状态所属交易日（东八区，与 a_trade_calendar.cal_date 对齐）',
+  `name` VARCHAR(64) DEFAULT NULL COMMENT '当日证券简称（通常含 ST/*ST 前缀，供名称兜底校验）',
+  `st_type` VARCHAR(16) DEFAULT NULL COMMENT 'ST 类别原始代码（stock_st.type，取值以官方为准）',
+  `st_type_name` VARCHAR(32) DEFAULT NULL COMMENT 'ST 类别中文名（stock_st.type_name，便于人读核对）',
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '记录创建时间',
+  `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '记录更新时间',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_a_stock_st` (`ts_code`, `trade_date`),
+  KEY `idx_a_stock_st_trade_date` (`trade_date`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='A 股每日 ST 名单表（universe_filter 按 T 当日判 ST 的数据源）';
+
 CREATE TABLE IF NOT EXISTS `hk_trade_calendar` (
   `cal_date` DATE NOT NULL COMMENT '港股日历日期，主键',
   `is_open` INT NOT NULL COMMENT '是否开市，1 开市，0 休市',

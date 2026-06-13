@@ -84,6 +84,38 @@ class ATradeCalendar(TimestampMixin, Base):
     pretrade_date: Mapped[date | None] = mapped_column(Date)
 
 
+class AStockSt(TimestampMixin, Base):
+    """A 股每日 ST 名单表。
+
+    业务意图：记录每个交易日处于 ST/*ST/退市整理状态的股票，供 universe_filter 按
+        "信号日 T 当日"判定是否 ST，避免用"当前是否 ST"造成回测未来函数（前视偏差）。
+    数据来源：Tushare ``stock_st`` 接口（按 trade_date 返回当日 ST 名单，已实测确认为
+        point-in-time 口径，字段 ts_code/name/trade_date/type/type_name）。
+    幂等口径：按 (ts_code, trade_date) 唯一去重，重跑/历史回填均 upsert 覆盖，不产生重复行。
+
+    创建日期：2026-06-13
+    author: claude
+    """
+
+    __tablename__ = "a_stock_st"
+    __table_args__ = (
+        UniqueConstraint("ts_code", "trade_date", name="uk_a_stock_st"),
+        Index("idx_a_stock_st_trade_date", "trade_date"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    # 标准证券代码，如 600000.SH
+    ts_code: Mapped[str] = mapped_column(String(16), nullable=False)
+    # ST 状态所属交易日（东八区，与 a_trade_calendar.cal_date 对齐）
+    trade_date: Mapped[date] = mapped_column(Date, nullable=False)
+    # 当日证券简称（通常含 ST/*ST 前缀，供名称兜底校验）
+    name: Mapped[str | None] = mapped_column(String(64))
+    # ST 类别原始代码（stock_st.type，取值以官方为准）
+    st_type: Mapped[str | None] = mapped_column(String(16))
+    # ST 类别中文名（stock_st.type_name，便于人读核对）
+    st_type_name: Mapped[str | None] = mapped_column(String(32))
+
+
 class HKTradeCalendar(TimestampMixin, Base):
     """港股交易日历表。
 

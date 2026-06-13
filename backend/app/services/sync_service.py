@@ -14,6 +14,7 @@ from app.db.models.market import (
     ADailyQuote,
     AFinancialIndicator,
     AStockBasic,
+    AStockSt,
     ATradeCalendar,
     FxRateDaily,
     HKDailyQuote,
@@ -108,6 +109,24 @@ DATASET_SPECS: dict[str, DatasetSpec] = {
         date_fields=("list_date", "delist_date"),
         default_params={"exchange": "", "list_status": "L"},
         description="同步 A 股基础资料。",
+    ),
+    "a_stock_st": DatasetSpec(
+        name="a_stock_st",
+        label="A 股每日 ST 名单",
+        # 已实测：Tushare stock_st 接口按 trade_date 返回当日 ST 名单（point-in-time），
+        # 字段 ts_code/name/trade_date/type/type_name；逐交易日同步、历史可回填，
+        # 供 universe_filter 按"信号日 T 当日"判 ST，避免回测前视偏差。
+        api_name="stock_st",
+        fields=["ts_code", "name", "trade_date", "type", "type_name"],
+        model=AStockSt,
+        date_fields=("trade_date",),
+        # 官方字段→本地列名：type→st_type，type_name→st_type_name。
+        rename_map={"type": "st_type", "type_name": "st_type_name"},
+        default_params={},
+        description="同步 A 股每日 ST 名单（universe_filter 按 T 当日判 ST 的数据源）。",
+        supports_date_range=True,
+        split_by_trade_date=True,
+        full_start_date=AH_HISTORY_START,
     ),
     "trade_cal": DatasetSpec(
         name="trade_cal",

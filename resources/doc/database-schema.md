@@ -20,6 +20,7 @@
 - `a_stock_basic`：A 股基础信息。
 - `hk_stock_basic`：港股基础信息。
 - `a_trade_calendar`：A 股交易日历。
+- `a_stock_st`：A 股每日 ST 名单（Tushare `stock_st`，按 `trade_date` 存当日 ST/*ST/退市整理状态），供 `universe_filter` 按"信号日 T 当日"判 ST，避免回测前视偏差。
 - `hk_trade_calendar`：港股交易日历。
 - `a_daily_quote`：A 股日线行情。
 - `hk_daily_quote`：港股日线行情，当前 token 无权限时仅保留结构。
