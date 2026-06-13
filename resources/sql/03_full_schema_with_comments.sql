@@ -635,6 +635,59 @@ CREATE TABLE IF NOT EXISTS `nine_turn_analysis_cache` (
   KEY `idx_nine_turn_analysis_generated` (`generated_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='神奇九转 LLM 分析报告缓存表';
 
+-- 打板信号计划落表：一股一行，trade_date=T 信号日、target_trade_date=T+1 买入日。
+-- 由 limit_up_push_service._persist_selected_stocks 在报告 READY 收口处与报告状态原子提交；
+-- 整组 delete-then-insert（latest-wins），写失败降级不阻断报告交付。
+-- 唯一键 (trade_date, ts_code, prompt_version)；外键 source_analysis_id -> limit_up_analysis_cache.id。
+-- id 与 source_analysis_id 用 INT，与主表 limit_up_analysis_cache.id 对齐避免外键类型不匹配。
+CREATE TABLE IF NOT EXISTS `limit_up_selected_stock` (
+  `id` INT NOT NULL AUTO_INCREMENT COMMENT '主键',
+  `trade_date` DATE NOT NULL COMMENT '信号日 T（东八区交易日，对应报告复盘日）',
+  `target_trade_date` DATE NOT NULL COMMENT '计划买入日 T+1（由 a_trade_calendar 映射，禁手工+1天）',
+  `ts_code` VARCHAR(16) NOT NULL COMMENT '标准代码 600000.SH 形态，供 norm_code 关联',
+  `name` VARCHAR(64) DEFAULT NULL COMMENT '股票名称快照',
+  `board` VARCHAR(16) DEFAULT NULL COMMENT '所属市场板：MAIN 主板 / GEM 创业板',
+  `tier` VARCHAR(16) NOT NULL COMMENT '入选分层来源：FIRST_BOARD/CHAIN/HIGH_BOARD',
+  `board_level` INT DEFAULT NULL COMMENT '连板高度（首板=1，N连板=N；无法识别为 NULL）',
+  `limit_type` VARCHAR(16) DEFAULT NULL COMMENT '涨停形态：一字/T字/换手/秒板/烂板等',
+  `leader_strength_score` DECIMAL(8,2) DEFAULT NULL COMMENT '龙头强度综合分（0-100）',
+  `strength_dim_json` JSON DEFAULT NULL COMMENT '各维度分：题材卡位/封板质量/资金/辨识度等子分',
+  `role_tags` JSON DEFAULT NULL COMMENT '角色标签数组：龙头/板块前排/跟风/空间板/中军等',
+  `strategy_family` VARCHAR(32) DEFAULT NULL COMMENT '战法族：首板打板/低吸/连板接力等',
+  `setup` VARCHAR(64) DEFAULT NULL COMMENT '技术/资金形态：题材发酵/缩量回踩/放量突破等',
+  `action` VARCHAR(32) DEFAULT NULL COMMENT '建议动作分层：重点观察/谨慎观察/放弃观察',
+  `sentiment_cycle` VARCHAR(16) DEFAULT NULL COMMENT '个股/梯队情绪阶段（与市场级 market_state 区分）',
+  `market_state` VARCHAR(16) DEFAULT NULL COMMENT '市场情绪周期：启动/高潮/震荡/退潮/冰点/空仓',
+  `tradable_flag` VARCHAR(16) NOT NULL DEFAULT 'TRADABLE' COMMENT '可成交性：TRADABLE可参与/WATCH仅观察/BLOCKED闸门关闭',
+  `continuation_prob` DECIMAL(5,4) DEFAULT NULL COMMENT '次日续板概率先验（0-1）',
+  `next_day_premium_prob` DECIMAL(5,4) DEFAULT NULL COMMENT '隔日溢价为正概率先验（0-1）',
+  `boost_conditions` JSON DEFAULT NULL COMMENT '晋级/触发条件列表（竞价区间、量能、题材延续等）',
+  `fail_conditions` JSON DEFAULT NULL COMMENT '失败/止损/反证条件列表',
+  `suggested_hold_thesis` TEXT DEFAULT NULL COMMENT '建议持有逻辑/参与方式（结论性文本）',
+  `seal_ratio_pct` DECIMAL(10,4) DEFAULT NULL COMMENT '封流比/封单占比%（封板质量代理）',
+  `limit_order` DECIMAL(20,4) DEFAULT NULL COMMENT '封单金额/封单量快照',
+  `turnover_rate` DECIMAL(10,4) DEFAULT NULL COMMENT 'T 日换手率%',
+  `close` DECIMAL(20,6) DEFAULT NULL COMMENT 'T 日收盘价（信号决策价快照，不复权）',
+  `winner_rate` DECIMAL(10,4) DEFAULT NULL COMMENT '筹码获利盘比例%（来自 cyq 补数，可空）',
+  `priority` INT DEFAULT NULL COMMENT '同分层内优先级（越小越靠前）',
+  `item_json` JSON DEFAULT NULL COMMENT '该股完整结构化快照（选股映射行+建议结论原文，审计/回放）',
+  `selection_reason` TEXT DEFAULT NULL COMMENT '入选理由（LLM 文本）',
+  `source_analysis_id` INT NOT NULL COMMENT '来源报告 id -> limit_up_analysis_cache.id',
+  `schema_version` VARCHAR(16) NOT NULL COMMENT 'JSON 契约/字段结构版本，对齐 schemas/limit_up_watchlist.py',
+  `model` VARCHAR(64) NOT NULL COMMENT '生成模型名',
+  `prompt_version` VARCHAR(64) NOT NULL COMMENT '提示词版本（唯一键组成，换版不互相覆盖）',
+  `advice_degraded` TINYINT(1) NOT NULL DEFAULT 0 COMMENT '建议是否降级：1=建议未就绪/降级整报，维度字段可能部分缺失',
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间（UTC-naive）',
+  `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间（UTC-naive）',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_limit_up_selected_once` (`trade_date`, `ts_code`, `prompt_version`),
+  KEY `idx_limit_up_selected_target` (`target_trade_date`),
+  KEY `idx_limit_up_selected_analysis` (`source_analysis_id`),
+  KEY `idx_limit_up_selected_tier` (`tier`),
+  CONSTRAINT `fk_limit_up_selected_analysis`
+    FOREIGN KEY (`source_analysis_id`) REFERENCES `limit_up_analysis_cache` (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='打板信号计划落表：一股一行，T信号/T+1买入，供QMT闭环归因与只读导出';
+
 CREATE TABLE IF NOT EXISTS `limit_up_push_recipient` (
   `id` INT NOT NULL AUTO_INCREMENT COMMENT '自增主键',
   `user_id` INT NOT NULL COMMENT '接收报告的系统用户 ID',

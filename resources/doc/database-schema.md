@@ -90,6 +90,7 @@ LLM 按需个股研究数据：
 - `limit_up_analysis_cache`：打板 LLM 报告缓存表，按交易日、模型、提示词版本和数据快照哈希去重，保存 HTML 报告、上下文、质量记录和生成状态；另含投资建议附加产物五列（`advice_status`/`advice_html`/`advice_markdown`/`advice_generated_at`/`advice_error`），建议状态机与报告本体解耦，存量行默认 PENDING 由推送/发布链路按需回填，建议失败不影响报告 READY。
 - `limit_up_analysis_stage_cache`：打板多阶段 LLM 缓存表，按交易日、阶段、模型、提示词版本和阶段输入哈希去重，保存首板题材、首板精选（FIRST_BOARD_SELECTION/FIRST_BOARD_FOCUS）、两连三连、高连板、重点分析、最终合成与投资建议（INVESTMENT_ADVICE）等阶段输出，便于重跑时复用稳定中间结果。
 - `limit_up_stock_supplement_cache`：打板重点股票筹码补数缓存表，按交易日、股票和回看窗口去重，保存 LLM 入选股票的 `cyq_perf`/`cyq_chips` 摘要、数据状态和错误信息，避免同一报告重跑时重复请求 Tushare。
+- `limit_up_selected_stock`：打板信号计划落表（一股一行，`trade_date=T` 信号日/`target_trade_date=T+1` 买入日），按 `(trade_date, ts_code, prompt_version)` 唯一；保存板块/连板/龙头强度分/角色/战法/情绪周期/可成交性/续板与溢价先验/晋级失败条件等结构化字段；与报告 READY 原子提交、整组 delete-then-insert，供 QMT 闭环归因与只读导出消费。
 - `limit_up_push_recipient`：打板报告接收人配置表，保存系统用户是否启用接收，以及是否接收周六、周日晚间缓存报告复推；PushPlus 好友令牌仍只保存在绑定表。
 - `limit_up_push_delivery`：打板报告业务推送计划与结果表，按报告、计划类型、计划时间和接收用户做幂等，实际 PushPlus 请求流水关联到 `pushplus_message_log`。
 - `limit_up_report_share`：打板报告分享链接表，保存随机 token、过期时间、撤销时间和公开访问次数；`expires_at` 为空表示永久有效，公开查看只读取已生成报告，不授予后台权限。

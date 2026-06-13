@@ -5,6 +5,7 @@ from decimal import Decimal
 
 from sqlalchemy import (
     DECIMAL,
+    JSON,
     Boolean,
     Date,
     DateTime,
@@ -221,6 +222,89 @@ class LimitUpStockSupplementCache(TimestampMixin, Base):
     data_quality_json: Mapped[str | None] = mapped_column(Text().with_variant(LONGTEXT, "mysql"))
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="PENDING")
     error_message: Mapped[str | None] = mapped_column(Text)
+
+
+class LimitUpSelectedStock(TimestampMixin, Base):
+    """打板信号计划落表（一股一行）。
+
+    业务意图：把多阶段选股 pipeline 与投资建议分层的结论，结构化成"一只票一买入日一行"
+        的可 join / 可分组 / 可统计记录，供 QMT 闭环归因与只读导出（外部回测/对账）消费；
+        报告/建议本体仍以 HTML/Markdown 留在 limit_up_analysis_cache，本表是其结构化镜像。
+    口径：trade_date=T 信号日；target_trade_date=T+1 买入日（a_trade_calendar 映射，禁手工+1天）。
+    幂等：(trade_date, ts_code, prompt_version) 唯一；写入用整组 delete-then-insert
+        （latest-wins），与报告 READY 同事务原子提交；写失败由收口 try/except 降级不阻断报告。
+    口径对齐：id 与 source_analysis_id 用 Integer，与主表 limit_up_analysis_cache.id 一致，
+        避免外键类型不匹配。
+
+    创建日期：2026-06-13
+    author: claude
+    """
+
+    __tablename__ = "limit_up_selected_stock"
+    __table_args__ = (
+        UniqueConstraint(
+            "trade_date",
+            "ts_code",
+            "prompt_version",
+            name="uk_limit_up_selected_once",
+        ),
+        Index("idx_limit_up_selected_target", "target_trade_date"),
+        Index("idx_limit_up_selected_analysis", "source_analysis_id"),
+        Index("idx_limit_up_selected_tier", "tier"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    # ① 主键与关联键（QMT 闭环归因 join：ts_code + target_trade_date）
+    trade_date: Mapped[date] = mapped_column(Date, nullable=False)
+    target_trade_date: Mapped[date] = mapped_column(Date, nullable=False)
+    ts_code: Mapped[str] = mapped_column(String(16), nullable=False)
+    name: Mapped[str | None] = mapped_column(String(64))
+    # ② 板块 / 连板维度
+    board: Mapped[str | None] = mapped_column(String(16))
+    tier: Mapped[str] = mapped_column(String(16), nullable=False)
+    board_level: Mapped[int | None] = mapped_column(Integer)
+    limit_type: Mapped[str | None] = mapped_column(String(16))
+    # ③ 龙头强度分及各维度分
+    leader_strength_score: Mapped[Decimal | None] = mapped_column(DECIMAL(8, 2))
+    strength_dim_json: Mapped[dict | None] = mapped_column(JSON)
+    # ④ 角色 / 战法 / 形态 / 动作
+    role_tags: Mapped[list | None] = mapped_column(JSON)
+    strategy_family: Mapped[str | None] = mapped_column(String(32))
+    setup: Mapped[str | None] = mapped_column(String(64))
+    action: Mapped[str | None] = mapped_column(String(32))
+    # ⑤ 情绪周期与可成交性
+    sentiment_cycle: Mapped[str | None] = mapped_column(String(16))
+    market_state: Mapped[str | None] = mapped_column(String(16))
+    tradable_flag: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="TRADABLE", server_default="TRADABLE"
+    )
+    # ⑥ 先验概率（闭环归因先验校准消费）
+    continuation_prob: Mapped[Decimal | None] = mapped_column(DECIMAL(5, 4))
+    next_day_premium_prob: Mapped[Decimal | None] = mapped_column(DECIMAL(5, 4))
+    # ⑦ 晋级 / 失败条件与持有逻辑
+    boost_conditions: Mapped[list | None] = mapped_column(JSON)
+    fail_conditions: Mapped[list | None] = mapped_column(JSON)
+    suggested_hold_thesis: Mapped[str | None] = mapped_column(Text)
+    # ⑧ 热字段（可成交性判定与展示快照，直接落库便于 join 不回查）
+    seal_ratio_pct: Mapped[Decimal | None] = mapped_column(DECIMAL(10, 4))
+    limit_order: Mapped[Decimal | None] = mapped_column(DECIMAL(20, 4))
+    turnover_rate: Mapped[Decimal | None] = mapped_column(DECIMAL(10, 4))
+    close: Mapped[Decimal | None] = mapped_column(DECIMAL(20, 6))
+    winner_rate: Mapped[Decimal | None] = mapped_column(DECIMAL(10, 4))
+    # ⑨ 优先级 / 原始结构 / 入选理由
+    priority: Mapped[int | None] = mapped_column(Integer)
+    item_json: Mapped[dict | None] = mapped_column(JSON)
+    selection_reason: Mapped[str | None] = mapped_column(Text)
+    # ⑩ 审计与版本（source_analysis_id 与主表 id 同为 Integer）
+    source_analysis_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("limit_up_analysis_cache.id"), nullable=False
+    )
+    schema_version: Mapped[str] = mapped_column(String(16), nullable=False)
+    model: Mapped[str] = mapped_column(String(64), nullable=False)
+    prompt_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    advice_degraded: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="0"
+    )
 
 
 class LimitUpPushRecipient(TimestampMixin, Base):
