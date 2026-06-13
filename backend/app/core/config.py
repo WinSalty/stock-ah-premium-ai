@@ -307,6 +307,14 @@ class Settings(BaseSettings):
     watchlist_export_internal_token_file: Path | None = Field(
         default=None, alias="WATCHLIST_EXPORT_INTERNAL_TOKEN_FILE"
     )
+    # QMT 回流 ingest 接口内网 token（机器对机器，与 watchlist 导出同机制）；
+    # 未单独配置时回落到 watchlist 导出 token，便于一套 token 服务两个内网接口（也可分别配置）。
+    qmt_ingest_internal_token: str | None = Field(
+        default=None, alias="QMT_INGEST_INTERNAL_TOKEN"
+    )
+    qmt_ingest_internal_token_file: Path | None = Field(
+        default=None, alias="QMT_INGEST_INTERNAL_TOKEN_FILE"
+    )
     # 回测口径默认：回看交易日窗口、对照组来源、买入价口径。
     # 对照组：CACHE_POOL=方案b(从报告快照抽取)/LIMIT_LIST_D=方案a(涨停清单接口)。
     limit_up_backtest_default_lookback_days: int = Field(
@@ -421,6 +429,23 @@ class Settings(BaseSettings):
         if self.watchlist_export_internal_token:
             return self.watchlist_export_internal_token.strip()
         return None
+
+    def resolve_qmt_ingest_internal_token(self) -> str | None:
+        """解析 QMT 回流接口内网 token：优先专用文件→专用环境变量→回落 watchlist 导出 token。
+
+        回落口径：未单独配置回流 token 时复用 watchlist 导出 token，使两个内网接口可共用一套凭据；
+        若需隔离权限，单独配置 QMT_INGEST_INTERNAL_TOKEN(_FILE) 即覆盖回落。
+        """
+
+        token_file = self.qmt_ingest_internal_token_file
+        if token_file and token_file.exists():
+            token = token_file.read_text(encoding="utf-8").strip()
+            if token:
+                return token
+        if self.qmt_ingest_internal_token:
+            return self.qmt_ingest_internal_token.strip()
+        # 回落到 watchlist 导出 token（同为机器对机器内网鉴权）。
+        return self.resolve_watchlist_export_internal_token()
 
     def resolve_tushare_token(self) -> str | None:
         """按本机文件优先、环境变量兜底的顺序读取 Tushare Token。

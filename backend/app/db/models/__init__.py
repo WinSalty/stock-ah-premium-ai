@@ -57,6 +57,12 @@ from app.db.models.notification import (
     XueqiuPublishCredential,
     XueqiuPublishRecord,
 )
+from app.db.models.qmt import (
+    QmtAccountDaily,
+    QmtOrder,
+    QmtPositionSnapshot,
+    QmtTrade,
+)
 from app.db.models.sync import DataQualityIssue, SyncCheckpoint, SyncRun
 
 __all__ = [
@@ -111,6 +117,10 @@ __all__ = [
     "OfficialAHComparison",
     "PushplusBinding",
     "PushplusMessageLog",
+    "QmtAccountDaily",
+    "QmtOrder",
+    "QmtPositionSnapshot",
+    "QmtTrade",
     "RealtimeQuoteSnapshot",
     "StockSelectionFactorSnapshot",
     "SyncCheckpoint",
