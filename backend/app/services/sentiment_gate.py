@@ -163,6 +163,20 @@ def _num(value: Any, default: float = 0.0) -> float:
         return default
 
 
+def _hcc_change_scalar(value: Any) -> Any:
+    """抽取「最高板变化」标量（评审 P0-B4）。
+
+    最高板变化的生产者返回 dict{today, previous, change}；闸门分类只需要其中的升降幅 change 标量。
+    口径：
+    - dict → 取 change（缺 change 键则 None，由下游缺测口径兜底）；
+    - 标量/None → 原样返回（兼容历史可能直接给标量 change 的调用方）。
+    这样 _num 拿到的恒为标量，hcc 不再被静默归零，「最高板升/降」约束才能真正参与高潮/发酵/分歧判定。
+    """
+    if isinstance(value, dict):
+        return value.get("change")
+    return value
+
+
 def classify_sentiment_cycle(
     metrics: dict[str, Any], thresholds: GateThresholds
 ) -> tuple[str, list[str]]:
@@ -315,7 +329,11 @@ def flatten_gate_inputs(market_emotion: dict[str, Any]) -> dict[str, Any]:
         "broken_board_rate_pct": ec.get("broken_board_rate_pct"),
         "limit_down_count": em.get("limit_down_count"),
         "highest_chain": em.get("highest_chain"),
-        "highest_chain_change": ec.get("highest_chain_change"),
+        # 评审 P0-B4 修复：highest_chain_change 的生产者(_highest_chain_change)返回的是
+        # dict{today, previous, change}，原实现把整个 dict 透传给下游 _num → float(dict) 抛错被吞 →
+        # 恒归 0.0，使「高潮/发酵 hcc>=0、分歧 hcc<=0」的最高板升降约束全部失效（最高板掉头仍可判发酵/高潮）。
+        # 这里显式抽取标量 change；对 dict / 标量 两种形态都防御（兼容历史可能直接给标量的口径）。
+        "highest_chain_change": _hcc_change_scalar(ec.get("highest_chain_change")),
         "prev_premium_avg_pct_chg": prem.get("avg_pct_chg"),
         "adv_1_2_rate": adv_1_2.get("rate_pct"),
         # 分母键名在不同口径下可能为 denom/denominator/base/prev_count，取首个【非 None】命中

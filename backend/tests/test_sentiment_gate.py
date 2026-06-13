@@ -14,6 +14,7 @@ from app.services.sentiment_gate import (
     STATE_EMPTY,
     GateThresholds,
     classify_sentiment_cycle,
+    flatten_gate_inputs,
     map_market_state,
     resolve_gate,
 )
@@ -36,6 +37,55 @@ def _m(**kw):
     }
     base.update(kw)
     return base
+
+
+# ---------------------------------------------------------------------------
+# 评审 P0-B4：highest_chain_change 是 dict，flatten 须抽出 change 标量（原恒被 _num 归 0）
+# ---------------------------------------------------------------------------
+def test_flatten_extracts_highest_chain_change_scalar():
+    """市场情绪产物里 emotion_cycle.highest_chain_change 是 dict{today,previous,change}，
+    flatten_gate_inputs 必须抽出 change 标量，而非把整 dict 透传（下游 _num 会静默归 0）。"""
+    market_emotion = {
+        "limit_up_count": 60,
+        "limit_down_count": 3,
+        "highest_chain": 5,
+        "emotion_cycle": {
+            "highest_chain_change": {"today": 5, "previous": 8, "change": -3},
+            "broken_board_rate_pct": 10.0,
+            "prev_limit_up_premium": {"avg_pct_chg": 1.0},
+            "advancement": {"1进2": {"rate_pct": 30.0, "denom": 20}},
+        },
+    }
+    flat = flatten_gate_inputs(market_emotion)
+    assert flat["highest_chain_change"] == -3   # 抽出 change，而非整个 dict（旧实现→0）
+
+
+def test_flatten_hcc_scalar_and_missing_defense():
+    """标量直接透传；dict 缺 change 键 → None（交缺测口径兜底），不抛错。"""
+    assert (
+        flatten_gate_inputs({"emotion_cycle": {"highest_chain_change": -2}})["highest_chain_change"]
+        == -2
+    )
+    assert (
+        flatten_gate_inputs({"emotion_cycle": {"highest_chain_change": {"today": 1}}})[
+            "highest_chain_change"
+        ]
+        is None
+    )
+
+
+def test_climax_blocked_when_highest_chain_turns_down():
+    """最高板掉头(hcc<0)→不应判高潮（即便 hc/prem 达高潮线）。
+    修复前 hcc 恒 0(>=0)，高度掉头仍会被判高潮/发酵，放行开仓；修复后 hcc 真实参与判定。"""
+    cycle, _ = classify_sentiment_cycle(
+        _m(
+            highest_chain=_TH.climax_chain,
+            highest_chain_change=-2,           # 最高板较昨日下降
+            prev_premium_avg_pct_chg=_TH.climax_premium,
+        ),
+        _TH,
+    )
+    assert cycle != CYCLE_CLIMAX
 
 
 def test_six_cycle_classification_branches() -> None:
