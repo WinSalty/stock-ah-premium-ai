@@ -2111,42 +2111,62 @@ class LimitUpPushService:
             ),
             stage_quality,
         )
-        first_board_focus = self._run_text_stage(
+        # FOCUS 三阶段改走 JSON-mode（_run_json_stage），同对象产出结构化先验 + html_fragment；
+        # 传 _fallback_focus_stage 作降级 payload，保证解析失败/调用异常时报告仍 READY（容错等价）。
+        first_focus_input = {
+            "trade_date": context.get("trade_date"),
+            "selected_first_board_stocks": selected_first_board,
+            "supplements": supplement_map,
+            "market_context": context.get("market_context") or {},
+        }
+        first_board_focus = self._run_json_stage(
             LIMIT_UP_STAGE_FIRST_BOARD_FOCUS,
-            {
-                "trade_date": context.get("trade_date"),
-                "selected_first_board_stocks": selected_first_board,
-                "supplements": supplement_map,
-                "market_context": context.get("market_context") or {},
-            },
+            first_focus_input,
             self._stage_system_prompt("首板重点个股分析师"),
             self._first_board_focus_prompt(context, selected_first_board, supplement_map),
+            self._fallback_focus_stage(LIMIT_UP_STAGE_FIRST_BOARD_FOCUS, first_focus_input),
             stage_quality,
         )
-        chain_focus = self._run_text_stage(
+        chain_focus_input = {
+            "trade_date": context.get("trade_date"),
+            "selected_chain_stocks": selected_chain,
+            "supplements": supplement_map,
+            "market_context": context.get("market_context") or {},
+        }
+        chain_focus = self._run_json_stage(
             LIMIT_UP_STAGE_CHAIN_FOCUS,
-            {
-                "trade_date": context.get("trade_date"),
-                "selected_chain_stocks": selected_chain,
-                "supplements": supplement_map,
-                "market_context": context.get("market_context") or {},
-            },
+            chain_focus_input,
             self._stage_system_prompt("两连三连重点接力分析师"),
             self._chain_focus_prompt(context, selected_chain, supplement_map),
+            self._fallback_focus_stage(LIMIT_UP_STAGE_CHAIN_FOCUS, chain_focus_input),
             stage_quality,
         )
-        high_focus = self._run_text_stage(
+        high_focus_input = {
+            "trade_date": context.get("trade_date"),
+            "selected_high_board_stocks": selected_high,
+            "supplements": supplement_map,
+            "market_context": context.get("market_context") or {},
+        }
+        high_focus = self._run_json_stage(
             LIMIT_UP_STAGE_HIGH_BOARD_FOCUS,
-            {
-                "trade_date": context.get("trade_date"),
-                "selected_high_board_stocks": selected_high,
-                "supplements": supplement_map,
-                "market_context": context.get("market_context") or {},
-            },
+            high_focus_input,
             self._stage_system_prompt("高连板龙头周期分析师"),
             self._high_board_focus_prompt(context, selected_high, supplement_map),
+            self._fallback_focus_stage(LIMIT_UP_STAGE_HIGH_BOARD_FOCUS, high_focus_input),
             stage_quality,
         )
+        # html_fragment 空值守卫：JSON 合法但 html_fragment 缺失/空串时(模型偶发)，
+        # 回退确定性观察表 HTML，避免 FINAL_REPORT 对应小节空白。
+        # 仅作用于 FOCUS 三阶段(SELECTION 阶段无此字段，不走此守卫)。
+        for focus_payload, focus_input, focus_stage in (
+            (first_board_focus, first_focus_input, LIMIT_UP_STAGE_FIRST_BOARD_FOCUS),
+            (chain_focus, chain_focus_input, LIMIT_UP_STAGE_CHAIN_FOCUS),
+            (high_focus, high_focus_input, LIMIT_UP_STAGE_HIGH_BOARD_FOCUS),
+        ):
+            if not str(focus_payload.get("html_fragment") or "").strip():
+                focus_payload["html_fragment"] = self._fallback_focus_stage(
+                    focus_stage, focus_input, "LLM 未产出 html_fragment"
+                )["html_fragment"]
         final_input = {
             "trade_date": context.get("trade_date"),
             "market_context": context.get("market_context") or {},
@@ -2179,6 +2199,11 @@ class LimitUpPushService:
             "first_board_focus_html": first_board_focus.get("html_fragment"),
             "chain_focus_html": chain_focus.get("html_fragment"),
             "high_board_focus_html": high_focus.get("html_fragment"),
+            # FOCUS JSON-mode 改造新增：逐股结构化先验(stock_priors)，供收口落表按 ts_code 映射
+            # continuation_prob/next_day_premium_prob 等列；降级时为空列表，不影响 html 渲染。
+            "first_board_focus_priors": first_board_focus.get("stock_priors") or [],
+            "chain_focus_priors": chain_focus.get("stock_priors") or [],
+            "high_board_focus_priors": high_focus.get("stock_priors") or [],
             "stock_supplements": supplement_map,
         }
         context["data_quality"] = [*(context.get("data_quality") or []), *stage_quality]
@@ -2350,6 +2375,37 @@ class LimitUpPushService:
             "error_message": error_message,
         }
 
+    def _fallback_focus_stage(
+        self,
+        stage_key: str,
+        stage_input: dict[str, Any],
+        error_message: str | None = None,
+    ) -> dict[str, Any]:
+        """FOCUS 阶段 JSON 路径的确定性降级 payload（READY 率等价迁移，最关键）。
+
+        复用 _fallback_text_stage 的"按入选名单+筹码摘要生成观察表 HTML"逻辑，附保守先验缺省值；
+        作为 _run_json_stage 的 fallback_payload：JSON 解析失败(PARSE_FALLBACK)与调用异常
+        (FAILED_FALLBACK) 两种情况都返回含非空 html_fragment 的 payload，报告仍 READY，
+        与改造前 _run_text_stage 对三 FOCUS 的容错语义完全等价。
+
+        创建日期：2026-06-13
+        author: claude
+        """
+
+        base = self._fallback_text_stage(
+            stage_key, stage_input, error_message or "LLM 先验缺失，仅作观察不参与"
+        )
+        # 先验给保守缺省值：缺测只让结论更保守，不凭空抬高续板/溢价概率。
+        return {
+            "html_fragment": base["html_fragment"],
+            "continuation_prob": "极低",
+            "next_day_premium_prob": "极低",
+            "boost_conditions": [],
+            "fail_conditions": ["LLM 先验缺失，仅作观察不参与"],
+            "suggested_hold_thesis": "先验降级，建议仅观察",
+            "stock_priors": [],
+        }
+
     def _stage_cache_payload(
         self, stage_key: str, stage_input: dict[str, Any]
     ) -> dict[str, Any] | None:
@@ -2492,6 +2548,36 @@ class LimitUpPushService:
             f"输入数据：\n{self._json_dumps(stage_input)}"
         )
 
+    def _focus_json_contract(self) -> str:
+        """FOCUS 阶段统一 JSON 输出契约。
+
+        DeepSeek json_object 要求整条回复为单一 JSON 对象，故 html_fragment 内嵌为字符串字段，
+        结构化先验(continuation_prob 等)与之同对象产出，不能 HTML 与独立 JSON 并存。
+
+        创建日期：2026-06-13
+        author: claude
+        """
+
+        return (
+            "输出严格 JSON：整条回复必须且仅是一个 JSON 对象，"
+            "禁止在 JSON 之外输出任何内容（含 Markdown 围栏与解释文字）。对象结构：\n"
+            "{\n"
+            '  "html_fragment": "报告渲染用HTML片段，使用 h3/p/ul/table/strong，不含 html/body",\n'
+            '  "continuation_prob": "高|中|低|极低",\n'
+            '  "next_day_premium_prob": "高|中|低|极低",\n'
+            '  "boost_conditions": ["加分/触发条件"],\n'
+            '  "fail_conditions": ["失败/止损条件"],\n'
+            '  "suggested_hold_thesis": "一句话持有逻辑",\n'
+            '  "stock_priors": [{"ts_code":"代码","name":"名称",'
+            '"continuation_prob":"高|中|低|极低","next_day_premium_prob":"高|中|低|极低",'
+            '"boost_conditions":["..."],"fail_conditions":["..."],'
+            '"suggested_hold_thesis":"..."}]\n'
+            "}\n"
+            "档位统一用 高/中/低/极低 四档(概率先验，区别于选股阶段的强/中/弱质量分)；"
+            "次日竞价观察(竞价弱于多少放弃/合理高开区间/过高开警惕点)落入 boost/fail_conditions；"
+            "stock_priors 每只对应一只入选股(ts_code 与输入对齐)；html_fragment 内每只分析≤150字。"
+        )
+
     def _first_board_focus_prompt(
         self,
         context: dict[str, Any],
@@ -2519,8 +2605,8 @@ class LimitUpPushService:
             "必须输出次日竞价观察清单：给出竞价弱于多少放弃、合理高开区间、过高开警惕点。"
             "必须显著提示首板接力的不确定性高于连板接力，参与方式与试错幅度要更克制；"
             "用 emotion_cycle 约束口径，退潮或冰点只给观察不给参与建议。"
-            "输出 HTML 片段，使用 h3、p、ul、table、strong，不要输出 html/body。\n\n"
-            f"输入数据：\n{self._json_dumps(stage_input)}"
+            + self._focus_json_contract()
+            + f"\n\n输入数据：\n{self._json_dumps(stage_input)}"
         )
 
     def _chain_selection_prompt(self, context: dict[str, Any]) -> str:
@@ -2585,8 +2671,8 @@ class LimitUpPushService:
             "分别覆盖晋级三板/四板可能性、下一个交易日溢价可能性、触发条件、失败条件、筹码压力和风险提示。"
             "必须输出次日竞价观察清单：给出竞价弱于多少放弃、合理高开区间、过高开警惕点。"
             "20cm 标的要提示更深断板回撤，尾盘首封或多次开板要降级。"
-            "输出 HTML 片段，使用 h3、p、ul、table、strong，不要输出 html/body。\n\n"
-            f"输入数据：\n{self._json_dumps(stage_input)}"
+            + self._focus_json_contract()
+            + f"\n\n输入数据：\n{self._json_dumps(stage_input)}"
         )
 
     def _high_board_focus_prompt(
@@ -2611,9 +2697,9 @@ class LimitUpPushService:
             "允许给出重点观察、谨慎观察、放弃观察分层，"
             "但必须显著提示高位接力、断板、回撤和流动性风险。重点判断空间板地位、"
             "题材带动性、分歧承接和下一个交易日溢价/冲高可能性。"
-            "必须输出次日竞价观察清单，并用 emotion_cycle 约束高位接力口径。输出 HTML 片段，"
-            "不要输出 html/body。\n\n"
-            f"输入数据：\n{self._json_dumps(stage_input)}"
+            "并用 emotion_cycle 约束高位接力口径。"
+            + self._focus_json_contract()
+            + f"\n\n输入数据：\n{self._json_dumps(stage_input)}"
         )
 
     def _final_report_prompt(self, final_input: dict[str, Any]) -> str:
@@ -3074,6 +3160,11 @@ class LimitUpPushService:
     # 未列出的阶段回退统一后缀 v3，保证既有阶段版本串不因结构重构而隐性变化。
     _STAGE_PROMPT_VERSION_SUFFIXES: dict[str, str] = {
         LIMIT_UP_STAGE_INVESTMENT_ADVICE: "advice-v1",
+        # FOCUS 三阶段 JSON-mode 改造：新后缀与旧 HTML-only 缓存物理隔离，旧缓存不被新路径命中，
+        # 也无需 bump 全局 final_prompt_version（避免其余阶段缓存整体失效）。
+        LIMIT_UP_STAGE_FIRST_BOARD_FOCUS: "focus-json-v1",
+        LIMIT_UP_STAGE_CHAIN_FOCUS: "focus-json-v1",
+        LIMIT_UP_STAGE_HIGH_BOARD_FOCUS: "focus-json-v1",
     }
 
     def _stage_prompt_version(self, stage_key: str) -> str:

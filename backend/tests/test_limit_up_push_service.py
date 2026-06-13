@@ -1558,6 +1558,9 @@ def test_first_board_selection_supplements_and_pipeline_fields(monkeypatch) -> N
             }
         if stage_key in {"CHAIN_SELECTION", "HIGH_BOARD_SELECTION"}:
             return {"selected_stocks": []}
+        if stage_key in {"FIRST_BOARD_FOCUS", "CHAIN_FOCUS", "HIGH_BOARD_FOCUS"}:
+            # FOCUS 阶段已改 JSON-mode：返回含 html_fragment + 结构化先验的单一对象
+            return {"html_fragment": f"<h3>{stage_key}</h3>", "stock_priors": []}
         return {"html_fragment": "<h3>首板</h3>", "theme_candidates": []}
 
     def fake_text_stage(
@@ -1587,7 +1590,7 @@ def test_first_board_selection_supplements_and_pipeline_fields(monkeypatch) -> N
     assert html.startswith("<div")
     pipeline = context["pipeline"]
     assert [row["ts_code"] for row in pipeline["selected_first_board_stocks"]] == ["000010.SZ"]
-    assert pipeline["first_board_focus_html"] == "<h2>FIRST_BOARD_FOCUS</h2>"
+    assert pipeline["first_board_focus_html"] == "<h3>FIRST_BOARD_FOCUS</h3>"
 
 
 def test_first_board_selection_is_limited_to_configured_cap(monkeypatch) -> None:
@@ -1935,7 +1938,8 @@ def test_ensure_advice_old_report_uses_markdown_fallback(monkeypatch) -> None:
 
 
 def test_stage_prompt_version_mapping_keeps_existing_suffix() -> None:
-    """确认版本映射重构后既有阶段后缀保持 v3，建议阶段独立起版。
+    """版本映射：未改阶段保持 v3；建议阶段 advice-v1；FOCUS 三阶段 JSON-mode 改造后独立起版
+    focus-json-v1（与旧 :v3 HTML 缓存物理隔离）。
 
     创建日期：2026-06-12
     author: claude
@@ -1944,7 +1948,15 @@ def test_stage_prompt_version_mapping_keeps_existing_suffix() -> None:
     db = make_db()
     service = _make_advice_service(db)
 
-    assert service._stage_prompt_version("CHAIN_FOCUS").endswith(":chain_focus:v3")
+    # FOCUS 三阶段已改 JSON-mode，后缀独立为 focus-json-v1
+    assert service._stage_prompt_version("CHAIN_FOCUS").endswith(":chain_focus:focus-json-v1")
+    assert service._stage_prompt_version("FIRST_BOARD_FOCUS").endswith(
+        ":first_board_focus:focus-json-v1"
+    )
+    assert service._stage_prompt_version("HIGH_BOARD_FOCUS").endswith(
+        ":high_board_focus:focus-json-v1"
+    )
+    # 未改阶段仍回退统一后缀 v3；建议阶段独立 advice-v1
     assert service._stage_prompt_version("FINAL_REPORT").endswith(":final_report:v3")
     assert service._stage_prompt_version("INVESTMENT_ADVICE").endswith(
         ":investment_advice:advice-v1"
