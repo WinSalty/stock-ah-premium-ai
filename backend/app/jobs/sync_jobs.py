@@ -126,6 +126,17 @@ INCREMENTAL_SYNC_JOB_SPECS: tuple[IncrementalSyncJobSpec, ...] = (
         day_of_week="sat",
         doc_note="普通 fina_indicator 需按单股请求，周末夜间逐股补齐 ROE 等最新财务指标。",
     ),
+    IncrementalSyncJobSpec(
+        job_id="sync-a-stock-st-daily",
+        name="同步 A 股每日 ST 名单",
+        dataset="a_stock_st",
+        params={"mode": "incremental"},
+        hour=16,
+        minute=30,
+        # stock_st 按交易日返回 point-in-time ST 名单，供 universe 按"信号日当日"判 ST、杜绝前视；
+        # 排在 a_daily(16:15) 之后错开 Tushare 限流，增量靠 SyncCheckpoint 断点续传。
+        doc_note="stock_st 按交易日返回 point-in-time 快照，盘后逐交易日同步避免回测前视偏差。",
+    ),
 )
 
 

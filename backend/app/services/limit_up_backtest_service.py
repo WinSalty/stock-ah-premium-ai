@@ -135,6 +135,20 @@ class LimitUpBacktestService:
             .limit(1)
         ).scalar_one_or_none()
 
+    def _prev_open_day(self, before_date: date) -> date | None:
+        """a_trade_calendar 中 < before_date 的最近开市日(前一交易日，禁自然日-1)。"""
+
+        return self.db.execute(
+            select(ATradeCalendar.cal_date)
+            .where(
+                ATradeCalendar.exchange == _CALENDAR_EXCHANGE,
+                ATradeCalendar.is_open == 1,
+                ATradeCalendar.cal_date < before_date,
+            )
+            .order_by(ATradeCalendar.cal_date.desc())
+            .limit(1)
+        ).scalar_one_or_none()
+
     def _quote(self, ts_code: str, trade_date: date) -> TencentUnadjustedDailyQuote | None:
         """取不复权日线行情(adjust_type='NONE')。"""
 
@@ -148,7 +162,7 @@ class LimitUpBacktestService:
 
     @staticmethod
     def _pre_close(quote: TencentUnadjustedDailyQuote) -> float | None:
-        """前收盘(不复权)：优先 close-change_amount，退化 close/(1+pct_chg/100)。"""
+        """前收盘(不复权·同行口径)：优先 close-change_amount，退化 close/(1+pct_chg/100)。"""
 
         close = _as_float(quote.close)
         if close is None:
@@ -160,6 +174,42 @@ class LimitUpBacktestService:
         if pct is not None and (1 + pct / 100) != 0:
             return close / (1 + pct / 100)
         return None
+
+    def _resolve_pre_close(
+        self, ts_code: str, trade_date: date, quote: TencentUnadjustedDailyQuote
+    ) -> float | None:
+        """前收盘(稳健)：先用同行 change_amount/pct_chg；缺失时取前一开市日收盘。
+
+        腾讯不复权日线只提供 开/收/高/低/量，change_amount 与 pct_chg 均为 None，
+        故对腾讯数据必须用"前一交易日收盘"推导前收盘，才能算涨停价、判一字/秒封。
+        前一交易日经 a_trade_calendar 裁定(禁自然日-1)。
+        """
+
+        same_row = self._pre_close(quote)
+        if same_row is not None:
+            return same_row
+        prev_day = self._prev_open_day(trade_date)
+        if prev_day is None:
+            return None
+        prev_quote = self._quote(ts_code, prev_day)
+        return _as_float(prev_quote.close) if prev_quote is not None else None
+
+    def _is_flat_limit_down(
+        self, ts_code: str, trade_date: date, quote: TencentUnadjustedDailyQuote
+    ) -> bool:
+        """是否"无量跌停封死"(卖出顺延判据)：当日 high==low 且较前收盘下跌。
+
+        pct_chg 可用则直接判 <0；腾讯数据 pct_chg 为 None 时用前收盘推导(close<前收盘)。
+        """
+
+        if not self._is_flat(quote):
+            return False
+        pct = _as_float(quote.pct_chg)
+        if pct is not None:
+            return pct < 0
+        pre_close = self._resolve_pre_close(ts_code, trade_date, quote)
+        close = _as_float(quote.close)
+        return pre_close is not None and close is not None and close < pre_close
 
     @staticmethod
     def _is_flat(quote: TencentUnadjustedDailyQuote) -> bool:
@@ -248,7 +298,8 @@ class LimitUpBacktestService:
             row["miss_reason"] = "NO_QUOTE"
             return row
 
-        pre_close = self._pre_close(q_buy)
+        # 前收盘走稳健口径(腾讯数据无 change_amount，回退前一交易日收盘)，才能算涨停价、判一字/秒封
+        pre_close = self._resolve_pre_close(ts_code, buy_day, q_buy)
         # 涨停价：存库用 Decimal(DECIMAL 列)，判定比对用 float(与开高收 float 同型)
         lup_dec = limit_up_price(pre_close, board) if pre_close is not None else None  # type: ignore[arg-type]
         lup = float(lup_dec) if lup_dec is not None else None
@@ -279,9 +330,9 @@ class LimitUpBacktestService:
         rollover = 0
         q_sell = self._quote(ts_code, sell_day) if sell_day else None
         while (
-            q_sell is not None
-            and self._is_flat(q_sell)
-            and (_as_float(q_sell.pct_chg) or 0.0) < 0
+            sell_day is not None
+            and q_sell is not None
+            and self._is_flat_limit_down(ts_code, sell_day, q_sell)
             and rollover < _ROLLOVER_CAP
         ):
             sell_day = self._next_open_day(sell_day)

@@ -363,6 +363,64 @@ def test_summary_distribution_and_ic() -> None:
     assert summary["by_role"]["STRAGGLER"]["mean"] < 0
 
 
+def _quote_tencent(
+    db: Session,
+    ts_code: str,
+    day: int,
+    *,
+    o: float,
+    c: float,
+    hi: float,
+    lo: float,
+) -> None:
+    """造一条腾讯口径不复权日线：change_amount/pct_chg 均为 None(腾讯端点不提供)。"""
+
+    db.add(
+        TencentUnadjustedDailyQuote(
+            market="A",
+            ts_code=ts_code,
+            tencent_symbol=ts_code.replace(".", "").lower(),
+            trade_date=date(2026, 6, day),
+            open=Decimal(str(o)),
+            close=Decimal(str(c)),
+            high=Decimal(str(hi)),
+            low=Decimal(str(lo)),
+            pct_chg=None,
+            change_amount=None,
+            adjust_type="NONE",
+            data_source="TENCENT_KLINE",
+        )
+    )
+
+
+def test_one_word_detected_via_prev_close_when_no_change_amount() -> None:
+    """腾讯数据无 change_amount/pct_chg 时，仍能用前一交易日收盘推导前收盘、判出一字买不进。
+
+    这是真实数据(腾讯只给开收高低量)下"回测不计一字/秒封"硬要求的回归保护。
+    """
+
+    db = _make_db()
+    _seed_calendar(db, [10, 11, 12])  # T=10, B=11, S=12; 前一开市日(B)=10
+    _signal(db, "600000.SH", trade_day=10, target_day=11, limit_type="封板")
+    # 前一交易日(10)收盘=10.0 → B(11)前收盘=10.0 → 主板涨停价=11.0
+    _quote_tencent(db, "600000.SH", 10, o=9.8, c=10.0, hi=10.1, lo=9.7)
+    # B(11) 一字涨停：开=高=低=收=11.0，且 change_amount/pct_chg 均 None
+    _quote_tencent(db, "600000.SH", 11, o=11.0, c=11.0, hi=11.0, lo=11.0)
+    _quote_tencent(db, "600000.SH", 12, o=11.5, c=11.6, hi=11.8, lo=11.3)
+    db.commit()
+
+    run_id = LimitUpBacktestService(db).run(
+        BacktestConfig(start_date=date(2026, 6, 10), end_date=date(2026, 6, 10))
+    )
+    res = db.execute(
+        select(LimitUpBacktestResult).where(LimitUpBacktestResult.run_id == run_id)
+    ).scalar_one()
+    assert res.tradable_flag == 0
+    assert res.miss_reason == "ONE_WORD"  # 靠前收盘推导出涨停价后判出一字
+    assert res.gross_return_pct is None
+    assert res.limit_up_price is not None and float(res.limit_up_price) == 11.0
+
+
 # ---------------- 口径版本(exec/cost/sell) ----------------
 
 
