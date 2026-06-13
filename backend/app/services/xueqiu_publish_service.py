@@ -50,8 +50,10 @@ logger = logging.getLogger(__name__)
 XUEQIU_MODE_DRAFT = "DRAFT"
 XUEQIU_MODE_PUBLISH = "PUBLISH"
 XUEQIU_SOURCE_LIMIT_UP_REPORT = "LIMIT_UP_REPORT"
-# 投资建议长文流水：与整报流水按 source_type 区分；自动链路的防双发总闸
-# 仍按 (analysis_id, publish_mode) 跨 source_type 查重，避免同源内容当日重复发文。
+# 投资建议长文流水：与整报流水按 source_type 区分。防双发总闸分两层口径：
+# 自动定时链路按 (trade_date, publish_mode) 跨 analysis_id/source_type 查重，
+# 避免上游补数生成新 analysis_id 导致同一交易日重复发文；手动发布入口仍按
+# (analysis_id, publish_mode) 查重，以便管理员针对某一具体报告重发。
 XUEQIU_SOURCE_LIMIT_UP_ADVICE = "LIMIT_UP_ADVICE"
 XUEQIU_SOURCE_NINE_TURN_REPORT = "NINE_TURN_REPORT"
 XUEQIU_SOURCE_CHAT_ANSWER = "CHAT_ANSWER"
@@ -413,6 +415,23 @@ class XueqiuPublishService:
             return None
         limit_service = LimitUpPushService(self.db, self.settings)
         target_trade_date = limit_service.latest_a_trade_date(today=today)
+        mode = XUEQIU_MODE_PUBLISH if setting.auto_publish else XUEQIU_MODE_DRAFT
+        # 防双发总闸前移（按交易日去重）：在调用 ensure_analysis_for_trade_date 之前先查重。
+        # 该方法会在“快照哈希变化”时新建 analysis 并触发一次 LLM 重新生成报告，而上游
+        # KPL/Tushare 数据盘后补数会让同一 T-1 交易日的快照哈希在当天稍晚发生变化，
+        # 进而生成新的 analysis_id。雪球旧逻辑按 analysis_id 查重，新 analysis_id 会被
+        # 当成“没发过”而二次发文——这正是 06-12 报告被发两次的根因。
+        # 这里改为按 target_trade_date + 发布模式查重（与 PushPlus 按 trade_date 去重对齐）：
+        # 只要当天该交易日的打板报告已成功存草稿/发布过，本轮直接跳过，既不重复发文，
+        # 也避免到点后每次调度都重新生成报告。
+        existing_for_day = self._latest_limit_up_record_for_trade_date_mode(
+            target_trade_date, mode
+        )
+        if existing_for_day is not None and existing_for_day.status in {
+            XUEQIU_STATUS_DRAFTED,
+            XUEQIU_STATUS_PUBLISHED,
+        }:
+            return None
         analysis = limit_service.ensure_analysis_for_trade_date(target_trade_date)
         if (
             analysis is None
@@ -421,21 +440,12 @@ class XueqiuPublishService:
             or analysis.trade_date != target_trade_date
         ):
             # 定时发布只认当前东八区日期推导出的最新 T-1 交易日报告；
-            # 任何空报告、未生成完成或交易日错配都跳过，等待下一分钟/下次调度重试。
+            # 任何空报告、未生成完成或交易日错配都跳过，等待下次调度重试。
             return None
         # ADVICE 模式：PENDING 建议现场回填；建议未就绪（生成中或失败且降级关）
-        # 静默跳过本分钟，由下一分钟调度或推送侧重生成端点恢复，不触发 FAILED 重试。
+        # 静默跳过本轮，由下次调度或推送侧重生成端点恢复，不触发 FAILED 重试。
         self._ensure_limit_up_advice_if_needed(analysis)
         if not self._limit_up_article_ready(analysis):
-            return None
-        mode = XUEQIU_MODE_PUBLISH if setting.auto_publish else XUEQIU_MODE_DRAFT
-        existing = self._latest_record_for_mode(analysis.id, mode)
-        if existing is not None and existing.status in {
-            XUEQIU_STATUS_DRAFTED,
-            XUEQIU_STATUS_PUBLISHED,
-        }:
-            # 到点后补发会让调度器每分钟继续检查；若当天目标报告已经成功保存或发布，
-            # 这里直接静默跳过，避免重复记录“任务完成”日志或再次请求雪球接口。
             return None
         return self.save_or_publish_report(
             analysis.id,
@@ -906,6 +916,42 @@ class XueqiuPublishService:
             .where(
                 XueqiuPublishRecord.analysis_id == analysis_id,
                 XueqiuPublishRecord.publish_mode == mode,
+            )
+            .order_by(desc(XueqiuPublishRecord.created_at), desc(XueqiuPublishRecord.id))
+            .limit(1)
+        )
+
+    def _latest_limit_up_record_for_trade_date_mode(
+        self,
+        trade_date: date,
+        mode: str,
+    ) -> XueqiuPublishRecord | None:
+        """按 T-1 交易日 + 发布模式查找打板报告最近一条雪球流水（跨 analysis_id 去重）。
+
+        自动定时链路的防双发总闸：与按 analysis_id 查重的 _latest_record_for_mode 不同，
+        本方法通过 analysis_id 关联打板报告缓存取得 trade_date，按 trade_date 聚合，
+        因此同一交易日即便因上游补数生成了新的 analysis_id，也能命中已有流水而不重复发文。
+        仅统计打板报告来源（LIMIT_UP_REPORT 整报 / LIMIT_UP_ADVICE 建议）；神奇九转
+        （nine_turn_analysis_id）、问答（CHAT_ANSWER）等流水的 analysis_id 为空，
+        不会与本 JOIN 匹配，互不影响。手动发布入口不走本方法，仍按 analysis_id 查重，
+        以便管理员针对某一具体报告重发。
+
+        创建日期：2026-06-13
+        author: claude
+        """
+
+        return self.db.scalar(
+            select(XueqiuPublishRecord)
+            .join(
+                LimitUpAnalysisCache,
+                LimitUpAnalysisCache.id == XueqiuPublishRecord.analysis_id,
+            )
+            .where(
+                LimitUpAnalysisCache.trade_date == trade_date,
+                XueqiuPublishRecord.publish_mode == mode,
+                XueqiuPublishRecord.source_type.in_(
+                    [XUEQIU_SOURCE_LIMIT_UP_REPORT, XUEQIU_SOURCE_LIMIT_UP_ADVICE]
+                ),
             )
             .order_by(desc(XueqiuPublishRecord.created_at), desc(XueqiuPublishRecord.id))
             .limit(1)

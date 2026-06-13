@@ -770,8 +770,115 @@ def test_scheduler_backfills_after_configured_time_when_report_becomes_ready(mon
     assert record.analysis_id == expected_report.id
     assert record.status == XUEQIU_STATUS_DRAFTED
     assert repeat is None
-    assert requested_trade_dates == [date(2026, 6, 5), date(2026, 6, 5)]
+    # 防双发总闸已前移到 ensure_analysis_for_trade_date 之前并按 trade_date 查重：
+    # 首轮成功存草稿后，第二轮在调用 ensure 之前就命中已有流水直接返回，
+    # 因此整个交易日只会触发一次报告生成（requested_trade_dates 只含一条），
+    # 避免上游补数在当天稍晚改写快照哈希时被重新生成并二次发文。
+    assert requested_trade_dates == [date(2026, 6, 5)]
     assert save_draft_calls == [expected_report.id]
+
+
+def test_scheduler_dedups_by_trade_date_when_report_regenerated(monkeypatch) -> None:
+    """回归：同一交易日因上游补数生成新 analysis_id 时，雪球定时任务不再二次发文。
+
+    复现 2026-06-12 报告被发两次的现象：首轮按交易日生成 analysis A 并存草稿；
+    稍后上游补数使同交易日快照哈希变化，ensure_analysis_for_trade_date 返回新的
+    analysis B。旧逻辑按 analysis_id 查重会把 B 当成“没发过”再发一篇；
+    新逻辑按 (trade_date, publish_mode) 在 ensure 之前查重，第二轮直接跳过，
+    既不重复发文也不再触发对 B 的报告生成。
+
+    创建日期：2026-06-13
+    author: claude
+    """
+
+    db = make_db()
+    admin = AppUser(username="admin", password_hash="hash", role="ADMIN", is_active=True)
+    db.add_all(
+        [
+            admin,
+            ATradeCalendar(exchange="SSE", cal_date=date(2026, 6, 5), is_open=1),
+        ]
+    )
+    db.commit()
+    db.refresh(admin)
+    # 首版报告 A：模拟早盘 08:35 已生成完成的 T-1（2026-06-05）报告。
+    report_a = add_ready_report_for_date(db, date(2026, 6, 5))
+    service = XueqiuPublishService(db, Settings(
+        xueqiu_publish_scheduler_enabled=True,
+        xueqiu_limit_up_content_mode="REPORT",
+    ))
+    save_test_credential(service, admin)
+    service.save_publish_setting(
+        XueqiuPublishSettingRequest(
+            scheduler_enabled=True,
+            auto_publish=False,
+            poll_hours="8",
+            poll_minutes="35",
+            default_cover_pic="",
+        ),
+        admin,
+    )
+    requested_trade_dates: list[date] = []
+    save_draft_calls: list[int] = []
+
+    def fake_ensure_analysis(self, trade_date: date) -> LimitUpAnalysisCache | None:
+        # 桩函数返回该交易日“最新”一份报告（id 倒序），模拟上游补数后 ensure 命中新 analysis。
+        requested_trade_dates.append(trade_date)
+        return self.db.scalar(
+            select(LimitUpAnalysisCache)
+            .where(LimitUpAnalysisCache.trade_date == trade_date)
+            .order_by(LimitUpAnalysisCache.id.desc())
+            .limit(1)
+        )
+
+    def fake_save_draft(_credential, record: XueqiuPublishRecord) -> dict[str, str]:
+        # 记录实际触达雪球草稿接口的次数与对应 analysis_id，用于验证只发一次。
+        save_draft_calls.append(record.analysis_id or 0)
+        return {"id": f"draft-{record.analysis_id}"}
+
+    monkeypatch.setattr(LimitUpPushService, "ensure_analysis_for_trade_date", fake_ensure_analysis)
+    monkeypatch.setattr(
+        service,
+        "_now_local",
+        lambda: datetime(2026, 6, 6, 8, 44, tzinfo=EAST8_TZ),
+    )
+    monkeypatch.setattr(service, "_save_draft", fake_save_draft)
+
+    first = service.save_or_publish_latest_by_scheduler()
+    # 上游补数：同一交易日生成第二份报告 B（不同快照哈希、更大的 id）。
+    # 报告缓存唯一键含 data_snapshot_hash，必须显式给 B 一个不同的哈希才能落库，
+    # 这正对应线上 analysis 43/44 同交易日不同哈希的情况。
+    report_b = LimitUpAnalysisCache(
+        trade_date=date(2026, 6, 5),
+        model="deepseek-v4-pro",
+        prompt_version="limit-up-v1",
+        data_snapshot_hash="hash-20260605-v2",
+        status="READY",
+        title="2026-06-05 A股涨停打板复盘",
+        content_html=(
+            '<div style="background:#fff"><div style="padding:10px">'
+            "<h2>市场情绪</h2><p>补数后涨停家数修订为 128 家。</p>"
+            "</div></div>"
+        ),
+        generated_at=datetime.now(UTC).replace(tzinfo=None),
+    )
+    db.add(report_b)
+    db.commit()
+    db.refresh(report_b)
+    second = service.save_or_publish_latest_by_scheduler()
+
+    assert first is not None
+    assert first.analysis_id == report_a.id
+    assert first.status == XUEQIU_STATUS_DRAFTED
+    # 第二轮按交易日命中已有草稿直接返回 None，没有为 B 触发生成，也没有再次调用雪球接口。
+    assert second is None
+    assert requested_trade_dates == [date(2026, 6, 5)]
+    assert save_draft_calls == [report_a.id]
+    # 数据库中不应为新 analysis B 产生任何雪球流水。
+    records_for_b = db.scalars(
+        select(XueqiuPublishRecord).where(XueqiuPublishRecord.analysis_id == report_b.id)
+    ).all()
+    assert records_for_b == []
 
 
 def test_scheduler_skips_monday_even_when_report_exists(monkeypatch) -> None:
