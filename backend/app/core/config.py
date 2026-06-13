@@ -270,6 +270,16 @@ class Settings(BaseSettings):
         default=6,
         alias="LIMIT_UP_UNIVERSE_NEW_LISTING_MIN_DAYS",
     )
+    # 龙头战法增强层开关：关闭时收口不落 limit_up_selected_stock，报告链路行为不变（回滚成本最低）。
+    limit_up_leader_scoring_enabled: bool = Field(
+        default=True,
+        alias="LIMIT_UP_LEADER_SCORING_ENABLED",
+    )
+    # 打分卡/角色/可成交性判定的口径版本号；回测校准后整体 bump 并标注口径变更。
+    limit_up_leader_scoring_version: str = Field(
+        default="leader-scoring-v1",
+        alias="LIMIT_UP_LEADER_SCORING_VERSION",
+    )
     nine_turn_push_scheduler_enabled: bool = Field(
         default=False,
         alias="NINE_TURN_PUSH_SCHEDULER_ENABLED",
