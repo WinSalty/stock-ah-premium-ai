@@ -97,6 +97,7 @@ def _signal(
     leader_strength_score: float | None = 80.0,
     role: str | None = "MAIN_LEADER",
     strategy_family: str | None = "连板首阴",
+    prompt_version: str = "limit-up-multi-stage-v3",
 ) -> None:
     """造一条选股信号(落 limit_up_selected_stock)。"""
 
@@ -118,7 +119,7 @@ def _signal(
             source_analysis_id=1,
             schema_version="1.0.0",
             model="deepseek-v4-pro",
-            prompt_version="limit-up-multi-stage-v3",
+            prompt_version=prompt_version,
             advice_degraded=False,
         )
     )
@@ -456,6 +457,56 @@ def test_portfolio_metrics_empty_day_zero() -> None:
     # 组合日均 = (0.10 + 0.0)/2 = 0.05；若错误排除空仓日则会是 0.10
     assert abs(pf["mean_daily"] - 0.05) < 1e-9
     assert pf["day_hit_rate"] == 0.5
+
+
+def test_prompt_version_dedup_latest_wins() -> None:
+    """同票同日跨 prompt_version 并存时：默认只回测最新一批，不双计、不撞唯一键。"""
+
+    db = _make_db()
+    _seed_calendar(db, [10, 11, 12])
+    # 旧版本(先写, id 小)：市场状态=参与；新版本(后写, id 大)：市场状态=空仓
+    _signal(db, "600000.SH", 10, 11, market_state="参与", prompt_version="v_old")
+    _signal(db, "600000.SH", 10, 11, market_state="空仓", prompt_version="v_new")
+    _quote(db, "600000.SH", 11, o=10.0, c=10.5, hi=10.8, lo=9.9, pct=5.0, chg=0.5)
+    _quote(db, "600000.SH", 12, o=11.0, c=11.2, hi=11.5, lo=10.8, pct=6.0, chg=0.6)
+    db.commit()
+
+    run_id = LimitUpBacktestService(db).run(
+        BacktestConfig(start_date=date(2026, 6, 10), end_date=date(2026, 6, 10))
+    )
+    rows = (
+        db.execute(select(LimitUpBacktestResult).where(LimitUpBacktestResult.run_id == run_id))
+        .scalars()
+        .all()
+    )
+    assert len(rows) == 1  # 仅取最新一批，不双计/不撞唯一键
+    assert rows[0].market_state == "空仓"  # 最新版本(v_new)的状态
+    assert rows[0].is_empty_day == 1
+
+
+def test_prompt_version_explicit_selects_that_version() -> None:
+    """cfg.prompt_version 指定时只回测该版本(A/B 回放)。"""
+
+    db = _make_db()
+    _seed_calendar(db, [10, 11, 12])
+    _signal(db, "600000.SH", 10, 11, market_state="参与", prompt_version="v_old")
+    _signal(db, "600000.SH", 10, 11, market_state="空仓", prompt_version="v_new")
+    _quote(db, "600000.SH", 11, o=10.0, c=10.5, hi=10.8, lo=9.9, pct=5.0, chg=0.5)
+    _quote(db, "600000.SH", 12, o=11.0, c=11.2, hi=11.5, lo=10.8, pct=6.0, chg=0.6)
+    db.commit()
+
+    run_id = LimitUpBacktestService(db).run(
+        BacktestConfig(
+            start_date=date(2026, 6, 10), end_date=date(2026, 6, 10), prompt_version="v_old"
+        )
+    )
+    rows = (
+        db.execute(select(LimitUpBacktestResult).where(LimitUpBacktestResult.run_id == run_id))
+        .scalars()
+        .all()
+    )
+    assert len(rows) == 1
+    assert rows[0].market_state == "参与"  # 指定的 v_old
 
 
 # ---------------- 纯函数 ----------------

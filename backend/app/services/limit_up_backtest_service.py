@@ -65,9 +65,12 @@ class BacktestConfig:
     include_fees: bool = False  # 是否扣费(默认毛收益，与实盘对账时显式标注)
     control_group_source: str = "CACHE_POOL"  # 对照组源
     fee_rate: float = 0.0013  # 含费时单边约 0.13%(佣金+印花税卖出单边+过户费近似)
+    # 信号 prompt_version 收口：None=每个信号日各取"最新一批(prompt_version)"，避免多版本并存双计；
+    # 指定具体版本则只回测该版本(A/B 回放)。落入 run_key 保证可复现。
+    prompt_version: str | None = None
 
     def run_key(self) -> str:
-        """口径哈希(幂等重跑键)：区间+版本+窗口+对照组源。"""
+        """口径哈希(幂等重跑键)：区间+版本+窗口+对照组源+信号版本收口。"""
 
         raw = "|".join(
             [
@@ -79,6 +82,7 @@ class BacktestConfig:
                 self.sell_price_policy,
                 str(self.include_fees),
                 self.control_group_source,
+                self.prompt_version or "LATEST_PER_DAY",
             ]
         )
         return hashlib.sha1(raw.encode("utf-8")).hexdigest()
@@ -427,6 +431,37 @@ class LimitUpBacktestService:
 
     # ---------------- 主流程 ----------------
 
+    def _load_signals(self, cfg: BacktestConfig) -> list[LimitUpSelectedStock]:
+        """装载回测信号并按 prompt_version 收口，杜绝同 (ts_code, trade_date) 跨版本并存。
+
+        落表唯一键为 (trade_date, ts_code, prompt_version)：版本 bump 后同票同日会留多行，
+        若不收口则回测双计指标，且回测结果唯一键 (run_id, ts_code, signal_trade_date, hold_window)
+        不含版本维度，写入时直接 IntegrityError 中断整批。故：
+          - cfg.prompt_version 指定 → 只取该版本(A/B 回放)；
+          - 否则 → 每个信号日取"最新一批"(该日 id 最大行所属版本)，同导出接口"取最新 READY"口径。
+        """
+
+        rows = (
+            self.db.execute(
+                select(LimitUpSelectedStock)
+                .where(
+                    LimitUpSelectedStock.trade_date >= cfg.start_date,
+                    LimitUpSelectedStock.trade_date <= cfg.end_date,
+                )
+                .order_by(LimitUpSelectedStock.trade_date, LimitUpSelectedStock.id)
+            )
+            .scalars()
+            .all()
+        )
+        if cfg.prompt_version is not None:
+            return [r for r in rows if r.prompt_version == cfg.prompt_version]
+        # 每个信号日取"最新一批"的 prompt_version：该日 id 最大行所属版本(批次按 id 单调递增)
+        latest_version_by_day: dict[date, str | None] = {}
+        for r in rows:
+            # 行已按 (trade_date, id) 升序，遍历到的末值即该日最新批次
+            latest_version_by_day[r.trade_date] = r.prompt_version
+        return [r for r in rows if r.prompt_version == latest_version_by_day[r.trade_date]]
+
     def run(self, cfg: BacktestConfig) -> int:
         """编排一次回测：建/复用 run → 撮合 → 写明细 → 评估 → 标记完成。返回 run_id。"""
 
@@ -469,18 +504,7 @@ class LimitUpBacktestService:
             run.status = "RUNNING"
             run.started_at = datetime.now(UTC).replace(tzinfo=None)
 
-        signals = (
-            self.db.execute(
-                select(LimitUpSelectedStock)
-                .where(
-                    LimitUpSelectedStock.trade_date >= cfg.start_date,
-                    LimitUpSelectedStock.trade_date <= cfg.end_date,
-                )
-                .order_by(LimitUpSelectedStock.trade_date)
-            )
-            .scalars()
-            .all()
-        )
+        signals = self._load_signals(cfg)
         control_mean = self._control_mean_by_date(cfg)
         now = datetime.now(UTC).replace(tzinfo=None)
         rows: list[LimitUpBacktestResult] = []
