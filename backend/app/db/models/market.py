@@ -8,6 +8,7 @@ from sqlalchemy import (
     Boolean,
     Date,
     DateTime,
+    ForeignKey,
     Index,
     Integer,
     String,
@@ -635,6 +636,128 @@ class TencentUnadjustedDailyQuote(TimestampMixin, Base):
     adjust_type: Mapped[str] = mapped_column(String(16), nullable=False, default="NONE")
     data_source: Mapped[str] = mapped_column(String(32), nullable=False, default="TENCENT_KLINE")
     raw_payload_json: Mapped[str | None] = mapped_column(Text)
+
+
+class LimitUpBacktestRun(TimestampMixin, Base):
+    """打板信号回测批次头（一次回测的参数快照 + 汇总）。
+
+    业务意图：记录一次短线打板信号回测的口径(区间/可成交性版本/成本版本/对照组源)与汇总指标，
+        供复现与"实盘−回测 gap"对账。与分红再投长持回测口径完全不同，独立新建。
+    幂等：run_key=口径哈希(区间+版本+窗口+对照组源)，同 key 重跑先清同 run_id 明细再写。
+
+    创建日期：2026-06-13
+    author: claude
+    """
+
+    __tablename__ = "limit_up_backtest_run"
+    __table_args__ = (
+        UniqueConstraint("run_key", name="uk_lub_run_key"),
+        Index("idx_lub_run_status_started", "status", "started_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    run_key: Mapped[str] = mapped_column(String(128), nullable=False)  # 口径哈希(幂等键)
+    start_date: Mapped[date] = mapped_column(Date, nullable=False)  # 回测信号区间起(trade_date)
+    end_date: Mapped[date] = mapped_column(Date, nullable=False)  # 区间止
+    exec_version: Mapped[str] = mapped_column(String(32), nullable=False)  # 可成交性版本 v_exec.N
+    cost_version: Mapped[str] = mapped_column(String(32), nullable=False)  # 买入价/费用版本
+    hold_window: Mapped[int] = mapped_column(Integer, nullable=False, default=1)  # 持有窗口(交易日)
+    sell_price_policy: Mapped[str] = mapped_column(String(32), nullable=False, default="NEXT_OPEN")
+    include_fees: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    control_group_source: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="CACHE_POOL"
+    )
+    params_json: Mapped[str | None] = mapped_column(Text)  # 完整口径快照(可复现)
+    summary_json: Mapped[str | None] = mapped_column(Text)  # 汇总指标(分布/超额/分组)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="RUNNING")
+    signal_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    tradable_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    empty_day_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    error_message: Mapped[str | None] = mapped_column(Text)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime)  # UTC naive
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime)
+
+
+class LimitUpBacktestResult(TimestampMixin, Base):
+    """打板回测撮合明细（一信号×一持有窗口一行）。
+
+    业务意图：每条信号在不复权 T+1 行情上"按规则假设成交"的预期收益，供分布/分组/对账。
+    口径：T→B(买入日=T+1)→S(卖出日=B+1)经 a_trade_calendar 映射；不复权；一字/秒封不计收益;
+        涨跌停按 board(主板±10%/创业板±20%)；空仓日(is_empty_day)收益记 0 留痕。
+
+    创建日期：2026-06-13
+    author: claude
+    """
+
+    __tablename__ = "limit_up_backtest_result"
+    __table_args__ = (
+        UniqueConstraint(
+            "run_id",
+            "ts_code",
+            "signal_trade_date",
+            "hold_window",
+            name="uk_lub_result",
+        ),
+        Index("idx_lub_result_run_window", "run_id", "hold_window"),
+        Index("idx_lub_result_group", "run_id", "market_state", "role"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    run_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("limit_up_backtest_run.id"), nullable=False
+    )
+    ts_code: Mapped[str] = mapped_column(String(16), nullable=False)
+    signal_trade_date: Mapped[date] = mapped_column(Date, nullable=False)  # 信号日 T
+    target_trade_date: Mapped[date | None] = mapped_column(Date)  # 买入日 B=T+1
+    sell_date: Mapped[date | None] = mapped_column(Date)  # 实际卖出日(含跌停顺延)
+    hold_window: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    board: Mapped[str | None] = mapped_column(String(8))  # MAIN/GEM
+    limit_up_price: Mapped[Decimal | None] = mapped_column(DECIMAL(12, 4))  # B 日理论涨停价(不复权)
+    tradable_flag: Mapped[int] = mapped_column(Integer, nullable=False, default=1)  # 1=可成交
+    # 买不进/无行情/空仓原因：ONE_WORD/SECONDS_SEAL/NO_QUOTE/EMPTY_GATE
+    miss_reason: Mapped[str | None] = mapped_column(String(32))
+    buy_price: Mapped[Decimal | None] = mapped_column(DECIMAL(12, 4))
+    sell_price: Mapped[Decimal | None] = mapped_column(DECIMAL(12, 4))
+    limit_down_rollover_days: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    gross_return_pct: Mapped[Decimal | None] = mapped_column(DECIMAL(12, 6))  # 毛收益率(可成交才有)
+    net_return_pct: Mapped[Decimal | None] = mapped_column(DECIMAL(12, 6))  # 净收益率(扣费)
+    control_excess_pct: Mapped[Decimal | None] = mapped_column(DECIMAL(12, 6))  # 相对对照组超额
+    # 信号侧快照(分组/校准用，避免回算)
+    leader_strength_score: Mapped[Decimal | None] = mapped_column(DECIMAL(8, 2))
+    role: Mapped[str | None] = mapped_column(String(32))
+    strategy_family: Mapped[str | None] = mapped_column(String(32))
+    market_state: Mapped[str | None] = mapped_column(String(16))
+    is_empty_day: Mapped[int] = mapped_column(Integer, nullable=False, default=0)  # 空仓日留痕
+    computed_at: Mapped[datetime | None] = mapped_column(DateTime)  # UTC naive
+
+
+class LimitUpMarketPool(TimestampMixin, Base):
+    """回测对照组：全市场涨停池(方案 b 从 limit_up_analysis_cache.context_json 抽取回填)。
+
+    业务意图：算"信号相对全市场涨停池的增量(超额)"的基准；与信号侧当日真实可见涨停集合同源、无前视。
+    幂等：(trade_date, ts_code, source) 唯一，回填重跑 upsert 覆盖。
+
+    创建日期：2026-06-13
+    author: claude
+    """
+
+    __tablename__ = "limit_up_market_pool"
+    __table_args__ = (
+        UniqueConstraint("trade_date", "ts_code", "source", name="uk_lump"),
+        Index("idx_lump_date", "trade_date"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    trade_date: Mapped[date] = mapped_column(Date, nullable=False)  # 涨停所属交易日 T
+    ts_code: Mapped[str] = mapped_column(String(16), nullable=False)
+    name: Mapped[str | None] = mapped_column(String(64))
+    board_level: Mapped[int | None] = mapped_column(Integer)
+    limit_type: Mapped[str | None] = mapped_column(String(16))
+    theme: Mapped[str | None] = mapped_column(String(255))
+    seal_ratio_pct: Mapped[Decimal | None] = mapped_column(DECIMAL(12, 4))
+    # 隔日收益(B=T+1 open → S=T+2 open，与信号回测同口径，作超额基准)；缺行情为 None
+    next_day_return_pct: Mapped[Decimal | None] = mapped_column(DECIMAL(12, 6))
+    source: Mapped[str] = mapped_column(String(32), nullable=False, default="CACHE_POOL")
 
 
 class WaterstockFxRateDaily(TimestampMixin, Base):

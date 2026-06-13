@@ -777,6 +777,88 @@ CREATE TABLE IF NOT EXISTS `limit_up_report_share` (
     FOREIGN KEY (`created_by_user_id`) REFERENCES `app_user` (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='打板报告临时分享链接表';
 
+-- 打板信号回测三件套：批次头(参数快照+汇总) / 撮合明细 / 对照组涨停池。
+-- 撮合口径：T(信号日)→B(买入日=T+1)→S(卖出日=B+1)全程经 a_trade_calendar 映射(禁自然日加减)；
+-- 不复权(tencent_unadjusted_daily_quote, adjust_type='NONE')；一字/秒封"买不进"剔除(不计收益但计入分母)；
+-- 涨跌停按 board(主板±10%/创业板±20%)；无量跌停卖出顺延；空仓日收益记 0 留痕。
+CREATE TABLE IF NOT EXISTS `limit_up_backtest_run` (
+  `id` INT NOT NULL AUTO_INCREMENT COMMENT '主键',
+  `run_key` VARCHAR(128) NOT NULL COMMENT '口径哈希(幂等重跑键)',
+  `start_date` DATE NOT NULL COMMENT '回测信号区间起(trade_date)',
+  `end_date` DATE NOT NULL COMMENT '回测信号区间止',
+  `exec_version` VARCHAR(32) NOT NULL COMMENT '可成交性版本 v_exec.N',
+  `cost_version` VARCHAR(32) NOT NULL COMMENT '买入价+费用版本 v_cost.N',
+  `hold_window` INT NOT NULL DEFAULT 1 COMMENT '持有窗口(交易日)',
+  `sell_price_policy` VARCHAR(32) NOT NULL DEFAULT 'NEXT_OPEN' COMMENT '卖出价口径 NEXT_OPEN/NEXT_CLOSE/VWAP',
+  `include_fees` TINYINT(1) NOT NULL DEFAULT 0 COMMENT '是否含费',
+  `control_group_source` VARCHAR(32) NOT NULL DEFAULT 'CACHE_POOL' COMMENT '对照组源 CACHE_POOL(方案b)/LIMIT_LIST_D(方案a)',
+  `params_json` LONGTEXT DEFAULT NULL COMMENT '完整口径快照(可复现)',
+  `summary_json` LONGTEXT DEFAULT NULL COMMENT '汇总指标(分布/超额/分组)',
+  `status` VARCHAR(32) NOT NULL DEFAULT 'RUNNING' COMMENT 'RUNNING/SUCCESS/FAILED',
+  `signal_count` INT NOT NULL DEFAULT 0 COMMENT '信号数',
+  `tradable_count` INT NOT NULL DEFAULT 0 COMMENT '可成交数',
+  `empty_day_count` INT NOT NULL DEFAULT 0 COMMENT '空仓日数(留痕)',
+  `error_message` TEXT DEFAULT NULL COMMENT '失败原因',
+  `started_at` DATETIME DEFAULT NULL COMMENT '开始时间(UTC naive)',
+  `finished_at` DATETIME DEFAULT NULL COMMENT '结束时间(UTC naive)',
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '更新时间',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_lub_run_key` (`run_key`),
+  KEY `idx_lub_run_status_started` (`status`, `started_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='打板信号回测批次头(参数快照+汇总)';
+
+CREATE TABLE IF NOT EXISTS `limit_up_backtest_result` (
+  `id` INT NOT NULL AUTO_INCREMENT COMMENT '主键',
+  `run_id` INT NOT NULL COMMENT '关联 limit_up_backtest_run.id',
+  `ts_code` VARCHAR(16) NOT NULL COMMENT '标的',
+  `signal_trade_date` DATE NOT NULL COMMENT '信号日 T',
+  `target_trade_date` DATE DEFAULT NULL COMMENT '买入日 B=T+1(日历映射)',
+  `sell_date` DATE DEFAULT NULL COMMENT '实际卖出日(含跌停顺延)',
+  `hold_window` INT NOT NULL DEFAULT 1 COMMENT '持有窗口(交易日)',
+  `board` VARCHAR(8) DEFAULT NULL COMMENT 'MAIN/GEM(涨跌停幅度)',
+  `limit_up_price` DECIMAL(12,4) DEFAULT NULL COMMENT 'B日理论涨停价(不复权)',
+  `tradable_flag` INT NOT NULL DEFAULT 1 COMMENT '1可成交/0买不进(一字秒封)',
+  `miss_reason` VARCHAR(32) DEFAULT NULL COMMENT 'ONE_WORD/SECONDS_SEAL/NO_QUOTE/EMPTY_GATE',
+  `buy_price` DECIMAL(12,4) DEFAULT NULL COMMENT '假设买入价(对账P_backtest)',
+  `sell_price` DECIMAL(12,4) DEFAULT NULL COMMENT '卖出价',
+  `limit_down_rollover_days` INT NOT NULL DEFAULT 0 COMMENT '无量跌停顺延天数',
+  `gross_return_pct` DECIMAL(12,6) DEFAULT NULL COMMENT '毛收益率(可成交才有)',
+  `net_return_pct` DECIMAL(12,6) DEFAULT NULL COMMENT '净收益率(扣费)',
+  `control_excess_pct` DECIMAL(12,6) DEFAULT NULL COMMENT '相对对照组超额',
+  `leader_strength_score` DECIMAL(8,2) DEFAULT NULL COMMENT '龙头强度分(分组用快照)',
+  `role` VARCHAR(32) DEFAULT NULL COMMENT '角色(分组用快照)',
+  `strategy_family` VARCHAR(32) DEFAULT NULL COMMENT '战法族(分组用快照)',
+  `market_state` VARCHAR(16) DEFAULT NULL COMMENT '情绪周期(分组用快照)',
+  `is_empty_day` INT NOT NULL DEFAULT 0 COMMENT '空仓日留痕(收益记0)',
+  `computed_at` DATETIME DEFAULT NULL COMMENT '计算时间(UTC naive)',
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '更新时间',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_lub_result` (`run_id`, `ts_code`, `signal_trade_date`, `hold_window`),
+  KEY `idx_lub_result_run_window` (`run_id`, `hold_window`),
+  KEY `idx_lub_result_group` (`run_id`, `market_state`, `role`),
+  CONSTRAINT `fk_lub_result_run` FOREIGN KEY (`run_id`) REFERENCES `limit_up_backtest_run` (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='打板回测撮合明细(一信号×一窗口一行)';
+
+CREATE TABLE IF NOT EXISTS `limit_up_market_pool` (
+  `id` INT NOT NULL AUTO_INCREMENT COMMENT '主键',
+  `trade_date` DATE NOT NULL COMMENT '涨停所属交易日 T',
+  `ts_code` VARCHAR(16) NOT NULL COMMENT '涨停标的',
+  `name` VARCHAR(64) DEFAULT NULL COMMENT '名称',
+  `board_level` INT DEFAULT NULL COMMENT '连板数(快照)',
+  `limit_type` VARCHAR(16) DEFAULT NULL COMMENT '涨停类型(快照)',
+  `theme` VARCHAR(255) DEFAULT NULL COMMENT '题材(快照)',
+  `seal_ratio_pct` DECIMAL(12,4) DEFAULT NULL COMMENT '封流比(快照衍生)',
+  `next_day_return_pct` DECIMAL(12,6) DEFAULT NULL COMMENT '隔日收益(B=T+1开→S=T+2开，与信号回测同口径，作超额基准)',
+  `source` VARCHAR(32) NOT NULL DEFAULT 'CACHE_POOL' COMMENT 'CACHE_POOL/LIMIT_LIST_D',
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '更新时间',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_lump` (`trade_date`, `ts_code`, `source`),
+  KEY `idx_lump_date` (`trade_date`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='回测对照组全市场涨停池(方案b 从报告快照抽取回填)';
+
 CREATE TABLE IF NOT EXISTS `xueqiu_publish_credential` (
   `id` INT NOT NULL AUTO_INCREMENT COMMENT '自增主键',
   `enabled` TINYINT(1) NOT NULL DEFAULT 0 COMMENT '是否启用雪球发布登录态',

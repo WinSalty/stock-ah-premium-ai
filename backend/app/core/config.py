@@ -307,6 +307,17 @@ class Settings(BaseSettings):
     watchlist_export_internal_token_file: Path | None = Field(
         default=None, alias="WATCHLIST_EXPORT_INTERNAL_TOKEN_FILE"
     )
+    # 回测口径默认：回看交易日窗口、对照组来源、买入价口径。
+    # 对照组：CACHE_POOL=方案b(从报告快照抽取)/LIMIT_LIST_D=方案a(涨停清单接口)。
+    limit_up_backtest_default_lookback_days: int = Field(
+        default=60, alias="LIMIT_UP_BACKTEST_DEFAULT_LOOKBACK_DAYS"
+    )
+    limit_up_backtest_control_source: str = Field(
+        default="CACHE_POOL", alias="LIMIT_UP_BACKTEST_CONTROL_SOURCE"
+    )
+    limit_up_backtest_buy_at: str = Field(
+        default="T1_OPEN", alias="LIMIT_UP_BACKTEST_BUY_AT"
+    )
     nine_turn_push_scheduler_enabled: bool = Field(
         default=False,
         alias="NINE_TURN_PUSH_SCHEDULER_ENABLED",

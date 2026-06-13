@@ -94,6 +94,9 @@ LLM 按需个股研究数据：
 - `limit_up_push_recipient`：打板报告接收人配置表，保存系统用户是否启用接收，以及是否接收周六、周日晚间缓存报告复推；PushPlus 好友令牌仍只保存在绑定表。
 - `limit_up_push_delivery`：打板报告业务推送计划与结果表，按报告、计划类型、计划时间和接收用户做幂等，实际 PushPlus 请求流水关联到 `pushplus_message_log`。
 - `limit_up_report_share`：打板报告分享链接表，保存随机 token、过期时间、撤销时间和公开访问次数；`expires_at` 为空表示永久有效，公开查看只读取已生成报告，不授予后台权限。
+- `limit_up_backtest_run`：打板信号回测批次头，按 `run_key`（区间+口径版本哈希）唯一保证幂等重跑，保存信号区间、可成交性/买入价版本、持有窗口、卖出价口径、是否含费、对照组源、完整参数快照（`params_json`）与汇总指标（`summary_json`：分布/胜率/分组均值/超额/IC）、信号数/可成交数/空仓日数与执行状态。
+- `limit_up_backtest_result`：打板回测撮合明细（一信号×一持有窗口一行，外键 `run_id`→`limit_up_backtest_run.id`）。撮合铁律：T（信号日）→B（买入日=T+1）→S（卖出日=B+1）全程经 `a_trade_calendar` 映射（禁自然日加减）、不复权（`tencent_unadjusted_daily_quote`/`adjust_type='NONE'`）、买 B 日开盘卖 S 日开盘；`tradable_flag=0`+`miss_reason` 标记一字/秒封"买不进"（ONE_WORD/SECONDS_SEAL，不计收益但计入分母）、无行情（NO_QUOTE）、空仓闸门（EMPTY_GATE）；涨跌停按 `board`（主板±10%/创业板±20%）算理论涨停价，无量跌停卖出顺延（`limit_down_rollover_days`）；落毛/净收益、相对对照组超额，并冗余龙头强度分/角色/战法/情绪周期快照供分组评估；`is_empty_day=1` 标记空仓日收益记 0 留痕。
+- `limit_up_market_pool`：回测对照组全市场涨停池（按 `(trade_date, ts_code, source)` 唯一），方案 b 从 `limit_up_analysis_cache.context_json.limit_up_stocks` 抽取回填，算与信号回测同口径的隔日收益（B=T+1 开→S=T+2 开）作超额基准；保存名称/连板数/涨停类型/题材/封流比快照。
 - `nine_turn_analysis_cache`：神奇九转 LLM 报告缓存表，按交易日、频率、模型、提示词版本和数据快照哈希去重，保存 Tushare `stk_nineturn` 九转成形、下跌九转和 7/8 计数观察池上下文、HTML 报告、质量记录和生成状态。
 - `nine_turn_push_delivery`：神奇九转报告业务推送计划与结果表，接收人名单复用打板报告接收人配置，按九转报告、计划类型、计划时间和接收用户做幂等，实际 PushPlus 请求流水关联到 `pushplus_message_log`。
 - `xueqiu_publish_credential`：雪球发布登录态配置表，保存管理员提供的创作者后台 Cookie、User-Agent、Referer、过期时间和最近验证结果；接口只返回掩码摘要，不返回完整 Cookie。
