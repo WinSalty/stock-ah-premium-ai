@@ -280,6 +280,26 @@ class Settings(BaseSettings):
         default="leader-scoring-v1",
         alias="LIMIT_UP_LEADER_SCORING_VERSION",
     )
+    # 空仓闸门硬否决阈值（占位先验 TBD，回测对账后定稿；阈值变更须 bump 闸门 threshold_version）。
+    # 输入为全市场盘后情绪指标；主板(保守)阈值作用于全市场率，创业板阈值预留(待按板拆分后启用)。
+    limit_up_gate_broken_rate_veto: float = Field(
+        default=45.0, alias="LIMIT_UP_GATE_BROKEN_RATE_VETO"
+    )
+    limit_up_gate_limit_down_veto: int = Field(
+        default=30, alias="LIMIT_UP_GATE_LIMIT_DOWN_VETO"
+    )
+    limit_up_gate_premium_veto: float = Field(
+        default=-3.0, alias="LIMIT_UP_GATE_PREMIUM_VETO"
+    )
+    limit_up_gate_limit_up_count_veto: int = Field(
+        default=15, alias="LIMIT_UP_GATE_LIMIT_UP_COUNT_VETO"
+    )
+    limit_up_gate_advance_1_2_veto: float = Field(
+        default=10.0, alias="LIMIT_UP_GATE_ADVANCE_1_2_VETO"
+    )
+    limit_up_gate_advance_min_denom: int = Field(
+        default=10, alias="LIMIT_UP_GATE_ADVANCE_MIN_DENOM"
+    )
     nine_turn_push_scheduler_enabled: bool = Field(
         default=False,
         alias="NINE_TURN_PUSH_SCHEDULER_ENABLED",
