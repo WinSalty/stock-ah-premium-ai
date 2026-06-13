@@ -20,6 +20,7 @@ from app.api.routes_query import router as query_router
 from app.api.routes_settings import router as settings_router
 from app.api.routes_sync import router as sync_router
 from app.api.routes_watchlist import router as watchlist_router
+from app.api.routes_watchlist_export import router as watchlist_export_router
 from app.api.routes_xueqiu_publish import router as xueqiu_publish_router
 from app.core.config import Settings, get_settings
 from app.core.logging import configure_logging
@@ -104,6 +105,7 @@ def create_app() -> FastAPI:
     app.include_router(sync_router, prefix="/api", tags=["sync"])
     app.include_router(market_router, prefix="/api", tags=["market"])
     app.include_router(watchlist_router, prefix="/api", tags=["watchlist"])
+    app.include_router(watchlist_export_router, prefix="/api", tags=["watchlist-export"])
     app.include_router(notifications_router, prefix="/api", tags=["notifications"])
     app.include_router(query_router, prefix="/api", tags=["query"])
     app.include_router(

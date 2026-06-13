@@ -77,8 +77,10 @@ class LimitUpWatchlistResponse(BaseModel):
     """watchlist 只读导出响应体（按买入日查询）。"""
 
     schema_version: str = WATCHLIST_SCHEMA_VERSION
-    trade_date: date | None = Field(default=None, description="命中的信号日 T")
-    target_trade_date: date = Field(description="查询入参买入日 T+1")
+    trade_date: date | None = Field(default=None, description="查询的信号日 T")
+    target_trade_date: date | None = Field(
+        default=None, description="买入日 T+1（取自命中行，无数据时为 None）"
+    )
     market_state: str | None = Field(default=None, description="当日市场情绪/空仓闸门（全行同值）")
     count: int = 0
     items: list[LimitUpWatchlistItem] = Field(default_factory=list)

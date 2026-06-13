@@ -300,6 +300,13 @@ class Settings(BaseSettings):
     limit_up_gate_advance_min_denom: int = Field(
         default=10, alias="LIMIT_UP_GATE_ADVANCE_MIN_DENOM"
     )
+    # watchlist 只读导出内网 token（机器对机器鉴权，与登录 JWT 无关；未配置即接口 503 关闭）。
+    watchlist_export_internal_token: str | None = Field(
+        default=None, alias="WATCHLIST_EXPORT_INTERNAL_TOKEN"
+    )
+    watchlist_export_internal_token_file: Path | None = Field(
+        default=None, alias="WATCHLIST_EXPORT_INTERNAL_TOKEN_FILE"
+    )
     nine_turn_push_scheduler_enabled: bool = Field(
         default=False,
         alias="NINE_TURN_PUSH_SCHEDULER_ENABLED",
@@ -391,6 +398,18 @@ class Settings(BaseSettings):
         if isinstance(value, str):
             return [item.strip() for item in value.split(",") if item.strip()]
         return value
+
+    def resolve_watchlist_export_internal_token(self) -> str | None:
+        """解析 watchlist 只读导出内网 token：优先未入库文件，其次环境变量；均无返回 None。"""
+
+        token_file = self.watchlist_export_internal_token_file
+        if token_file and token_file.exists():
+            token = token_file.read_text(encoding="utf-8").strip()
+            if token:
+                return token
+        if self.watchlist_export_internal_token:
+            return self.watchlist_export_internal_token.strip()
+        return None
 
     def resolve_tushare_token(self) -> str | None:
         """按本机文件优先、环境变量兜底的顺序读取 Tushare Token。
