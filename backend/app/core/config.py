@@ -264,6 +264,12 @@ class Settings(BaseSettings):
         default=True,
         alias="LIMIT_UP_PUSH_ADVICE_FALLBACK_TO_REPORT",
     )
+    # universe_filter 次新过滤阈值：上市未满该交易日数的次新股落选（全面注册制后新股
+    # 前 5 个交易日无涨跌幅，第 6 个交易日起恢复限制，故默认 6 个交易日，按需可调）。
+    limit_up_universe_new_listing_min_days: int = Field(
+        default=6,
+        alias="LIMIT_UP_UNIVERSE_NEW_LISTING_MIN_DAYS",
+    )
     nine_turn_push_scheduler_enabled: bool = Field(
         default=False,
         alias="NINE_TURN_PUSH_SCHEDULER_ENABLED",
