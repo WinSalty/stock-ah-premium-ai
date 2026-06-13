@@ -29,6 +29,7 @@ from app.db.models.notification import (
     LimitUpPushDelivery,
     LimitUpPushRecipient,
     LimitUpReportShare,
+    LimitUpSelectedStock,
     LimitUpStockSupplementCache,
     PushplusBinding,
 )
@@ -42,12 +43,21 @@ from app.schemas.limit_up_push import (
     LimitUpShareItem,
     LimitUpShareResponse,
 )
+from app.schemas.limit_up_watchlist import WATCHLIST_SCHEMA_VERSION
 from app.services.date_utils import format_tushare_date, parse_tushare_date
 from app.services.decimal_utils import to_decimal
+from app.services.limit_up_leader_scoring_service import score_stocks
 from app.services.llm_client import LLM_CHAT_TIMEOUT_SECONDS
 from app.services.llm_metric_definitions import phase_description, phase_label
 from app.services.notification_service import NotificationService
+from app.services.sentiment_gate import (
+    STATE_EMPTY,
+    GateThresholds,
+    flatten_gate_inputs,
+    resolve_gate,
+)
 from app.services.tushare_client import TushareClient
+from app.services.universe_filter import build_universe_context
 
 logger = logging.getLogger(__name__)
 
@@ -343,6 +353,9 @@ class LimitUpPushService:
         existing = self._analysis_for_snapshot(trade_date, snapshot_hash)
         if existing is not None:
             if existing.status == ANALYSIS_STATUS_READY:
+                # 幂等守卫：READY 缓存命中早退前，若该信号日尚无选股行(首次启用本功能或此前
+                # 落表失败)则补落一次，避免 READY 报告永久不落表(对齐设计附录修正#5)。
+                self._backfill_selected_stocks_if_missing(existing, context)
                 return existing
             if (
                 existing.status == ANALYSIS_STATUS_GENERATING
@@ -374,6 +387,8 @@ class LimitUpPushService:
                 if analysis is None:
                     raise
                 if analysis.status == ANALYSIS_STATUS_READY:
+                    # 并发抢锁失败后命中他人已 READY 的报告，同样补落选股守卫(对齐附录修正#5)。
+                    self._backfill_selected_stocks_if_missing(analysis, context)
                     return analysis
                 if (
                     analysis.status == ANALYSIS_STATUS_GENERATING
@@ -399,9 +414,249 @@ class LimitUpPushService:
         analysis.status = ANALYSIS_STATUS_READY
         analysis.generated_at = self._now_naive()
         analysis.error_message = None
+        # 龙头增强+空仓闸门+连板先验整组落 limit_up_selected_stock，与报告 READY 同事务原子提交；
+        # 内部 savepoint 包裹，写失败仅回滚选股行并记日志，不阻断报告 READY 交付。
+        self._persist_selected_stocks(analysis, context)
         self.db.commit()
         self.db.refresh(analysis)
         return analysis
+
+    # ---- 龙头增强 + 空仓闸门 + 连板先验 → limit_up_selected_stock 收口落表 ----
+    # 续板/溢价档位 → 代表性 0-1 数值(表列为 DECIMAL)；档位原值另存 item_json 保真。
+    _PROB_BAND_TO_DECIMAL: dict[str, Decimal] = {
+        "高": Decimal("0.75"),
+        "中": Decimal("0.5"),
+        "低": Decimal("0.25"),
+        "极低": Decimal("0.10"),
+    }
+
+    def _next_trade_date(self, trade_date: date) -> date | None:
+        """T → T+1：a_trade_calendar 中大于 trade_date 的最近开市日。
+
+        禁手工 +1 天(跨周末/节假日安全)；交易日历缺未来日时返回 None。
+
+        创建日期：2026-06-13
+        author: claude
+        """
+
+        return self.db.execute(
+            select(ATradeCalendar.cal_date)
+            .where(
+                ATradeCalendar.exchange == "SSE",
+                ATradeCalendar.is_open == 1,
+                ATradeCalendar.cal_date > trade_date,
+            )
+            .order_by(ATradeCalendar.cal_date)
+            .limit(1)
+        ).scalar_one_or_none()
+
+    def _prob_band_to_decimal(self, band: Any) -> Decimal | None:
+        """续板/溢价档位(高/中/低/极低) → 代表性 0-1 数值；缺失/未知返回 None。"""
+
+        if not band:
+            return None
+        return self._PROB_BAND_TO_DECIMAL.get(str(band).strip())
+
+    def _decimal_or_none(self, value: Any) -> Decimal | None:
+        """数值安全转 Decimal(用 str 规避 float 误差)；None/非数返回 None。"""
+
+        if value is None or isinstance(value, bool):
+            return None
+        try:
+            return Decimal(str(value))
+        except (TypeError, ValueError, ArithmeticError):
+            return None
+
+    def _int_or_none(self, value: Any) -> int | None:
+        """仅当为 int 时返回，否则 None(区分真实缺测与误转)。"""
+
+        return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+    def _delete_selected_rows(self, trade_date: date, prompt_version: str) -> None:
+        """删同 (trade_date, prompt_version) 旧选股行：整组替换前清旧(latest-wins，防退选残留)。"""
+
+        self.db.query(LimitUpSelectedStock).filter(
+            LimitUpSelectedStock.trade_date == trade_date,
+            LimitUpSelectedStock.prompt_version == prompt_version,
+        ).delete(synchronize_session=False)
+
+    def _backfill_selected_stocks_if_missing(
+        self, analysis: LimitUpAnalysisCache, context: dict[str, Any]
+    ) -> None:
+        """READY 缓存命中早退前的幂等守卫：该 (trade_date, prompt_version) 尚无选股行时补落一次。
+
+        覆盖"报告早已 READY 但选股从未落表/此前落表失败"场景——缓存命中后不再进收口段，
+        若不补落则该信号日永久无选股可供 QMT 消费(设计附录修正#5)。已有行则跳过(幂等)。
+
+        创建日期：2026-06-13
+        author: claude
+        """
+
+        if not self.settings.limit_up_leader_scoring_enabled:
+            return
+        exists = (
+            self.db.query(LimitUpSelectedStock.id)
+            .filter(
+                LimitUpSelectedStock.trade_date == analysis.trade_date,
+                LimitUpSelectedStock.prompt_version == analysis.prompt_version,
+            )
+            .first()
+        )
+        if exists is not None:
+            return
+        self._persist_selected_stocks(analysis, context)
+        self.db.commit()
+
+    def _persist_selected_stocks(
+        self, analysis: LimitUpAnalysisCache, context: dict[str, Any]
+    ) -> None:
+        """收口落表外壳：savepoint 包裹整组写入，失败仅回滚选股行、不阻断报告 READY。
+
+        创建日期：2026-06-13
+        author: claude
+        """
+
+        if not self.settings.limit_up_leader_scoring_enabled:
+            return
+        try:
+            with self.db.begin_nested():
+                self._do_persist_selected_stocks(analysis, context)
+        except Exception:
+            # savepoint 已回滚，selected_stock 无残留；报告 READY 不受影响。
+            logger.error(
+                "打板选股落表失败 trade_date=%s(报告 READY 不受影响)",
+                analysis.trade_date,
+                exc_info=True,
+            )
+
+    def _do_persist_selected_stocks(
+        self, analysis: LimitUpAnalysisCache, context: dict[str, Any]
+    ) -> None:
+        """整组 delete-then-insert 落 limit_up_selected_stock(latest-wins)。
+
+        集成：空仓闸门(市场级全行同值)+龙头增强(打分/角色/战法/可成交性)+连板先验(FOCUS)
+        +universe 过滤(落选不入表)+T→T+1 映射。
+
+        创建日期：2026-06-13
+        author: claude
+        """
+
+        trade_date = analysis.trade_date
+        target = self._next_trade_date(trade_date)
+        if target is None:
+            logger.warning("打板选股落表跳过：交易日历缺 T+1 trade_date=%s", trade_date)
+            return
+
+        pipeline = context.get("pipeline") or {}
+        # 空仓闸门：市场级判定，全行同 sentiment_cycle / market_state。
+        gate = resolve_gate(
+            flatten_gate_inputs(context.get("market_emotion") or {}),
+            thresholds=GateThresholds.from_settings(self.settings),
+        )
+        is_empty = gate.market_state == STATE_EMPTY
+        gate_meta = {
+            "threshold_version": gate.threshold_version,
+            "gate_reasons": gate.gate_reasons,
+            "market_state": gate.market_state,
+        }
+
+        # 收集三层入选 + tier 标签。
+        tiered: list[tuple[str, dict[str, Any]]] = []
+        for tier, key in (
+            ("FIRST_BOARD", "selected_first_board_stocks"),
+            ("CHAIN", "selected_chain_stocks"),
+            ("HIGH_BOARD", "selected_high_board_stocks"),
+        ):
+            for row in pipeline.get(key) or []:
+                if isinstance(row, dict):
+                    tiered.append((tier, row))
+
+        # 无候选(空仓短路/无涨停)：仍整组清旧行(latest-wins)，不留残留。
+        if not tiered:
+            self._delete_selected_rows(trade_date, analysis.prompt_version)
+            return
+
+        # 龙头打分：对全部入选一起打分(得分位 + 总龙头唯一化)。
+        scores = score_stocks(
+            [row for _, row in tiered],
+            scoring_version=self.settings.limit_up_leader_scoring_version,
+        )
+        # 连板先验：按 ts_code 索引 FOCUS stock_priors。
+        priors: dict[str, dict[str, Any]] = {}
+        for pkey in (
+            "first_board_focus_priors",
+            "chain_focus_priors",
+            "high_board_focus_priors",
+        ):
+            for prior in pipeline.get(pkey) or []:
+                code = str(prior.get("ts_code") or "")
+                if code:
+                    priors[code] = prior
+        supplements = pipeline.get("stock_supplements") or {}
+        universe_ctx = build_universe_context(self.db, trade_date)
+        advice_degraded = analysis.advice_status != ANALYSIS_STATUS_READY
+
+        # 整组替换：先删旧再插新。
+        self._delete_selected_rows(trade_date, analysis.prompt_version)
+        new_rows: list[LimitUpSelectedStock] = []
+        for (tier, row), score in zip(tiered, scores, strict=True):
+            code = str(row.get("ts_code") or "")
+            name = row.get("name")
+            # universe 落表前过滤：非主板/创业板、ST、次新一律不入信号表。
+            verdict = universe_ctx.evaluate(code, name)
+            if not verdict.passed:
+                continue
+            prior = priors.get(code, {})
+            selection = row.get("selection") if isinstance(row.get("selection"), dict) else {}
+            supplement = supplements.get(code) if isinstance(supplements.get(code), dict) else {}
+            cyq = supplement.get("cyq_summary") if isinstance(supplement, dict) else {}
+            cyq = cyq if isinstance(cyq, dict) else {}
+            tech = row.get("technical") if isinstance(row.get("technical"), dict) else {}
+            strength_detail = dict(score.strength_dim_json)
+            strength_detail.update(gate_meta)  # gate_reasons/threshold_version 折叠进维度 JSON
+            new_rows.append(
+                LimitUpSelectedStock(
+                    trade_date=trade_date,
+                    target_trade_date=target,
+                    ts_code=code,
+                    name=name,
+                    board=verdict.board,
+                    tier=tier,
+                    board_level=self._int_or_none(row.get("board_level")),
+                    limit_type=row.get("limit_type"),
+                    leader_strength_score=score.leader_strength_score,
+                    strength_dim_json=strength_detail,
+                    role_tags=score.role_tags,
+                    strategy_family=score.strategy_family,
+                    setup=score.setup,
+                    action="放弃观察" if is_empty else score.action,
+                    sentiment_cycle=gate.sentiment_cycle,
+                    market_state=gate.market_state,
+                    tradable_flag="BLOCKED" if is_empty else score.tradable_flag,
+                    continuation_prob=self._prob_band_to_decimal(prior.get("continuation_prob")),
+                    next_day_premium_prob=self._prob_band_to_decimal(
+                        prior.get("next_day_premium_prob")
+                    ),
+                    boost_conditions=prior.get("boost_conditions") or [],
+                    fail_conditions=prior.get("fail_conditions") or [],
+                    suggested_hold_thesis=prior.get("suggested_hold_thesis"),
+                    seal_ratio_pct=self._decimal_or_none(row.get("seal_ratio_pct")),
+                    limit_order=self._decimal_or_none(row.get("limit_order")),
+                    turnover_rate=self._decimal_or_none(row.get("turnover_rate")),
+                    close=self._decimal_or_none(tech.get("close")),
+                    winner_rate=self._decimal_or_none(cyq.get("winner_rate")),
+                    priority=self._int_or_none(selection.get("priority")),
+                    item_json={"row": row, "leader": score.strength_dim_json, "prior": prior},
+                    selection_reason=selection.get("selection_reason"),
+                    source_analysis_id=analysis.id,
+                    schema_version=WATCHLIST_SCHEMA_VERSION,
+                    model=analysis.model,
+                    prompt_version=analysis.prompt_version,
+                    advice_degraded=advice_degraded,
+                )
+            )
+        if new_rows:
+            self.db.add_all(new_rows)
 
     def push_report(
         self,
