@@ -211,7 +211,13 @@ class QmtReviewService:
             self.db.execute(
                 select(QmtTrade)
                 .where(*conds)
-                .order_by(QmtTrade.traded_time_east8.desc().nullslast(), QmtTrade.id.desc())
+                # NULL 成交时间排末尾：MySQL 5.7 不支持 NULLS LAST 语法，改用布尔表达式排序
+                # （is_(None) → False(0) 在前=非空优先，True(1) 在后=空值垫底），跨 MySQL/SQLite 兼容。
+                .order_by(
+                    QmtTrade.traded_time_east8.is_(None),
+                    QmtTrade.traded_time_east8.desc(),
+                    QmtTrade.id.desc(),
+                )
                 .offset(max(page - 1, 0) * page_size)
                 .limit(page_size)
             )
