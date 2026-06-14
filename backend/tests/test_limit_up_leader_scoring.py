@@ -132,3 +132,24 @@ def test_main_leader_unique_when_tie() -> None:
     leaders = [r for r in results if r.role_tags and r.role_tags[0] == ROLE_MAIN_LEADER]
     assert len(leaders) == 1
     assert leaders[0].leader_strength_score == max(r.leader_strength_score for r in results)
+
+
+def test_recognition_subscore_nested_dict_not_strong_dominant():
+    """评审 P1#6：score_detail 嵌套 dict 时，按四维强弱均值分档，不再'任一维强即满分'。"""
+    from app.services.limit_up_leader_scoring_service import _recognition_subscore
+
+    # 仅一维强、三维弱 → 弱档 0.3（原实现会因 str(dict) 含'强'判 0.9）
+    one_strong = {"selection": {"score_detail": {
+        "theme_position": "强", "seal_quality": "弱",
+        "capital_signal": "弱", "promotion_potential": "弱"}}}
+    assert _recognition_subscore(one_strong) == 0.3
+    # 全强 → 强档 0.9
+    all_strong = {"selection": {"score_detail": {
+        "a": "强", "b": "强", "c": "强", "d": "强"}}}
+    assert _recognition_subscore(all_strong) == 0.9
+    # 二中二弱 → avg=0.25 → 弱档 0.3
+    mid_weak = {"selection": {"score_detail": {
+        "a": "中", "b": "中", "c": "弱", "d": "弱"}}}
+    assert _recognition_subscore(mid_weak) == 0.3
+    # 字符串兜底兼容：含'强' → 0.9（保留历史粗口径）
+    assert _recognition_subscore({"selection": {"score_detail": "强势"}}) == 0.9

@@ -274,20 +274,59 @@ def _position_safety_subscore(row, ctx, detail) -> float:
     return 0.6 * chip_safety + 0.4 * pos_safety
 
 
-def _recognition_subscore(row) -> float:
-    """⑥ 辨识度：承接 LLM 强中弱评级与角色，市场记忆点/共识。"""
+# 子维度强弱 → 分值映射（评审 P1#6）：强=1.0 / 中=0.5 / 弱=0.0。
+# dict 顺序即字符串兜底口径下的判定优先级（保留"强"优先，与历史一致）。
+_STRENGTH_VALUE = {"强": 1.0, "中": 0.5, "弱": 0.0}
 
+
+def _score_detail_strength(detail) -> float | None:
+    """把 score_detail 的强弱映射到 [0,1]（评审 P1#6）。
+
+    score_detail 的生产契约是【嵌套 dict】：{theme_position, seal_quality, capital_signal,
+    promotion_potential}，各取 强/中/弱。原实现对整个 dict 做 str() 后判「强 in 字符串」，
+    str(dict) 几乎必同时含 强/中/弱 三字 → 只要任一子维度为'强'即满分(强恒胜)，丧失区分度。
+    这里按四子维度强弱取均值（强=1/中=0.5/弱=0），真实反映"几维强、几维弱"。
+    兼容：
+    - 嵌套 dict（生产）：取所有可解析子维度值的均值；
+    - 字符串（历史/兜底夹具）：含 强→1.0 / 中→0.5 / 弱→0.0（取首个命中，保留旧粗口径语义）；
+    - 其它/空 → None（无可解析强弱信息）。
+    """
+    if isinstance(detail, dict):
+        vals = [
+            _STRENGTH_VALUE[v]
+            for v in detail.values()
+            if isinstance(v, str) and v in _STRENGTH_VALUE
+        ]
+        return sum(vals) / len(vals) if vals else None
+    if isinstance(detail, str) and detail:
+        for k, v in _STRENGTH_VALUE.items():
+            if k in detail:
+                return v
+    return None
+
+
+def _recognition_subscore(row) -> float:
+    """⑥ 辨识度：承接 LLM 强中弱评级与角色，市场记忆点/共识（评审 P1#6 修复嵌套 dict 解析）。
+
+    保留原 if/elif 结构与输出档位(0.9/0.6/0.3/0.5)及「强档 OR 强角色 → 0.9」的优先级，
+    仅把「detail 是否强/中/弱」由对整 dict 的 str() 子串判定，改为按四子维度强弱均值分档：
+    avg>=0.67→强、0.34<=avg<0.67→中、avg<0.34→弱。这样 {强,弱,弱,弱} 不再被判强(原会满分)。
+    """
     selection = row.get("selection") if isinstance(row.get("selection"), dict) else {}
-    detail_strength = str(selection.get("score_detail", "")) + str(selection.get("priority", ""))
     role_hint = f"{selection.get('theme_role', '')}{selection.get('leader_role', '')}"
-    score = 0.5
-    if "强" in detail_strength or any(k in role_hint for k in ("龙头", "空间板")):
-        score = 0.9
-    elif "中" in detail_strength or "前排" in role_hint:
-        score = 0.6
-    elif "弱" in detail_strength or "跟风" in role_hint:
-        score = 0.3
-    return score
+
+    avg = _score_detail_strength(selection.get("score_detail"))  # [0,1] 或 None
+    detail_strong = avg is not None and avg >= 0.67
+    detail_mid = avg is not None and 0.34 <= avg < 0.67
+    detail_weak = avg is not None and avg < 0.34
+
+    if detail_strong or any(k in role_hint for k in ("龙头", "空间板")):
+        return 0.9
+    if detail_mid or "前排" in role_hint:
+        return 0.6
+    if detail_weak or "跟风" in role_hint:
+        return 0.3
+    return 0.5
 
 
 def _aggregate_linear(subscores: dict[str, float], weights: dict[str, float]) -> float:
