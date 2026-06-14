@@ -24,6 +24,8 @@ from app.db.session import get_db
 from app.schemas.qmt_review import (
     QmtAccountInfo,
     QmtDailySummary,
+    QmtDecisionCloseLoop,
+    QmtDecisionPage,
     QmtHistoryStats,
     QmtPositionItem,
     QmtSelectionResp,
@@ -103,6 +105,37 @@ def list_positions(
     if eff_date is None:
         return []
     return svc.positions(acct, eff_date)
+
+
+@router.get("/review/decisions", response_model=QmtDecisionPage)
+def list_decisions(
+    db: DbSession,
+    account_id: Annotated[str | None, Query(description="资金账号，缺省取最新账户")] = None,
+    trade_date: Annotated[date | None, Query(description="决策交易日，缺省全部")] = None,
+    decision_type: Annotated[str | None, Query(description="决策类型过滤")] = None,
+    ts_code: Annotated[str | None, Query(description="证券代码过滤")] = None,
+    page: Annotated[int, Query(ge=1)] = 1,
+    page_size: Annotated[int, Query(ge=1, le=200)] = 50,
+) -> QmtDecisionPage:
+    """执行侧决策流水（信号达标/下单/卖出/各类拦截，按决策时刻倒序）。"""
+    svc = QmtReviewService(db)
+    acct = _resolve_account(svc, account_id)
+    if acct is None:
+        return QmtDecisionPage(items=[], total=0, page=page, page_size=page_size)
+    return svc.decisions(acct, trade_date, decision_type, ts_code, page, page_size)
+
+
+@router.get("/review/decision-closeloop", response_model=QmtDecisionCloseLoop)
+def decision_closeloop(
+    db: DbSession,
+    ts_code: Annotated[str, Query(description="证券代码")],
+    signal_date: Annotated[
+        date | None, Query(alias="signal_date", description="信号日 T（闭环关联键）")
+    ] = None,
+    account_id: Annotated[str | None, Query(description="资金账号，缺省不限")] = None,
+) -> QmtDecisionCloseLoop:
+    """单票闭环：入选信号 → 决策时间线（含为什么没买） → 关联成交。"""
+    return QmtReviewService(db).decision_closeloop(account_id, signal_date, ts_code)
 
 
 @router.get("/review/selection", response_model=QmtSelectionResp)

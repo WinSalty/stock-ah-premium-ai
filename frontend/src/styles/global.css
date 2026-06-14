@@ -3330,3 +3330,42 @@ pre.llm-payload-viewer,
   color: #64748b;
   font-weight: 600;
 }
+
+/* 决策流水 / 闭环 */
+.qmt-decisions .ant-table-cell {
+  font-variant-numeric: tabular-nums;
+}
+
+.qmt-loop-signal {
+  padding: 12px 14px;
+  margin-bottom: 4px;
+  border: 1px solid #e5ebf3;
+  border-radius: 8px;
+  background: #fbfcfe;
+}
+
+.qmt-loop-sub {
+  font-size: 14px;
+  font-weight: 700;
+  color: #172033;
+  margin: 16px 0 10px;
+}
+
+.qmt-loop-signal .qmt-loop-sub:first-child {
+  margin-top: 0;
+}
+
+.qmt-loop-event {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.qmt-loop-event-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}

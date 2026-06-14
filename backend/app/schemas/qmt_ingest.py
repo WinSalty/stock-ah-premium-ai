@@ -19,8 +19,15 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-# 允许回流的四张表（白名单，杜绝任意表写入）。与执行侧 storage.schema.QMT_TABLES 对齐。
-QMT_INGEST_TABLES = ("qmt_trade", "qmt_order", "qmt_position_snapshot", "qmt_account_daily")
+# 允许回流的表（白名单，杜绝任意表写入）。前四张为交易事实源（与执行侧 storage.schema.QMT_TABLES 对齐）；
+# qmt_decision_log 为决策明细（复盘用、best-effort、不参与执行侧对账，故不在执行侧 QMT_TABLES 内）。
+QMT_INGEST_TABLES = (
+    "qmt_trade",
+    "qmt_order",
+    "qmt_position_snapshot",
+    "qmt_account_daily",
+    "qmt_decision_log",
+)
 
 
 class QmtIngestRecord(BaseModel):

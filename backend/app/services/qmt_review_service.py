@@ -26,10 +26,19 @@ from sqlalchemy.orm import Session
 
 from app.db.models.market import AStockBasic
 from app.db.models.notification import LimitUpAnalysisCache, LimitUpSelectedStock
-from app.db.models.qmt import QmtAccountDaily, QmtOrder, QmtPositionSnapshot, QmtTrade
+from app.db.models.qmt import (
+    QmtAccountDaily,
+    QmtDecisionLog,
+    QmtOrder,
+    QmtPositionSnapshot,
+    QmtTrade,
+)
 from app.schemas.qmt_review import (
     QmtAccountInfo,
     QmtDailySummary,
+    QmtDecisionCloseLoop,
+    QmtDecisionItem,
+    QmtDecisionPage,
     QmtHistoryStats,
     QmtNetWorthPoint,
     QmtPositionItem,
@@ -450,3 +459,137 @@ class QmtReviewService:
         )
         items = [QmtSelectionItem.model_validate(r) for r in rows]
         return QmtSelectionResp(trade_date=eff, prompt_version=pv, count=len(items), items=items)
+
+    def selection_one(self, signal_trade_date: date, ts_code: str) -> QmtSelectionItem | None:
+        """取某信号日某票的入选信号（最新 READY 版本消歧），供闭环顶部「为何选它」展示。"""
+        pv = self._ready_prompt_version(signal_trade_date)
+        if pv is None:
+            return None
+        row = self.db.execute(
+            select(LimitUpSelectedStock)
+            .where(
+                LimitUpSelectedStock.trade_date == signal_trade_date,
+                LimitUpSelectedStock.ts_code == ts_code,
+                LimitUpSelectedStock.prompt_version == pv,
+            )
+            .limit(1)
+        ).scalar_one_or_none()
+        return QmtSelectionItem.model_validate(row) if row is not None else None
+
+    # ---------------- 决策流水 / 闭环 ----------------
+    @staticmethod
+    def _decision_item(row: QmtDecisionLog, name: str | None) -> QmtDecisionItem:
+        """ORM 决策行 → 响应行（补证券名称）。"""
+        item = QmtDecisionItem.model_validate(row)
+        item.name = name
+        return item
+
+    def decisions(
+        self,
+        account_id: str,
+        trade_date: date | None,
+        decision_type: str | None,
+        ts_code: str | None,
+        page: int,
+        page_size: int,
+    ) -> QmtDecisionPage:
+        """决策流水分页（按账户/日/类型/票筛选，按决策时刻倒序）。"""
+        conds = [QmtDecisionLog.account_id == account_id]
+        if trade_date is not None:
+            conds.append(QmtDecisionLog.trade_date == trade_date)
+        if decision_type:
+            conds.append(QmtDecisionLog.decision_type == decision_type)
+        if ts_code:
+            conds.append(QmtDecisionLog.ts_code == ts_code)
+        total = self.db.execute(select(func.count(QmtDecisionLog.id)).where(*conds)).scalar_one()
+        rows = (
+            self.db.execute(
+                select(QmtDecisionLog)
+                .where(*conds)
+                # NULL 决策时刻排末尾（MySQL5.7 无 NULLS LAST，用布尔排序跨库兼容）。
+                .order_by(
+                    QmtDecisionLog.decided_time_east8.is_(None),
+                    QmtDecisionLog.decided_time_east8.desc(),
+                    QmtDecisionLog.id.desc(),
+                )
+                .offset(max(page - 1, 0) * page_size)
+                .limit(page_size)
+            )
+            .scalars()
+            .all()
+        )
+        name_map = self._name_map([r.ts_code for r in rows if r.ts_code])
+        items = [
+            self._decision_item(r, name_map.get(r.ts_code) if r.ts_code else None) for r in rows
+        ]
+        return QmtDecisionPage(items=items, total=int(total or 0), page=page, page_size=page_size)
+
+    def decision_closeloop(
+        self, account_id: str | None, signal_trade_date: date | None, ts_code: str
+    ) -> QmtDecisionCloseLoop:
+        """单票闭环：入选信号 + 决策时间线（升序，含 SKIP/MISS=为什么没买） + 关联成交。"""
+        conds = [QmtDecisionLog.ts_code == ts_code]
+        if signal_trade_date is not None:
+            conds.append(QmtDecisionLog.signal_trade_date == signal_trade_date)
+        if account_id:
+            conds.append(QmtDecisionLog.account_id == account_id)
+        decs = (
+            self.db.execute(
+                select(QmtDecisionLog)
+                .where(*conds)
+                .order_by(
+                    QmtDecisionLog.decided_time_east8.is_(None),
+                    QmtDecisionLog.decided_time_east8.asc(),
+                    QmtDecisionLog.id.asc(),
+                )
+            )
+            .scalars()
+            .all()
+        )
+        # 入选信号 + 名称（优先信号侧名称）。
+        selection = self.selection_one(signal_trade_date, ts_code) if signal_trade_date else None
+        name = (selection.name if selection else None) or self._name_map([ts_code]).get(ts_code)
+        timeline = [self._decision_item(r, name) for r in decs]
+        # 关联成交：决策里出现过的 order_id → qmt_trade 成交事实。
+        order_ids = [r.order_id for r in decs if r.order_id is not None]
+        fills: list[QmtTradeItem] = []
+        if order_ids:
+            tconds = [QmtTrade.ts_code == ts_code, QmtTrade.order_id.in_(set(order_ids))]
+            if account_id:
+                tconds.append(QmtTrade.account_id == account_id)
+            trows = (
+                self.db.execute(
+                    select(QmtTrade)
+                    .where(*tconds)
+                    .order_by(
+                        QmtTrade.traded_time_east8.is_(None),
+                        QmtTrade.traded_time_east8.asc(),
+                        QmtTrade.id.asc(),
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            fills = [
+                QmtTradeItem(
+                    traded_id=t.traded_id,
+                    trade_date=t.trade_date,
+                    ts_code=t.ts_code,
+                    name=name,
+                    trade_side=t.trade_side,
+                    traded_price=t.traded_price,
+                    traded_volume=t.traded_volume,
+                    traded_amount=t.traded_amount,
+                    traded_time_east8=t.traded_time_east8,
+                    signal_trade_date=t.signal_trade_date,
+                )
+                for t in trows
+            ]
+        return QmtDecisionCloseLoop(
+            signal_trade_date=signal_trade_date,
+            ts_code=ts_code,
+            name=name,
+            selection=selection,
+            timeline=timeline,
+            fills=fills,
+        )

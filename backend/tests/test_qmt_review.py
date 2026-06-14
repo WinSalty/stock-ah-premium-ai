@@ -27,7 +27,13 @@ from app.db.base import Base
 from app.db.models.auth import AppUser
 from app.db.models.market import AStockBasic
 from app.db.models.notification import LimitUpSelectedStock
-from app.db.models.qmt import QmtAccountDaily, QmtOrder, QmtPositionSnapshot, QmtTrade
+from app.db.models.qmt import (
+    QmtAccountDaily,
+    QmtDecisionLog,
+    QmtOrder,
+    QmtPositionSnapshot,
+    QmtTrade,
+)
 from app.db.session import get_db
 
 ACCOUNT = "A1"
@@ -134,6 +140,24 @@ def _seed(db: Session) -> None:
             # 审计/版本字段 NOT NULL（FK 在 SQLite 默认不校验，给占位值即可）。
             source_analysis_id=1, schema_version="1", model="test", prompt_version="v1",
         )
+    )
+    # 决策链路：达标 → 买入提交（order_id=1001 串联 TR1 成交）。
+    db.add_all(
+        [
+            QmtDecisionLog(
+                account_id=ACCOUNT, trade_date=D2, decision_id="DEC1", signal_trade_date=SIG,
+                ts_code="600000.SH", decision_type="SIGNAL_QUALIFIED", decision_stage="STRATEGY",
+                action="CHASE_LIMIT_UP", strategy_family="打板", reason="封流比达标", reason_code="qualified",
+                decided_time=datetime(2026, 6, 13, 1, 25), decided_time_east8=datetime(2026, 6, 13, 9, 25),
+            ),
+            QmtDecisionLog(
+                account_id=ACCOUNT, trade_date=D2, decision_id="DEC2", signal_trade_date=SIG,
+                ts_code="600000.SH", decision_type="BUY_SUBMIT", decision_stage="ORDER",
+                action="CHASE_LIMIT_UP", strategy_family="打板", reason="挂涨停价买入", reason_code="order_submitted",
+                order_id=1001, limit_price=Decimal("10"), plan_volume=1000,
+                decided_time=datetime(2026, 6, 13, 1, 31), decided_time_east8=datetime(2026, 6, 13, 9, 31),
+            ),
+        ]
     )
     db.commit()
 
@@ -298,6 +322,57 @@ def test_selection_forbidden_for_user() -> None:
     """USER 角色无 qmt_review → 选股接口 403。"""
     db = _make_db()
     assert _client(db, user_id=2).get("/api/review/selection").status_code == 403
+
+
+# ----------------------------- 决策流水 / 闭环 -----------------------------
+def test_decisions() -> None:
+    """决策流水按交易日返回，按决策时刻倒序（BUY_SUBMIT 在 SIGNAL_QUALIFIED 之前）。"""
+    db = _make_db()
+    resp = _client(db, user_id=1).get("/api/review/decisions", params={"trade_date": D2.isoformat()})
+    assert resp.status_code == 200
+    d = resp.json()
+    assert d["total"] == 2
+    assert d["items"][0]["decision_type"] == "BUY_SUBMIT"  # 09:31 在前
+    assert d["items"][0]["name"] == "浦发银行"
+    assert d["items"][1]["decision_type"] == "SIGNAL_QUALIFIED"
+
+
+def test_decisions_type_filter() -> None:
+    """按决策类型过滤。"""
+    db = _make_db()
+    resp = _client(db, user_id=1).get(
+        "/api/review/decisions", params={"decision_type": "BUY_SUBMIT"}
+    )
+    assert resp.status_code == 200
+    d = resp.json()
+    assert d["total"] == 1
+    assert d["items"][0]["order_id"] == 1001
+
+
+def test_decision_closeloop() -> None:
+    """单票闭环串联：入选信号 + 决策时间线(升序) + 关联成交(order_id=1001→TR1)。"""
+    db = _make_db()
+    resp = _client(db, user_id=1).get(
+        "/api/review/decision-closeloop",
+        params={"ts_code": "600000.SH", "signal_date": SIG.isoformat()},
+    )
+    assert resp.status_code == 200
+    d = resp.json()
+    assert d["name"] == "浦发银行"
+    assert d["selection"] is not None
+    assert d["selection"]["strategy_family"] == "打板"
+    # 时间线升序：SIGNAL_QUALIFIED(09:25) 在 BUY_SUBMIT(09:31) 之前
+    assert [t["decision_type"] for t in d["timeline"]] == ["SIGNAL_QUALIFIED", "BUY_SUBMIT"]
+    # 关联成交：order_id=1001 命中 TR1 买入
+    assert len(d["fills"]) == 1
+    assert d["fills"][0]["traded_id"] == "TR1"
+    assert d["fills"][0]["trade_side"] == "BUY"
+
+
+def test_decisions_forbidden_for_user() -> None:
+    """USER 角色无 qmt_review → 决策接口 403。"""
+    db = _make_db()
+    assert _client(db, user_id=2).get("/api/review/decisions").status_code == 403
 
 
 if __name__ == "__main__":  # pragma: no cover

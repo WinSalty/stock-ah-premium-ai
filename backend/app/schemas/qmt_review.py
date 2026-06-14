@@ -165,3 +165,50 @@ class QmtSelectionResp(BaseModel):
     prompt_version: str | None = Field(default=None, description="生效报告版本")
     count: int = 0
     items: list[QmtSelectionItem] = Field(default_factory=list)
+
+
+class QmtDecisionItem(BaseModel):
+    """执行侧决策明细行（信号达标/下单/卖出/各类拦截 的一条决策事件）。"""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    decision_id: str
+    trade_date: date
+    ts_code: str | None = None
+    name: str | None = None
+    decision_type: str = Field(description="SIGNAL_QUALIFIED/BUY_SUBMIT/BUY_MISS/SELL_*/SKIP_* 等")
+    decision_stage: str | None = None
+    action: str | None = None
+    strategy_family: str | None = None
+    order_phase: str | None = None
+    reason: str | None = Field(default=None, description="触发/拦截原因(人读)")
+    reason_code: str | None = None
+    factors_snapshot: dict | None = Field(default=None, description="决策当时因子/阈值快照")
+    limit_price: Decimal | None = None
+    plan_volume: int | None = None
+    order_id: int | None = None
+    biz_order_no: str | None = None
+    signal_trade_date: date | None = None
+    decided_time_east8: datetime | None = Field(default=None, description="决策时刻(东八区)")
+
+
+class QmtDecisionPage(BaseModel):
+    """决策流水分页。"""
+
+    items: list[QmtDecisionItem]
+    total: int
+    page: int
+    page_size: int
+
+
+class QmtDecisionCloseLoop(BaseModel):
+    """单票闭环：信号入选 → 决策时间线 → 成交事实。"""
+
+    signal_trade_date: date | None = None
+    ts_code: str
+    name: str | None = None
+    selection: QmtSelectionItem | None = Field(default=None, description="入选信号(为何选它)")
+    timeline: list[QmtDecisionItem] = Field(
+        default_factory=list, description="决策事件按决策时刻升序(含 SKIP/MISS=为什么没买)"
+    )
+    fills: list[QmtTradeItem] = Field(default_factory=list, description="关联成交事实(按时间升序)")

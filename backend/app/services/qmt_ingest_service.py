@@ -19,17 +19,24 @@ author: claude
 
 from __future__ import annotations
 
+import json
 import logging
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
-from sqlalchemy import Boolean, Date, DateTime, Integer, Numeric, func
+from sqlalchemy import JSON, Boolean, Date, DateTime, Integer, Numeric, func
 from sqlalchemy.dialects.mysql import insert as mysql_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session
 
-from app.db.models.qmt import QmtAccountDaily, QmtOrder, QmtPositionSnapshot, QmtTrade
+from app.db.models.qmt import (
+    QmtAccountDaily,
+    QmtDecisionLog,
+    QmtOrder,
+    QmtPositionSnapshot,
+    QmtTrade,
+)
 from app.schemas.qmt_ingest import QMT_INGEST_TABLES, QmtIngestRecord, QmtIngestRequest
 
 logger = logging.getLogger(__name__)
@@ -62,6 +69,12 @@ _TABLE_SPEC: dict[str, dict[str, Any]] = {
         "model": QmtAccountDaily,
         "unique": ("account_id", "trade_date", "snapshot_type"),
         "coalesce": set(),
+    },
+    "qmt_decision_log": {
+        "model": QmtDecisionLog,
+        "unique": ("account_id", "trade_date", "decision_id"),
+        # 回挂信号日/东八区时刻/券商单号/业务单号后到不被空覆盖（与执行侧二次回填口径一致）。
+        "coalesce": {"signal_trade_date", "decided_time_east8", "order_id", "biz_order_no"},
     },
 }
 
@@ -102,6 +115,17 @@ def _coerce_value(coltype: Any, value: Any) -> Any:
             return str(value).strip().lower() in {"1", "true", "yes", "on", "t", "y"}
         if isinstance(coltype, Integer):
             return int(value)
+        if isinstance(coltype, JSON):
+            # JSON 列（如决策快照 factors_snapshot）：dict/list 来料原样透传（已 JSON 友好）；
+            # 字符串则尝试 json 解析，失败保留原串，避免被 str() 二次编码成不可用文本。
+            if isinstance(value, (dict, list)):
+                return value
+            if isinstance(value, str):
+                try:
+                    return json.loads(value)
+                except (ValueError, TypeError):
+                    return value
+            return value
     except (InvalidOperation, ValueError, TypeError) as exc:
         raise QmtIngestValidationError(f"列值反序列化失败：{value!r} -> {coltype} ({exc})") from exc
     # 其余（String/Text）原样转字符串。

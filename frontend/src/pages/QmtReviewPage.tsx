@@ -3,12 +3,14 @@ import {
   Alert,
   DatePicker,
   Empty,
+  Modal,
   Segmented,
   Select,
   Spin,
   Table,
   Tabs,
   Tag,
+  Timeline,
   Tooltip,
   Typography,
   Button
@@ -16,17 +18,21 @@ import {
 import type { TableColumnsType } from 'antd';
 import dayjs, { type Dayjs } from 'dayjs';
 import ReactECharts from 'echarts-for-react';
-import { RotateCw, TrendingUp, Wallet, Activity, Layers, Info, Target } from 'lucide-react';
+import { RotateCw, TrendingUp, Wallet, Activity, Layers, Info, Target, GitBranch } from 'lucide-react';
 import { useQuery, useQueryClient, useIsFetching } from '@tanstack/react-query';
 import PageHeader from '../components/PageHeader';
 import {
+  fetchDecisionCloseLoop,
   fetchQmtAccounts,
   fetchQmtDailySummary,
+  fetchQmtDecisions,
   fetchQmtHistory,
   fetchQmtPositions,
   fetchQmtSelection,
   fetchQmtTrades,
   type NumLike,
+  type QmtDecisionCloseLoop,
+  type QmtDecisionItem,
   type QmtPositionItem,
   type QmtSelectionItem,
   type QmtTradeItem
@@ -257,6 +263,17 @@ export default function QmtReviewPage() {
               </span>
             ),
             children: <SelectionTab active={tab === 'selection'} />
+          },
+          {
+            key: 'decisions',
+            label: (
+              <span className="qmt-tab-label">
+                <GitBranch size={15} /> 决策流水
+              </span>
+            ),
+            children: (
+              <DecisionsTab active={tab === 'decisions'} accountId={accountId} dateStr={dateStr} />
+            )
           },
           {
             key: 'daily',
@@ -817,6 +834,306 @@ function PanelSpin() {
   return (
     <div className="panel qmt-panel-spin">
       <Spin />
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// 决策流水 / 闭环（信号达标 → 下单/未买 → 卖出 时间线）
+// ---------------------------------------------------------------------------
+
+// 决策类型 → 中文名 + 标签色（红涨绿跌：买入红、卖出绿；SKIP/MISS 中性/橙）。
+const DECISION_META: Record<string, { label: string; color: string }> = {
+  SIGNAL_QUALIFIED: { label: '信号达标', color: 'cyan' },
+  BUY_SUBMIT: { label: '买入提交', color: 'red' },
+  BUY_MISS: { label: '买不进', color: 'orange' },
+  SELL_SUBMIT: { label: '卖出提交', color: 'green' },
+  SELL_HOLD: { label: '续持', color: 'blue' },
+  SKIP_GLOBAL: { label: '全局跳过', color: 'default' },
+  SKIP_STRATEGY: { label: '战法弃买', color: 'default' },
+  SKIP_ORCHESTRATION: { label: '编排跳过', color: 'default' },
+  SKIP_ORDER: { label: '下单拦截', color: 'default' }
+};
+
+const DECISION_TYPE_OPTIONS = [
+  { label: '全部类型', value: 'ALL' },
+  { label: '信号达标', value: 'SIGNAL_QUALIFIED' },
+  { label: '买入提交', value: 'BUY_SUBMIT' },
+  { label: '买不进', value: 'BUY_MISS' },
+  { label: '卖出提交', value: 'SELL_SUBMIT' },
+  { label: '续持', value: 'SELL_HOLD' },
+  { label: '编排跳过', value: 'SKIP_ORCHESTRATION' },
+  { label: '战法弃买', value: 'SKIP_STRATEGY' }
+];
+
+function decisionTag(type: string) {
+  const m = DECISION_META[type] ?? { label: type, color: 'default' };
+  return <Tag color={m.color}>{m.label}</Tag>;
+}
+
+/** Timeline 圆点颜色（与红涨绿跌一致）。 */
+function timelineColor(type: string): string {
+  if (type === 'BUY_SUBMIT') return 'red';
+  if (type === 'SELL_SUBMIT') return 'green';
+  if (type === 'SIGNAL_QUALIFIED') return 'blue';
+  if (type === 'BUY_MISS') return 'orange';
+  return 'gray';
+}
+
+/** 从东八区时间串取 HH:mm:ss。 */
+function fmtTime(v: string | null): string {
+  if (!v) return '';
+  const m = v.replace(' ', 'T').match(/T(\d{2}:\d{2}:\d{2})/);
+  return m ? m[1] : v;
+}
+
+function DecisionsTab({
+  active,
+  accountId,
+  dateStr
+}: {
+  active: boolean;
+  accountId?: string;
+  dateStr?: string;
+}) {
+  const [type, setType] = useState('ALL');
+  const [page, setPage] = useState(1);
+  const [loop, setLoop] = useState<{ ts_code: string; signal_date?: string } | null>(null);
+  const query = useQuery({
+    queryKey: [QK, 'decisions', accountId, dateStr, type, page],
+    queryFn: () =>
+      fetchQmtDecisions({
+        account_id: accountId,
+        trade_date: dateStr,
+        decision_type: type === 'ALL' ? undefined : type,
+        page,
+        page_size: 20
+      }),
+    enabled: active
+  });
+  const data = query.data;
+
+  const columns: TableColumnsType<QmtDecisionItem> = [
+    {
+      title: '决策时刻',
+      dataIndex: 'decided_time_east8',
+      width: 96,
+      render: (v: string | null) => fmtTime(v) || '-'
+    },
+    {
+      title: '证券',
+      key: 'security',
+      width: 150,
+      render: (_, r) =>
+        r.ts_code ? (
+          <div className="qmt-cell-stack">
+            <span className="qmt-strong">{r.name ?? r.ts_code}</span>
+            <span className="qmt-muted">{r.ts_code}</span>
+          </div>
+        ) : (
+          <span className="qmt-muted">全局</span>
+        )
+    },
+    { title: '决策', dataIndex: 'decision_type', width: 96, render: (v: string) => decisionTag(v) },
+    {
+      title: '战法/动作',
+      key: 'strategy',
+      width: 150,
+      render: (_, r) => (
+        <div className="qmt-signal-tags">
+          {r.strategy_family && r.strategy_family !== 'SELL' ? <Tag color="volcano">{r.strategy_family}</Tag> : null}
+          {r.action ? <Tag>{r.action}</Tag> : null}
+        </div>
+      )
+    },
+    {
+      title: '原因',
+      key: 'reason',
+      render: (_, r) => (
+        <div className="qmt-cell-stack">
+          <span>{r.reason ?? '-'}</span>
+          {r.reason_code ? <span className="qmt-muted">{r.reason_code}</span> : null}
+        </div>
+      )
+    },
+    {
+      title: '关联单号',
+      dataIndex: 'order_id',
+      width: 110,
+      render: (v: number | null) => (v == null ? <span className="qmt-muted">—</span> : v)
+    },
+    {
+      title: '闭环',
+      key: 'loop',
+      width: 80,
+      render: (_, r) =>
+        r.ts_code ? (
+          <Button
+            size="small"
+            type="link"
+            onClick={() => setLoop({ ts_code: r.ts_code as string, signal_date: r.signal_trade_date ?? undefined })}
+          >
+            查看
+          </Button>
+        ) : null
+    }
+  ];
+
+  return (
+    <div className="qmt-decisions">
+      <section className="panel">
+        <div className="qmt-section-head">
+          <div className="panel-title" style={{ marginBottom: 0 }}>
+            决策流水{dateStr ? <span className="qmt-muted"> · {dateStr}</span> : null}
+          </div>
+          <Select
+            size="small"
+            value={type}
+            onChange={(v) => {
+              setType(v);
+              setPage(1);
+            }}
+            options={DECISION_TYPE_OPTIONS}
+            style={{ minWidth: 130 }}
+          />
+        </div>
+        <Table
+          size="small"
+          rowKey="decision_id"
+          loading={query.isLoading}
+          columns={columns}
+          dataSource={data?.items ?? []}
+          scroll={{ x: 880 }}
+          locale={{ emptyText: <Empty description="该交易日暂无决策记录" /> }}
+          pagination={{
+            current: page,
+            pageSize: data?.page_size ?? 20,
+            total: data?.total ?? 0,
+            onChange: setPage,
+            showSizeChanger: false,
+            showTotal: (t) => `共 ${t} 条`
+          }}
+        />
+      </section>
+      <CloseLoopModal loop={loop} accountId={accountId} onClose={() => setLoop(null)} />
+    </div>
+  );
+}
+
+function CloseLoopModal({
+  loop,
+  accountId,
+  onClose
+}: {
+  loop: { ts_code: string; signal_date?: string } | null;
+  accountId?: string;
+  onClose: () => void;
+}) {
+  const query = useQuery({
+    queryKey: [QK, 'closeloop', loop?.ts_code, loop?.signal_date, accountId],
+    queryFn: () =>
+      fetchDecisionCloseLoop({ ts_code: loop!.ts_code, signal_date: loop?.signal_date, account_id: accountId }),
+    enabled: Boolean(loop)
+  });
+  const d = query.data;
+  return (
+    <Modal
+      open={Boolean(loop)}
+      onCancel={onClose}
+      footer={null}
+      width={760}
+      title={loop ? `决策闭环 · ${d?.name ?? loop.ts_code}（${loop.ts_code}）` : ''}
+    >
+      {query.isLoading ? (
+        <div className="qmt-panel-spin">
+          <Spin />
+        </div>
+      ) : d ? (
+        <CloseLoopView d={d} />
+      ) : (
+        <Empty description="暂无闭环数据" />
+      )}
+    </Modal>
+  );
+}
+
+function CloseLoopView({ d }: { d: QmtDecisionCloseLoop }) {
+  const fillCols: TableColumnsType<QmtTradeItem> = [
+    { title: '日期', dataIndex: 'trade_date', width: 110 },
+    { title: '方向', dataIndex: 'trade_side', width: 70, render: (v: string) => sideTag(v) },
+    { title: '成交价', dataIndex: 'traded_price', align: 'right', render: (v: NumLike) => fmtMoney(v, 3) },
+    {
+      title: '数量',
+      dataIndex: 'traded_volume',
+      align: 'right',
+      render: (v: number) => v.toLocaleString('zh-CN')
+    },
+    { title: '成交额', dataIndex: 'traded_amount', align: 'right', render: (v: NumLike) => fmtMoney(v) }
+  ];
+  return (
+    <div className="qmt-closeloop">
+      {d.selection ? (
+        <div className="qmt-loop-signal">
+          <div className="qmt-loop-sub">入选信号 · 信号日 {d.signal_trade_date ?? '-'}</div>
+          <div className="qmt-signal-tags">
+            {d.selection.tier ? <Tag color="geekblue">{d.selection.tier}</Tag> : null}
+            {d.selection.strategy_family ? <Tag color="volcano">{d.selection.strategy_family}</Tag> : null}
+            {d.selection.setup ? <Tag>{d.selection.setup}</Tag> : null}
+            {(d.selection.role_tags ?? []).map((r) => (
+              <Tag color="gold" key={r}>
+                {r}
+              </Tag>
+            ))}
+            {d.selection.leader_strength_score != null ? (
+              <Tag color="blue">强度 {toNum(d.selection.leader_strength_score)}</Tag>
+            ) : null}
+            {d.selection.market_state ? <Tag color="blue">{d.selection.market_state}</Tag> : null}
+          </div>
+          {d.selection.selection_reason ? (
+            <div className="qmt-muted" style={{ marginTop: 6 }}>
+              {d.selection.selection_reason}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+
+      <div className="qmt-loop-sub">决策时间线</div>
+      <Timeline
+        items={d.timeline.map((t) => ({
+          color: timelineColor(t.decision_type),
+          children: (
+            <div className="qmt-loop-event">
+              <div className="qmt-loop-event-head">
+                <span className="qmt-muted">
+                  {t.trade_date} {fmtTime(t.decided_time_east8)}
+                </span>
+                {decisionTag(t.decision_type)}
+                {t.strategy_family && t.strategy_family !== 'SELL' ? <Tag>{t.strategy_family}</Tag> : null}
+              </div>
+              {t.reason ? <div>{t.reason}</div> : null}
+              <div className="qmt-muted">
+                {t.limit_price != null ? `挂价 ${fmtMoney(t.limit_price, 3)} ` : ''}
+                {t.plan_volume != null ? `· ${t.plan_volume.toLocaleString('zh-CN')} 股 ` : ''}
+                {t.order_id != null ? `· 单号 ${t.order_id} ` : ''}
+                {t.reason_code ? `· ${t.reason_code}` : ''}
+              </div>
+            </div>
+          )
+        }))}
+      />
+
+      {d.fills.length ? (
+        <>
+          <div className="qmt-loop-sub">关联成交</div>
+          <Table
+            size="small"
+            rowKey={(r) => `${r.trade_date}-${r.traded_id}`}
+            columns={fillCols}
+            dataSource={d.fills}
+            pagination={false}
+          />
+        </>
+      ) : null}
     </div>
   );
 }

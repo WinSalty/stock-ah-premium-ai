@@ -25,6 +25,7 @@ from decimal import Decimal
 
 from sqlalchemy import (
     DECIMAL,
+    JSON,
     BigInteger,
     Boolean,
     Date,
@@ -302,4 +303,94 @@ class QmtAccountDaily(TimestampMixin, Base):
     data_source: Mapped[str] = mapped_column(
         String(24), nullable=False, default="QUERY", server_default="QUERY",
         comment="数据来源：QUERY 定时拉取 / CALLBACK 回调刷新",
+    )
+
+
+class QmtDecisionLog(TimestampMixin, Base):
+    """QMT 执行侧决策明细表（信号达标→下单/未买→卖出 的可读决策链路事实源）。
+
+    业务意图：执行侧在各决策点（达标判定 / 下单 / 卖出 / 各类拦截）用 best-effort 旁路采集出
+        结构化决策事件，盘后经 /api/internal/qmt/ingest 回流到此表，供「决策流水/闭环」看板消费。
+    关键边界：这是**复盘用**事实源，与交易热路径物理解耦、可丢失；不参与执行侧对账（不入 QMT_TABLES）。
+        SKIP_* / BUY_MISS / SELL_HOLD 即「为什么没买/没卖」的可读凭据。
+    关联：(signal_trade_date, ts_code) → limit_up_selected_stock(trade_date, ts_code) 取入选理由；
+        order_id → qmt_order/qmt_trade 取成交事实。
+
+    创建日期：2026-06-14
+    author: claude
+    """
+
+    __tablename__ = "qmt_decision_log"
+    __table_args__ = (
+        # 去重最小单位：执行侧生成的 decision_id 纳入 trade_date，防跨日复用串号；幂等 upsert 以此定位同一行。
+        UniqueConstraint(
+            "account_id", "trade_date", "decision_id", name="uk_qmt_decision_acct_date_did"
+        ),
+        Index("idx_qmt_decision_date_code", "trade_date", "ts_code"),
+        Index("idx_qmt_decision_signal", "signal_trade_date", "ts_code"),
+        Index("idx_qmt_decision_date_type", "trade_date", "decision_type"),
+    )
+
+    # BigInteger PK：MySQL BIGINT AUTO_INCREMENT；SQLite（单测）用 INTEGER 主键正常自增。
+    id: Mapped[int] = mapped_column(
+        BigInteger().with_variant(Integer, "sqlite"), primary_key=True, autoincrement=True
+    )
+    account_id: Mapped[str] = mapped_column(String(32), nullable=False, comment="QMT 资金账号")
+    trade_date: Mapped[date] = mapped_column(
+        Date, nullable=False, comment="决策发生交易日（东八区，= 执行侧 dispatch 当日）"
+    )
+    decision_id: Mapped[str] = mapped_column(
+        String(64), nullable=False, comment="执行侧生成的决策编号，去重最小单位"
+    )
+    signal_trade_date: Mapped[date | None] = mapped_column(
+        Date, comment="关联信号日 T（回填，join limit_up_selected_stock，COALESCE 不被空覆盖）"
+    )
+    ts_code: Mapped[str | None] = mapped_column(
+        String(16), comment="标准证券代码；全局闸门类决策（无具体票）可空"
+    )
+    decision_type: Mapped[str] = mapped_column(
+        String(32), nullable=False,
+        comment="决策类型：SIGNAL_QUALIFIED/BUY_SUBMIT/BUY_MISS/SELL_SUBMIT/SELL_HOLD/"
+        "SKIP_GLOBAL/SKIP_STRATEGY/SKIP_ORCHESTRATION/SKIP_ORDER",
+    )
+    decision_stage: Mapped[str | None] = mapped_column(
+        String(32), comment="决策分层：GLOBAL_GATE/STRATEGY/ORCHESTRATION/ORDER/SELL"
+    )
+    action: Mapped[str | None] = mapped_column(
+        String(32), comment="战法/动作：CHASE_LIMIT_UP/DIP_BUY_MA/SELL_CLEAR/HOLD/SKIP 等"
+    )
+    strategy_family: Mapped[str | None] = mapped_column(
+        String(16), comment="战法族：DABAN/BANLU/DIXI/SELL（与信号侧同口径）"
+    )
+    order_phase: Mapped[str | None] = mapped_column(
+        String(16), comment="下单时段：AUCTION/OPENING/INTRADAY"
+    )
+    reason: Mapped[str | None] = mapped_column(
+        String(255), comment="触发/拦截原因（人读）"
+    )
+    reason_code: Mapped[str | None] = mapped_column(
+        String(64), comment="机器可读原因码（weak_open/kill_switch/max_orders/miss_unfilled 等，可筛可统计）"
+    )
+    factors_snapshot: Mapped[dict | None] = mapped_column(
+        JSON, comment="关键因子/阈值快照（四因子与命中门槛，决策当时口径）"
+    )
+    limit_price: Mapped[Decimal | None] = mapped_column(
+        DECIMAL(20, 8), comment="决策挂价（买）/参考价（卖）"
+    )
+    plan_volume: Mapped[int | None] = mapped_column(BigInteger, comment="计划数量（股）")
+    order_id: Mapped[int | None] = mapped_column(
+        BigInteger, comment="关联券商订单编号（仅 *_SUBMIT 有，串联 qmt_order/qmt_trade）"
+    )
+    biz_order_no: Mapped[str | None] = mapped_column(
+        String(64), comment="执行侧业务单号 {date}_{ts_code}_{family}_{seq}（COALESCE 不被空覆盖）"
+    )
+    decided_time: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, comment="决策时刻（UTC naive，前端 formatEast8DateTime 展示）"
+    )
+    decided_time_east8: Mapped[datetime | None] = mapped_column(
+        DateTime, comment="决策时刻（东八区 naive 原值，看板默认展示，COALESCE 不被空覆盖）"
+    )
+    data_source: Mapped[str] = mapped_column(
+        String(24), nullable=False, default="EMITTER", server_default="EMITTER",
+        comment="数据来源：EMITTER 执行侧决策发射器",
     )

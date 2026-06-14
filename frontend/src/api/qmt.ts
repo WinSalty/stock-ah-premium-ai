@@ -130,6 +130,43 @@ export interface QmtSelectionResp {
   items: QmtSelectionItem[];
 }
 
+export interface QmtDecisionItem {
+  decision_id: string;
+  trade_date: string;
+  ts_code: string | null;
+  name: string | null;
+  decision_type: string;
+  decision_stage: string | null;
+  action: string | null;
+  strategy_family: string | null;
+  order_phase: string | null;
+  reason: string | null;
+  reason_code: string | null;
+  factors_snapshot: Record<string, unknown> | null;
+  limit_price: NumLike;
+  plan_volume: number | null;
+  order_id: number | null;
+  biz_order_no: string | null;
+  signal_trade_date: string | null;
+  decided_time_east8: string | null;
+}
+
+export interface QmtDecisionPage {
+  items: QmtDecisionItem[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
+export interface QmtDecisionCloseLoop {
+  signal_trade_date: string | null;
+  ts_code: string;
+  name: string | null;
+  selection: QmtSelectionItem | null;
+  timeline: QmtDecisionItem[];
+  fills: QmtTradeItem[];
+}
+
 /** 拼接查询串，跳过空值，避免后端把空字符串当成有效筛选。 */
 function buildQuery(params: Record<string, string | number | undefined | null>): string {
   const search = new URLSearchParams();
@@ -176,4 +213,25 @@ export function fetchQmtHistory(params: { account_id?: string; start?: string; e
 /** 信号选股决策明细（什么信号达标/为什么入选）。缺省取最新信号日。 */
 export function fetchQmtSelection(params: { date?: string }) {
   return requestJson<QmtSelectionResp>(`/api/review/selection${buildQuery(params)}`);
+}
+
+/** 执行侧决策流水（信号达标/下单/卖出/各类拦截）。 */
+export function fetchQmtDecisions(params: {
+  account_id?: string;
+  trade_date?: string;
+  decision_type?: string;
+  ts_code?: string;
+  page?: number;
+  page_size?: number;
+}) {
+  return requestJson<QmtDecisionPage>(`/api/review/decisions${buildQuery(params)}`);
+}
+
+/** 单票闭环：入选信号 → 决策时间线 → 关联成交。 */
+export function fetchDecisionCloseLoop(params: {
+  ts_code: string;
+  signal_date?: string;
+  account_id?: string;
+}) {
+  return requestJson<QmtDecisionCloseLoop>(`/api/review/decision-closeloop${buildQuery(params)}`);
 }
