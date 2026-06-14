@@ -276,5 +276,29 @@ def test_history_empty_account() -> None:
     assert resp.json()["trading_days"] == 0
 
 
+# ----------------------------- 信号选股 -----------------------------
+def test_selection() -> None:
+    """信号选股视图返回入选股决策字段（无 READY 缓存时回落到选股表最新版本）。"""
+    db = _make_db()
+    resp = _client(db, user_id=1).get("/api/review/selection")
+    assert resp.status_code == 200
+    d = resp.json()
+    assert d["trade_date"] == SIG.isoformat()
+    assert d["prompt_version"] == "v1"  # 无 READY 缓存 → 回落选股表版本
+    assert d["count"] == 1
+    item = d["items"][0]
+    assert item["ts_code"] == "600000.SH"
+    assert item["strategy_family"] == "打板"
+    assert item["setup"] == "首板"
+    assert item["role_tags"] == ["龙头"]
+    assert item["tradable_flag"] == "TRADABLE"
+
+
+def test_selection_forbidden_for_user() -> None:
+    """USER 角色无 qmt_review → 选股接口 403。"""
+    db = _make_db()
+    assert _client(db, user_id=2).get("/api/review/selection").status_code == 403
+
+
 if __name__ == "__main__":  # pragma: no cover
     raise SystemExit(pytest.main([__file__, "-v"]))

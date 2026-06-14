@@ -93,6 +93,43 @@ export interface QmtHistoryStats {
   nav_method: string;
 }
 
+export interface QmtSelectionItem {
+  trade_date: string;
+  target_trade_date: string | null;
+  ts_code: string;
+  name: string | null;
+  tier: string | null;
+  board: string | null;
+  board_level: number | null;
+  limit_type: string | null;
+  leader_strength_score: NumLike;
+  strength_dim_json: Record<string, unknown> | null;
+  role_tags: string[] | null;
+  strategy_family: string | null;
+  setup: string | null;
+  action: string | null;
+  sentiment_cycle: string | null;
+  market_state: string | null;
+  tradable_flag: string | null;
+  continuation_prob: NumLike;
+  next_day_premium_prob: NumLike;
+  boost_conditions: unknown[] | null;
+  fail_conditions: unknown[] | null;
+  suggested_hold_thesis: string | null;
+  selection_reason: string | null;
+  seal_ratio_pct: NumLike;
+  turnover_rate: NumLike;
+  winner_rate: NumLike;
+  priority: number | null;
+}
+
+export interface QmtSelectionResp {
+  trade_date: string | null;
+  prompt_version: string | null;
+  count: number;
+  items: QmtSelectionItem[];
+}
+
 /** 拼接查询串，跳过空值，避免后端把空字符串当成有效筛选。 */
 function buildQuery(params: Record<string, string | number | undefined | null>): string {
   const search = new URLSearchParams();
@@ -134,4 +171,9 @@ export function fetchQmtPositions(params: { account_id?: string; trade_date?: st
 /** 历史净值曲线 + 绩效指标。 */
 export function fetchQmtHistory(params: { account_id?: string; start?: string; end?: string }) {
   return requestJson<QmtHistoryStats>(`/api/review/history${buildQuery(params)}`);
+}
+
+/** 信号选股决策明细（什么信号达标/为什么入选）。缺省取最新信号日。 */
+export function fetchQmtSelection(params: { date?: string }) {
+  return requestJson<QmtSelectionResp>(`/api/review/selection${buildQuery(params)}`);
 }

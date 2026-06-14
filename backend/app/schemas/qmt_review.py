@@ -116,3 +116,52 @@ class QmtHistoryStats(BaseModel):
     trading_days: int = 0
     # 口径说明：当前 NAV 为 total_asset 简单归一(未剔出入金)；精确 TWR 待出入金台账(阶段A)。
     nav_method: str = Field(default="SIMPLE_NORMALIZED", description="净值口径")
+
+
+class QmtSelectionItem(BaseModel):
+    """信号选股决策明细行（什么信号达标 / 为什么入选；字段均来自 limit_up_selected_stock）。"""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    trade_date: date = Field(description="信号日 T")
+    target_trade_date: date | None = Field(default=None, description="计划执行日 T+1")
+    ts_code: str
+    name: str | None = None
+    # 板块/连板维度
+    tier: str | None = Field(default=None, description="入选层级(核心/观察等)")
+    board: str | None = None
+    board_level: int | None = Field(default=None, description="连板高度")
+    limit_type: str | None = None
+    # 强度与角色
+    leader_strength_score: Decimal | None = Field(default=None, description="龙头强度总分")
+    strength_dim_json: dict | None = Field(default=None, description="强度六维子分")
+    role_tags: list | None = Field(default=None, description="角色标签")
+    strategy_family: str | None = None
+    setup: str | None = None
+    action: str | None = None
+    # 情绪与可成交性
+    sentiment_cycle: str | None = None
+    market_state: str | None = None
+    tradable_flag: str | None = Field(default=None, description="可成交性判定")
+    # 先验概率
+    continuation_prob: Decimal | None = Field(default=None, description="连续晋级先验概率")
+    next_day_premium_prob: Decimal | None = Field(default=None, description="次日溢价先验概率")
+    # 晋级/失败条件与持有逻辑（决策依据）
+    boost_conditions: list | None = Field(default=None, description="晋级条件")
+    fail_conditions: list | None = Field(default=None, description="失败条件")
+    suggested_hold_thesis: str | None = Field(default=None, description="持有逻辑")
+    selection_reason: str | None = Field(default=None, description="入选理由")
+    # 热字段
+    seal_ratio_pct: Decimal | None = Field(default=None, description="封流比%")
+    turnover_rate: Decimal | None = None
+    winner_rate: Decimal | None = None
+    priority: int | None = Field(default=None, description="优先级")
+
+
+class QmtSelectionResp(BaseModel):
+    """信号选股视图响应（按最新 READY 报告版本消歧）。"""
+
+    trade_date: date | None = None
+    prompt_version: str | None = Field(default=None, description="生效报告版本")
+    count: int = 0
+    items: list[QmtSelectionItem] = Field(default_factory=list)

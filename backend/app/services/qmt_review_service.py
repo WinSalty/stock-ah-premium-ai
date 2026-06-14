@@ -25,7 +25,7 @@ from sqlalchemy import distinct, func, select
 from sqlalchemy.orm import Session
 
 from app.db.models.market import AStockBasic
-from app.db.models.notification import LimitUpSelectedStock
+from app.db.models.notification import LimitUpAnalysisCache, LimitUpSelectedStock
 from app.db.models.qmt import QmtAccountDaily, QmtOrder, QmtPositionSnapshot, QmtTrade
 from app.schemas.qmt_review import (
     QmtAccountInfo,
@@ -33,6 +33,8 @@ from app.schemas.qmt_review import (
     QmtHistoryStats,
     QmtNetWorthPoint,
     QmtPositionItem,
+    QmtSelectionItem,
+    QmtSelectionResp,
     QmtTradeItem,
     QmtTradesPage,
 )
@@ -393,3 +395,58 @@ class QmtReviewService:
             win_rate=_round(win_rate, 4),
             trading_days=n,
         )
+
+    # ---------------- 信号选股视图 ----------------
+    def latest_signal_date(self) -> date | None:
+        """最新有选股记录的信号交易日。"""
+        return self.db.execute(
+            select(func.max(LimitUpSelectedStock.trade_date))
+        ).scalar_one_or_none()
+
+    def _ready_prompt_version(self, trade_date: date) -> str | None:
+        """该信号日「生效报告」的 prompt_version。
+
+        口径：优先取该交易日最新 READY 报告版本（与 watchlist 导出口径一致，避免回挂到非生效版本）；
+        若该日无 READY 缓存（如仅本地构造数据），回落到选股表里该日最新出现的版本，保证视图仍可用。
+        """
+        pv = self.db.execute(
+            select(LimitUpAnalysisCache.prompt_version)
+            .where(
+                LimitUpAnalysisCache.trade_date == trade_date,
+                LimitUpAnalysisCache.status == "READY",
+            )
+            .order_by(LimitUpAnalysisCache.generated_at.desc())
+            .limit(1)
+        ).scalar_one_or_none()
+        if pv is not None:
+            return pv
+        return self.db.execute(
+            select(LimitUpSelectedStock.prompt_version)
+            .where(LimitUpSelectedStock.trade_date == trade_date)
+            .order_by(LimitUpSelectedStock.id.desc())
+            .limit(1)
+        ).scalar_one_or_none()
+
+    def selection(self, trade_date: date | None) -> QmtSelectionResp:
+        """信号选股决策明细：什么信号达标、为什么入选（按生效报告版本消歧）。"""
+        eff = trade_date or self.latest_signal_date()
+        if eff is None:
+            return QmtSelectionResp(trade_date=trade_date, count=0, items=[])
+        pv = self._ready_prompt_version(eff)
+        if pv is None:
+            return QmtSelectionResp(trade_date=eff, count=0, items=[])
+        rows = (
+            self.db.execute(
+                select(LimitUpSelectedStock)
+                .where(
+                    LimitUpSelectedStock.trade_date == eff,
+                    LimitUpSelectedStock.prompt_version == pv,
+                )
+                # 按层级 + 优先级排序，与导出口径一致（NULL 优先级 MySQL 默认排前，不影响展示）。
+                .order_by(LimitUpSelectedStock.tier, LimitUpSelectedStock.priority)
+            )
+            .scalars()
+            .all()
+        )
+        items = [QmtSelectionItem.model_validate(r) for r in rows]
+        return QmtSelectionResp(trade_date=eff, prompt_version=pv, count=len(items), items=items)

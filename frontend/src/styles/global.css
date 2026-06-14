@@ -3304,3 +3304,29 @@ pre.llm-payload-viewer,
 .qmt-review-page .ant-table-cell {
   font-variant-numeric: tabular-nums;
 }
+
+/* 信号选股 Tab：展开行决策明细 */
+.qmt-selection .ant-table-cell {
+  font-variant-numeric: tabular-nums;
+}
+
+.qmt-selection-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 4px 2px;
+}
+
+.qmt-detail-row {
+  display: grid;
+  grid-template-columns: 84px minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.qmt-detail-key {
+  color: #64748b;
+  font-weight: 600;
+}

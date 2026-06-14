@@ -26,6 +26,7 @@ from app.schemas.qmt_review import (
     QmtDailySummary,
     QmtHistoryStats,
     QmtPositionItem,
+    QmtSelectionResp,
     QmtTradesPage,
 )
 from app.services.qmt_review_service import QmtReviewService
@@ -102,6 +103,17 @@ def list_positions(
     if eff_date is None:
         return []
     return svc.positions(acct, eff_date)
+
+
+@router.get("/review/selection", response_model=QmtSelectionResp)
+def selection(
+    db: DbSession,
+    signal_date: Annotated[
+        date | None, Query(alias="date", description="信号日 T，缺省取最新有选股的交易日")
+    ] = None,
+) -> QmtSelectionResp:
+    """信号选股决策明细（什么信号达标 / 为什么入选）。"""
+    return QmtReviewService(db).selection(signal_date)
 
 
 @router.get("/review/history", response_model=QmtHistoryStats)

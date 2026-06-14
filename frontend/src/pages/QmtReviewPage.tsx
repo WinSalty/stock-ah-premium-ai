@@ -16,7 +16,7 @@ import {
 import type { TableColumnsType } from 'antd';
 import dayjs, { type Dayjs } from 'dayjs';
 import ReactECharts from 'echarts-for-react';
-import { RotateCw, TrendingUp, Wallet, Activity, Layers, Info } from 'lucide-react';
+import { RotateCw, TrendingUp, Wallet, Activity, Layers, Info, Target } from 'lucide-react';
 import { useQuery, useQueryClient, useIsFetching } from '@tanstack/react-query';
 import PageHeader from '../components/PageHeader';
 import {
@@ -24,9 +24,11 @@ import {
   fetchQmtDailySummary,
   fetchQmtHistory,
   fetchQmtPositions,
+  fetchQmtSelection,
   fetchQmtTrades,
   type NumLike,
   type QmtPositionItem,
+  type QmtSelectionItem,
   type QmtTradeItem
 } from '../api/qmt';
 import { formatEast8DateTime } from '../utils/datetime';
@@ -203,7 +205,7 @@ export default function QmtReviewPage() {
           onChange={(v) => setRange(v as [Dayjs, Dayjs] | null)}
           allowClear
         />
-      ) : (
+      ) : tab === 'selection' ? null : (
         <DatePicker
           value={tradeDate ?? undefined}
           onChange={(v) => {
@@ -247,6 +249,15 @@ export default function QmtReviewPage() {
         activeKey={tab}
         onChange={setTab}
         items={[
+          {
+            key: 'selection',
+            label: (
+              <span className="qmt-tab-label">
+                <Target size={15} /> 信号选股
+              </span>
+            ),
+            children: <SelectionTab active={tab === 'selection'} />
+          },
           {
             key: 'daily',
             label: (
@@ -806,6 +817,229 @@ function PanelSpin() {
   return (
     <div className="panel qmt-panel-spin">
       <Spin />
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// 信号选股（什么信号达标 / 为什么入选）—— 纯信号侧，独立信号日选择，不依赖执行账户
+// ---------------------------------------------------------------------------
+
+/** 可成交性标签配色：可买=绿，观察=橙，其它=默认。 */
+function tradableTag(flag: string | null) {
+  if (!flag) return <span className="qmt-muted">—</span>;
+  if (flag === 'TRADABLE') return <Tag color="green">可买</Tag>;
+  if (flag === 'WATCH') return <Tag color="orange">观察</Tag>;
+  return <Tag>{flag}</Tag>;
+}
+
+/** JSON 列表渲染：字符串直拼，对象 JSON 化。 */
+function renderList(items: unknown[] | null): string {
+  if (!items || !items.length) return '-';
+  return items.map((x) => (typeof x === 'string' ? x : JSON.stringify(x))).join('；');
+}
+
+function SelectionTab({ active }: { active: boolean }) {
+  // 独立的信号日状态：默认空 → 后端取最新信号日；首个响应回来后回填到 DatePicker。
+  const [signalDate, setSignalDate] = useState<Dayjs | null>(null);
+  const dateStr = signalDate ? signalDate.format('YYYY-MM-DD') : undefined;
+  const query = useQuery({
+    queryKey: [QK, 'selection', dateStr],
+    queryFn: () => fetchQmtSelection({ date: dateStr }),
+    enabled: active
+  });
+  const data = query.data;
+  // 首次拿到数据时，把后端解析出的信号日回填到选择器（仅当用户还没手选）。
+  useEffect(() => {
+    if (!signalDate && data?.trade_date) setSignalDate(dayjs(data.trade_date));
+  }, [data?.trade_date, signalDate]);
+
+  const columns: TableColumnsType<QmtSelectionItem> = [
+    {
+      title: '证券',
+      key: 'security',
+      fixed: 'left',
+      width: 150,
+      render: (_, r) => (
+        <div className="qmt-cell-stack">
+          <span className="qmt-strong">{r.name ?? r.ts_code}</span>
+          <span className="qmt-muted">{r.ts_code}</span>
+        </div>
+      )
+    },
+    { title: '层级', dataIndex: 'tier', width: 84, render: (v: string | null) => (v ? <Tag color="geekblue">{v}</Tag> : '-') },
+    {
+      title: '连板',
+      dataIndex: 'board_level',
+      align: 'right',
+      width: 64,
+      render: (v: number | null) => (v == null ? '-' : `${v}板`)
+    },
+    {
+      title: '强度分',
+      dataIndex: 'leader_strength_score',
+      align: 'right',
+      width: 84,
+      sorter: (a, b) => (toNum(a.leader_strength_score) ?? 0) - (toNum(b.leader_strength_score) ?? 0),
+      render: (v: NumLike) => <span className="qmt-strong">{toNum(v) == null ? '-' : toNum(v)!.toFixed(2)}</span>
+    },
+    {
+      title: '战法 / 形态',
+      key: 'strategy',
+      width: 150,
+      render: (_, r) => (
+        <div className="qmt-signal-tags">
+          {r.strategy_family ? <Tag color="volcano">{r.strategy_family}</Tag> : null}
+          {r.setup ? <Tag>{r.setup}</Tag> : null}
+        </div>
+      )
+    },
+    {
+      title: '角色',
+      dataIndex: 'role_tags',
+      width: 130,
+      render: (v: string[] | null) =>
+        v && v.length ? (
+          <div className="qmt-signal-tags">
+            {v.map((t) => (
+              <Tag color="gold" key={t}>
+                {t}
+              </Tag>
+            ))}
+          </div>
+        ) : (
+          <span className="qmt-muted">—</span>
+        )
+    },
+    {
+      title: '情绪',
+      key: 'sentiment',
+      width: 120,
+      render: (_, r) => (
+        <div className="qmt-cell-stack">
+          {r.market_state ? <Tag color="blue">{r.market_state}</Tag> : <span className="qmt-muted">—</span>}
+          {r.sentiment_cycle ? <span className="qmt-muted">{r.sentiment_cycle}</span> : null}
+        </div>
+      )
+    },
+    { title: '可成交', dataIndex: 'tradable_flag', width: 84, render: (v: string | null) => tradableTag(v) },
+    {
+      title: '续板/溢价先验',
+      key: 'prob',
+      align: 'right',
+      width: 120,
+      render: (_, r) => (
+        <span>
+          {fmtPct(r.continuation_prob)} / {fmtPct(r.next_day_premium_prob)}
+        </span>
+      )
+    },
+    { title: '优先级', dataIndex: 'priority', align: 'right', width: 72, render: (v: number | null) => v ?? '-' }
+  ];
+
+  return (
+    <div className="qmt-selection">
+      <section className="panel">
+        <div className="qmt-section-head">
+          <div className="panel-title" style={{ marginBottom: 0 }}>
+            信号选股决策明细
+            {data?.trade_date ? <span className="qmt-muted"> · 信号日 {data.trade_date}</span> : null}
+            {data?.prompt_version ? (
+              <Tag color="purple" style={{ marginLeft: 8 }}>
+                {data.prompt_version}
+              </Tag>
+            ) : null}
+            {data ? <span className="qmt-muted"> · 共 {data.count} 只</span> : null}
+          </div>
+          <DatePicker
+            value={signalDate ?? undefined}
+            onChange={(v) => setSignalDate(v)}
+            allowClear={false}
+            placeholder="信号日"
+          />
+        </div>
+        <Table
+          size="small"
+          rowKey="ts_code"
+          loading={query.isLoading}
+          columns={columns}
+          dataSource={data?.items ?? []}
+          scroll={{ x: 1080 }}
+          locale={{ emptyText: <Empty description="该信号日暂无入选股" /> }}
+          pagination={{ pageSize: 20, showSizeChanger: false, showTotal: (t) => `共 ${t} 只` }}
+          expandable={{
+            expandedRowRender: (r) => <SelectionDetail item={r} />,
+            rowExpandable: (r) =>
+              Boolean(
+                r.selection_reason ||
+                  (r.boost_conditions && r.boost_conditions.length) ||
+                  (r.fail_conditions && r.fail_conditions.length) ||
+                  r.suggested_hold_thesis ||
+                  r.strength_dim_json
+              )
+          }}
+        />
+      </section>
+    </div>
+  );
+}
+
+/** 从强度 JSON 提取可展示的标量维度：优先 subscores 子对象，跳过嵌套对象/数组，避免渲染 [object Object]。 */
+function strengthDims(j: Record<string, unknown> | null): string[] {
+  if (!j) return [];
+  const sub = j.subscores;
+  const src = sub && typeof sub === 'object' && !Array.isArray(sub) ? (sub as Record<string, unknown>) : j;
+  return Object.entries(src)
+    .filter(([, v]) => typeof v === 'number' || typeof v === 'string' || typeof v === 'boolean')
+    .map(([k, v]) => `${k}: ${v}`);
+}
+
+/** 展开行：入选理由 / 晋级·失败条件 / 持有逻辑 / 强度六维 / 热字段。 */
+function SelectionDetail({ item }: { item: QmtSelectionItem }) {
+  const dims = strengthDims(item.strength_dim_json);
+  return (
+    <div className="qmt-selection-detail">
+      {item.selection_reason ? (
+        <div className="qmt-detail-row">
+          <span className="qmt-detail-key">入选理由</span>
+          <span>{item.selection_reason}</span>
+        </div>
+      ) : null}
+      {item.boost_conditions && item.boost_conditions.length ? (
+        <div className="qmt-detail-row">
+          <span className="qmt-detail-key">晋级条件</span>
+          <span>{renderList(item.boost_conditions)}</span>
+        </div>
+      ) : null}
+      {item.fail_conditions && item.fail_conditions.length ? (
+        <div className="qmt-detail-row">
+          <span className="qmt-detail-key qmt-down">失败条件</span>
+          <span>{renderList(item.fail_conditions)}</span>
+        </div>
+      ) : null}
+      {item.suggested_hold_thesis ? (
+        <div className="qmt-detail-row">
+          <span className="qmt-detail-key">持有逻辑</span>
+          <span>{item.suggested_hold_thesis}</span>
+        </div>
+      ) : null}
+      {dims.length ? (
+        <div className="qmt-detail-row">
+          <span className="qmt-detail-key">强度六维</span>
+          <span className="qmt-signal-tags">
+            {dims.map((d) => (
+              <Tag key={d}>{d}</Tag>
+            ))}
+          </span>
+        </div>
+      ) : null}
+      <div className="qmt-detail-row">
+        <span className="qmt-detail-key">热字段</span>
+        <span className="qmt-muted">
+          封流比 {fmtMoney(item.seal_ratio_pct, 2)} · 换手 {fmtMoney(item.turnover_rate, 2)} · 胜率{' '}
+          {fmtMoney(item.winner_rate, 2)}
+        </span>
+      </div>
     </div>
   );
 }
