@@ -38,6 +38,7 @@ import {
   type QmtTradeItem
 } from '../api/qmt';
 import { formatEast8DateTime } from '../utils/datetime';
+import { STRATEGY_CN, TIER_CN, ROLE_CN, ACTION_CN, TRADABLE_CN, DIM_CN, cn } from '../utils/qmtLabels';
 
 const QK = 'qmt-review';
 
@@ -525,9 +526,9 @@ function TradesTable({ loading, trades, page, onPageChange }: TradesTableProps) 
         }
         return (
           <div className="qmt-signal-tags">
-            {r.strategy_family ? <Tag color="volcano">{r.strategy_family}</Tag> : null}
+            {r.strategy_family ? <Tag color="volcano">{cn(STRATEGY_CN, r.strategy_family)}</Tag> : null}
             {r.setup ? <Tag>{r.setup}</Tag> : null}
-            {r.role ? <Tag color="gold">{r.role}</Tag> : null}
+            {r.role ? <Tag color="gold">{cn(ROLE_CN, r.role)}</Tag> : null}
             {r.market_state ? <Tag color="blue">{r.market_state}</Tag> : null}
             {r.signal_trade_date ? (
               <span className="qmt-muted">信号日 {r.signal_trade_date}</span>
@@ -941,20 +942,17 @@ function DecisionsTab({
       width: 150,
       render: (_, r) => (
         <div className="qmt-signal-tags">
-          {r.strategy_family && r.strategy_family !== 'SELL' ? <Tag color="volcano">{r.strategy_family}</Tag> : null}
-          {r.action ? <Tag>{r.action}</Tag> : null}
+          {r.strategy_family && r.strategy_family !== 'SELL' ? (
+            <Tag color="volcano">{cn(STRATEGY_CN, r.strategy_family)}</Tag>
+          ) : null}
+          {r.action ? <Tag>{cn(ACTION_CN, r.action)}</Tag> : null}
         </div>
       )
     },
     {
       title: '原因',
       key: 'reason',
-      render: (_, r) => (
-        <div className="qmt-cell-stack">
-          <span>{r.reason ?? '-'}</span>
-          {r.reason_code ? <span className="qmt-muted">{r.reason_code}</span> : null}
-        </div>
-      )
+      render: (_, r) => <span>{r.reason ?? '-'}</span>
     },
     {
       title: '关联单号',
@@ -1076,12 +1074,14 @@ function CloseLoopView({ d }: { d: QmtDecisionCloseLoop }) {
         <div className="qmt-loop-signal">
           <div className="qmt-loop-sub">入选信号 · 信号日 {d.signal_trade_date ?? '-'}</div>
           <div className="qmt-signal-tags">
-            {d.selection.tier ? <Tag color="geekblue">{d.selection.tier}</Tag> : null}
-            {d.selection.strategy_family ? <Tag color="volcano">{d.selection.strategy_family}</Tag> : null}
+            {d.selection.tier ? <Tag color="geekblue">{cn(TIER_CN, d.selection.tier)}</Tag> : null}
+            {d.selection.strategy_family ? (
+              <Tag color="volcano">{cn(STRATEGY_CN, d.selection.strategy_family)}</Tag>
+            ) : null}
             {d.selection.setup ? <Tag>{d.selection.setup}</Tag> : null}
             {(d.selection.role_tags ?? []).map((r) => (
               <Tag color="gold" key={r}>
-                {r}
+                {cn(ROLE_CN, r)}
               </Tag>
             ))}
             {d.selection.leader_strength_score != null ? (
@@ -1108,14 +1108,15 @@ function CloseLoopView({ d }: { d: QmtDecisionCloseLoop }) {
                   {t.trade_date} {fmtTime(t.decided_time_east8)}
                 </span>
                 {decisionTag(t.decision_type)}
-                {t.strategy_family && t.strategy_family !== 'SELL' ? <Tag>{t.strategy_family}</Tag> : null}
+                {t.strategy_family && t.strategy_family !== 'SELL' ? (
+                  <Tag>{cn(STRATEGY_CN, t.strategy_family)}</Tag>
+                ) : null}
               </div>
               {t.reason ? <div>{t.reason}</div> : null}
               <div className="qmt-muted">
                 {t.limit_price != null ? `挂价 ${fmtMoney(t.limit_price, 3)} ` : ''}
                 {t.plan_volume != null ? `· ${t.plan_volume.toLocaleString('zh-CN')} 股 ` : ''}
-                {t.order_id != null ? `· 单号 ${t.order_id} ` : ''}
-                {t.reason_code ? `· ${t.reason_code}` : ''}
+                {t.order_id != null ? `· 单号 ${t.order_id}` : ''}
               </div>
             </div>
           )
@@ -1142,12 +1143,11 @@ function CloseLoopView({ d }: { d: QmtDecisionCloseLoop }) {
 // 信号选股（什么信号达标 / 为什么入选）—— 纯信号侧，独立信号日选择，不依赖执行账户
 // ---------------------------------------------------------------------------
 
-/** 可成交性标签配色：可买=绿，观察=橙，其它=默认。 */
+/** 可成交性标签：码值转中文，配色 可买=绿/观察=橙/其它=默认。 */
 function tradableTag(flag: string | null) {
   if (!flag) return <span className="qmt-muted">—</span>;
-  if (flag === 'TRADABLE') return <Tag color="green">可买</Tag>;
-  if (flag === 'WATCH') return <Tag color="orange">观察</Tag>;
-  return <Tag>{flag}</Tag>;
+  const color = flag === 'TRADABLE' ? 'green' : flag === 'WATCH' ? 'orange' : 'default';
+  return <Tag color={color}>{cn(TRADABLE_CN, flag)}</Tag>;
 }
 
 /** JSON 列表渲染：字符串直拼，对象 JSON 化。 */
@@ -1184,7 +1184,7 @@ function SelectionTab({ active }: { active: boolean }) {
         </div>
       )
     },
-    { title: '层级', dataIndex: 'tier', width: 84, render: (v: string | null) => (v ? <Tag color="geekblue">{v}</Tag> : '-') },
+    { title: '层级', dataIndex: 'tier', width: 84, render: (v: string | null) => (v ? <Tag color="geekblue">{cn(TIER_CN, v)}</Tag> : '-') },
     {
       title: '连板',
       dataIndex: 'board_level',
@@ -1206,7 +1206,7 @@ function SelectionTab({ active }: { active: boolean }) {
       width: 150,
       render: (_, r) => (
         <div className="qmt-signal-tags">
-          {r.strategy_family ? <Tag color="volcano">{r.strategy_family}</Tag> : null}
+          {r.strategy_family ? <Tag color="volcano">{cn(STRATEGY_CN, r.strategy_family)}</Tag> : null}
           {r.setup ? <Tag>{r.setup}</Tag> : null}
         </div>
       )
@@ -1220,7 +1220,7 @@ function SelectionTab({ active }: { active: boolean }) {
           <div className="qmt-signal-tags">
             {v.map((t) => (
               <Tag color="gold" key={t}>
-                {t}
+                {cn(ROLE_CN, t)}
               </Tag>
             ))}
           </div>
@@ -1308,7 +1308,7 @@ function strengthDims(j: Record<string, unknown> | null): string[] {
   const src = sub && typeof sub === 'object' && !Array.isArray(sub) ? (sub as Record<string, unknown>) : j;
   return Object.entries(src)
     .filter(([, v]) => typeof v === 'number' || typeof v === 'string' || typeof v === 'boolean')
-    .map(([k, v]) => `${k}: ${v}`);
+    .map(([k, v]) => `${cn(DIM_CN, k)}: ${v}`);
 }
 
 /** 展开行：入选理由 / 晋级·失败条件 / 持有逻辑 / 强度六维 / 热字段。 */
