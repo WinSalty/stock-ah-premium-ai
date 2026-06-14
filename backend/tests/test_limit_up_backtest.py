@@ -581,3 +581,48 @@ def test_percentile_and_pearson() -> None:
     assert ic is not None and abs(ic - 1.0) < 1e-9
     # 样本不足
     assert _pearson([(1.0, 2.0)]) is None
+
+
+# ---------------------------------------------------------------------------
+# 评审 D1：go/no-go 结构化裁决（原本只产指标、无判定出口）
+# ---------------------------------------------------------------------------
+def test_go_no_go_insufficient_sample():
+    from app.services.limit_up_backtest_service import evaluate_go_no_go
+
+    v = evaluate_go_no_go({"buyable_return_count": 5, "portfolio": {"day_count": 3}})
+    assert v["verdict"] == "INSUFFICIENT"
+
+
+def test_go_no_go_pass_all_conditions():
+    from app.services.limit_up_backtest_service import evaluate_go_no_go
+
+    summary = {
+        "buyable_return_count": 50, "control_excess_mean": 0.02,
+        "distribution": {"hit_rate": 0.55, "mean": 0.03, "p10": -0.05},
+        "portfolio": {"day_count": 20, "cumulative": 0.5},
+    }
+    assert evaluate_go_no_go(summary)["verdict"] == "GO"
+
+
+def test_go_no_go_fail_negative_excess():
+    from app.services.limit_up_backtest_service import evaluate_go_no_go
+
+    summary = {
+        "buyable_return_count": 50, "control_excess_mean": -0.01,
+        "distribution": {"hit_rate": 0.55, "mean": 0.03, "p10": -0.05},
+        "portfolio": {"day_count": 20, "cumulative": 0.5},
+    }
+    v = evaluate_go_no_go(summary)
+    assert v["verdict"] == "NO_GO"
+    assert any("control_excess" in r for r in v["reasons"])
+
+
+def test_go_no_go_fail_p10_tail_breach():
+    from app.services.limit_up_backtest_service import evaluate_go_no_go
+
+    summary = {
+        "buyable_return_count": 50, "control_excess_mean": 0.02,
+        "distribution": {"hit_rate": 0.55, "mean": 0.03, "p10": -0.20},  # 破 -10% 尾部限
+        "portfolio": {"day_count": 20, "cumulative": 0.5},
+    }
+    assert evaluate_go_no_go(summary)["verdict"] == "NO_GO"

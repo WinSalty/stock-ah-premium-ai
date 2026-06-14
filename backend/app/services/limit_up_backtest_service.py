@@ -655,6 +655,9 @@ class LimitUpBacktestService:
         ic = _pearson(pairs)
         if ic is not None:
             summary["leader_strength_ic"] = round(ic, 4)
+        # go/no-go 结构化裁决（评审 D1）：把"据回测放行实盘"的判定代码化，落入 summary 供上线流程强制读取，
+        # 而非人工肉眼看数字。阈值为保守占位（已授权先占位，待回测/实盘校准固化）。
+        summary["go_no_go"] = evaluate_go_no_go(summary)
         return summary
 
     @staticmethod
@@ -695,6 +698,69 @@ def _config_to_jsonable(cfg: BacktestConfig) -> dict[str, Any]:
     data["start_date"] = cfg.start_date.isoformat()
     data["end_date"] = cfg.end_date.isoformat()
     return data
+
+
+# go/no-go 硬阈值（保守占位，评审 D1）。用户已授权：先用保守占位值，后续按回测/实盘校准固化并随版本 bump。
+# 口径见 doc/archive/09 修复计划「待确认业务口径」。完整统计显著性(置信区间/bootstrap，D2)与默认含费
+# 净收益口径(D3)为后续增强；本判定先把「据回测放行实盘」的出口建起来并被上线流程强制读取。
+_GONOGO_MIN_BUYABLE = 30        # 最小可成交样本数（样本不足无法判定，判 INSUFFICIENT）
+_GONOGO_MIN_DAYS = 10           # 最小交易日数
+_GONOGO_MIN_HIT_RATE = 0.40    # 可成交样本最小胜率
+_GONOGO_MIN_MEAN = 0.0          # 可成交样本毛收益均值下限（须 >0）
+_GONOGO_MIN_EXCESS = 0.0        # 对照组超额均值下限（须 >0）
+_GONOGO_MIN_CUMULATIVE = 0.0   # 组合累计收益下限（须 >0）
+_GONOGO_MIN_P10 = -0.10        # p10 尾部不破限（不差于 -10%）
+
+
+def evaluate_go_no_go(summary: dict[str, Any]) -> dict[str, Any]:
+    """据回测 summary 产出结构化 go/no-go 裁决（评审 D1：原本只产指标、无任何判定出口）。
+
+    判据（全部硬条件通过才 GO；样本/交易日不足判 INSUFFICIENT，绝不可据此上实盘）：
+    - 样本充足：buyable_return_count ≥ MIN_BUYABLE 且 portfolio.day_count ≥ MIN_DAYS；
+    - 胜率：distribution.hit_rate ≥ MIN_HIT_RATE；
+    - 可成交均值为正：distribution.mean > MIN_MEAN；
+    - 对照组超额为正：control_excess_mean > MIN_EXCESS；
+    - 组合累计为正：portfolio.cumulative > MIN_CUMULATIVE；
+    - 尾部风险：distribution.p10 ≥ MIN_P10。
+    返回 {verdict: GO|NO_GO|INSUFFICIENT, checks: [{name,value,threshold,passed}], reasons: [...]}。
+    """
+    dist = summary.get("distribution") or {}
+    port = summary.get("portfolio") or {}
+    buyable = summary.get("buyable_return_count", 0) or 0
+    days = port.get("day_count", 0) or 0
+
+    # 样本不足 → INSUFFICIENT（不参与 GO/NO_GO，明确标记不可上实盘）。
+    if buyable < _GONOGO_MIN_BUYABLE or days < _GONOGO_MIN_DAYS:
+        return {
+            "verdict": "INSUFFICIENT",
+            "checks": [],
+            "reasons": [
+                f"样本不足: buyable={buyable}(需≥{_GONOGO_MIN_BUYABLE}) "
+                f"days={days}(需≥{_GONOGO_MIN_DAYS})"
+            ],
+        }
+
+    checks: list[dict[str, Any]] = []
+
+    def _chk(name: str, value: Any, ok: bool, threshold: Any) -> bool:
+        checks.append({"name": name, "value": value, "threshold": threshold, "passed": bool(ok)})
+        return bool(ok)
+
+    hit = dist.get("hit_rate")
+    mean = dist.get("mean")
+    p10 = dist.get("p10")
+    excess = summary.get("control_excess_mean")
+    cumulative = port.get("cumulative")
+
+    passed = True
+    passed &= _chk("hit_rate", hit, hit is not None and hit >= _GONOGO_MIN_HIT_RATE, _GONOGO_MIN_HIT_RATE)
+    passed &= _chk("mean", mean, mean is not None and mean > _GONOGO_MIN_MEAN, _GONOGO_MIN_MEAN)
+    passed &= _chk("control_excess_mean", excess, excess is not None and excess > _GONOGO_MIN_EXCESS, _GONOGO_MIN_EXCESS)
+    passed &= _chk("cumulative", cumulative, cumulative is not None and cumulative > _GONOGO_MIN_CUMULATIVE, _GONOGO_MIN_CUMULATIVE)
+    passed &= _chk("p10", p10, p10 is not None and p10 >= _GONOGO_MIN_P10, _GONOGO_MIN_P10)
+
+    reasons = [f"{c['name']}={c['value']} 未达阈值 {c['threshold']}" for c in checks if not c["passed"]]
+    return {"verdict": "GO" if passed else "NO_GO", "checks": checks, "reasons": reasons}
 
 
 def _count_by(rows: list[Any], key) -> dict[str, int]:
