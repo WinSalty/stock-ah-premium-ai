@@ -187,6 +187,23 @@ def test_ingest_422_missing_unique_key(monkeypatch) -> None:
     assert resp.status_code == 422
 
 
+def test_ingest_422_account_id_mismatch_with_envelope(monkeypatch) -> None:
+    """评审 P1#9：record.data.account_id 与信封 account_id 不一致 → 422，不静默串账户落库。"""
+    db = _make_db()
+    client = _client(db, monkeypatch, token="secret")
+    # 信封 account_id=A1（_post 固定），data 里却是 A2。
+    resp = _post(client, [{"table": "qmt_trade", "data": _trade_data(account_id="A2")}])
+    assert resp.status_code == 422
+
+
+def test_ingest_422_trade_date_mismatch_with_envelope(monkeypatch) -> None:
+    """评审 P1#9：record.data.trade_date 与信封 trade_date 不一致 → 422，不串日落库。"""
+    db = _make_db()
+    client = _client(db, monkeypatch, token="secret")
+    resp = _post(client, [{"table": "qmt_trade", "data": _trade_data(trade_date="2026-06-14")}])
+    assert resp.status_code == 422
+
+
 def test_ingest_empty_records_ok(monkeypatch) -> None:
     """空 records → 200 空结果（避免执行侧把空批当失败重试）。"""
     db = _make_db()

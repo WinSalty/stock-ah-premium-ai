@@ -135,9 +135,36 @@ class QmtIngestService:
         """
         by_table: dict[str, int] = {}
         for record in request.records:
+            self._validate_envelope_consistency(request, record)
             table = self._upsert_one(record)
             by_table[table] = by_table.get(table, 0) + 1
         return by_table
+
+    def _validate_envelope_consistency(
+        self, request: QmtIngestRequest, record: QmtIngestRecord
+    ) -> None:
+        """校验每条 record.data 的 account_id/trade_date 与请求信封一致（评审 P1#9）。
+
+        回流四表唯一键首列是 account_id 且含 trade_date，且全部取自 record.data。若执行侧 mappers
+        序列化出错、多账户串栈、或 data 内 account_id/trade_date 与信封声明不符（如盘后跨日触发取了
+        系统日），原实现会按 data 内值幂等落库，错误地落到另一个账户/交易日的唯一键下，且因 account_id
+        进唯一键不与正确行冲突而绕过去重 → 复盘归因/净值曲线/对账（按 account_id+trade_date 切分）
+        被静默污染。这里在信封字段【非空】时强制一致，不符抛 422，让执行侧保 synced=0 暴露问题。
+        口径：信封字段为 None（未声明）时不校验该维度（向后兼容纯审计可选语义）。
+        """
+        data = record.data or {}
+        env_acc = request.account_id
+        data_acc = data.get("account_id")
+        if env_acc is not None and data_acc is not None and str(data_acc) != str(env_acc):
+            raise QmtIngestValidationError(
+                f"{record.table} account_id 与信封不一致：data={data_acc} envelope={env_acc}"
+            )
+        env_td = request.trade_date
+        data_td = data.get("trade_date")
+        if env_td is not None and data_td is not None and str(data_td) != str(env_td):
+            raise QmtIngestValidationError(
+                f"{record.table} trade_date 与信封不一致：data={data_td} envelope={env_td}"
+            )
 
     def _upsert_one(self, record: QmtIngestRecord) -> str:
         """校验表名 → 反序列化 → 按方言构造幂等 upsert → 执行。返回表名。
