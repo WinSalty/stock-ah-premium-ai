@@ -121,6 +121,21 @@ def test_compact_stock_row_seal_ratio_over_100_capped():
     assert r["seal_ratio_pct"] is None
 
 
+def test_compact_stock_row_carries_auction_factor_denominators():
+    """评审 F3：compact_row 带出 float_mktcap(流通市值,元) 与 first_board_vol(信号日量,手)，供契约下发。"""
+    svc = _compact_service()
+    # free_float 给值(元)→float_mktcap=元值；技术指标 vol=信号日成交量(手)。
+    r = svc._compact_stock_row(
+        {"ts_code": "600000.SH", "limit_order": 1e7, "free_float": 1e9},
+        {"vol": 123456.0},
+    )
+    assert r["float_mktcap"] == 1e9
+    assert r["first_board_vol"] == 123456.0
+    # free_float 缺→circ_mv(万元)×10000 作 float_mktcap(元)。
+    r2 = svc._compact_stock_row({"ts_code": "600000.SH", "limit_order": 1e7}, {"circ_mv": 1e5, "vol": 1000})
+    assert r2["float_mktcap"] == 1e9
+
+
 def add_user(db: Session) -> AppUser:
     """写入可接收打板推送的测试用户。
 

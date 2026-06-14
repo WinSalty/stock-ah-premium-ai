@@ -6,6 +6,7 @@ from decimal import Decimal
 from sqlalchemy import (
     DECIMAL,
     JSON,
+    BigInteger,
     Boolean,
     Date,
     DateTime,
@@ -291,6 +292,9 @@ class LimitUpSelectedStock(TimestampMixin, Base):
     turnover_rate: Mapped[Decimal | None] = mapped_column(DECIMAL(10, 4))
     close: Mapped[Decimal | None] = mapped_column(DECIMAL(20, 6))
     winner_rate: Mapped[Decimal | None] = mapped_column(DECIMAL(10, 4))
+    # 评审 F3：竞价两因子分母，随 watchlist 契约下发执行侧。
+    float_mktcap: Mapped[Decimal | None] = mapped_column(DECIMAL(20, 4))   # 流通市值(元)，封流比分母
+    first_board_vol: Mapped[int | None] = mapped_column(BigInteger)        # 信号日成交量(手)，量能比分母
     # ⑨ 优先级 / 原始结构 / 入选理由
     priority: Mapped[int | None] = mapped_column(Integer)
     item_json: Mapped[dict | None] = mapped_column(JSON)

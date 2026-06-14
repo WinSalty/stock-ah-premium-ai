@@ -645,6 +645,9 @@ class LimitUpPushService:
                     turnover_rate=self._decimal_or_none(row.get("turnover_rate")),
                     close=self._decimal_or_none(tech.get("close")),
                     winner_rate=self._decimal_or_none(cyq.get("winner_rate")),
+                    # 评审 F3：竞价两因子分母（执行侧封流比 / 量能比用）。
+                    float_mktcap=self._decimal_or_none(row.get("float_mktcap")),
+                    first_board_vol=self._int_or_none(row.get("first_board_vol")),
                     priority=self._int_or_none(selection.get("priority")),
                     item_json={"row": row, "leader": score.strength_dim_json, "prior": prior},
                     selection_reason=selection.get("selection_reason"),
@@ -1752,6 +1755,9 @@ class LimitUpPushService:
             "turnover_rate": self._decimal_to_float(to_decimal(latest_basic.get("turnover_rate"))),
             "volume_ratio": self._decimal_to_float(to_decimal(latest_basic.get("volume_ratio"))),
             "circ_mv": self._decimal_to_float(to_decimal(latest_basic.get("circ_mv"))),
+            # 信号日全天成交量（手，评审 F3）：作 first_board_vol 供执行侧竞价量能比分母。
+            # 首板票信号日=首板日，故即首板量；连板票为最近板量（口径见 doc/archive/09）。
+            "vol": self._decimal_to_float(to_decimal(latest.get("vol"))),
         }
 
     def _assemble_context(
@@ -1977,6 +1983,11 @@ class LimitUpPushService:
             "limit_order": row.get("limit_order"),
             "max_limit_order": row.get("lu_limit_order"),
             "seal_ratio_pct": self._decimal_to_float(seal_ratio),
+            # 评审 F3：补两个竞价因子分母，供 watchlist 契约下发执行侧——
+            # float_mktcap=流通市值(元，即上面算封流比的同一分母，free_float 或 circ_mv×10000)；
+            # first_board_vol=信号日全天成交量(手，取技术指标 vol)，供竞价量能比分母。
+            "float_mktcap": self._decimal_to_float(free_float),
+            "first_board_vol": indicator.get("vol"),
             "limit_bid_volume": row.get("lu_bid_vol"),
             "amount": row.get("amount"),
             "net_change": row.get("net_change"),

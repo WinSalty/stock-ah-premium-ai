@@ -63,6 +63,9 @@ class LimitUpWatchlistItem(BaseModel):
     turnover_rate: Decimal | None = None
     close: Decimal | None = None
     winner_rate: Decimal | None = None
+    # 竞价两因子分母（评审 F3）：执行侧封流比/量能比用，缺则执行侧走降级。
+    float_mktcap: Decimal | None = Field(default=None, description="流通市值(元)，封流比分母")
+    first_board_vol: int | None = Field(default=None, description="信号日全天成交量(手)，竞价量能比分母")
     # ⑨ 优先级 / 入选理由
     priority: int | None = None
     selection_reason: str | None = None
