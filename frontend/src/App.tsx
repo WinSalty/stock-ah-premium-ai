@@ -9,6 +9,7 @@ import {
   DatabaseZap,
   Image as ImageIcon,
   LayoutDashboard,
+  LineChart,
   LogOut,
   Menu as MenuIcon,
   MessageCircleMore,
@@ -33,6 +34,7 @@ import LlmMetricsPage from './pages/LlmMetricsPage';
 import XueqiuPublishPage from './pages/XueqiuPublishPage';
 import ImageGenerationPage from './pages/ImageGenerationPage';
 import DividendReinvestmentPage from './pages/DividendReinvestmentPage';
+import QmtReviewPage from './pages/QmtReviewPage';
 import { fetchCurrentUser } from './api/auth';
 import { clearAuthToken, getAuthToken } from './api/client';
 import type { AuthTokenResponse, UserInfo } from './types/domain';
@@ -50,6 +52,7 @@ type PageKey =
   | 'pushplus'
   | 'limit_up_push'
   | 'xueqiu_publish'
+  | 'qmt_review'
   | 'profile';
 
 type AppMenuItem = {
@@ -76,6 +79,7 @@ const allMenuItems: AppMenuItem[] = [
   { key: 'pushplus', icon: <MessageCircleMore size={18} />, label: 'PushPlus' },
   { key: 'limit_up_push', icon: <RadioTower size={18} />, label: '打板推送' },
   { key: 'xueqiu_publish', icon: <Send size={18} />, label: '雪球发布' },
+  { key: 'qmt_review', icon: <LineChart size={18} />, label: '实盘复盘' },
   { key: 'profile', icon: <UserCircle size={18} />, label: '个人信息' }
 ];
 
@@ -267,6 +271,7 @@ function App() {
     pushplus: <PushplusAdminPage />,
     limit_up_push: user ? <LimitUpPushPage currentUser={user} /> : null,
     xueqiu_publish: <XueqiuPublishPage />,
+    qmt_review: <QmtReviewPage />,
     profile: user ? <ProfilePage user={user} onUserUpdated={setUser} /> : null
   };
   const menuItems = useMemo(() => {

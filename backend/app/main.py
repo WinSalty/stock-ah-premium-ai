@@ -17,6 +17,7 @@ from app.api.routes_market import router as market_router
 from app.api.routes_nine_turn_push import router as nine_turn_push_router
 from app.api.routes_notifications import router as notifications_router
 from app.api.routes_qmt_ingest import router as qmt_ingest_router
+from app.api.routes_qmt_review import router as qmt_review_router
 from app.api.routes_query import router as query_router
 from app.api.routes_settings import router as settings_router
 from app.api.routes_sync import router as sync_router
@@ -108,6 +109,7 @@ def create_app() -> FastAPI:
     app.include_router(watchlist_router, prefix="/api", tags=["watchlist"])
     app.include_router(watchlist_export_router, prefix="/api", tags=["watchlist-export"])
     app.include_router(qmt_ingest_router, prefix="/api", tags=["qmt-ingest"])
+    app.include_router(qmt_review_router, prefix="/api", tags=["qmt-review"])
     app.include_router(notifications_router, prefix="/api", tags=["notifications"])
     app.include_router(query_router, prefix="/api", tags=["query"])
     app.include_router(

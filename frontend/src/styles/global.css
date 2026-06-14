@@ -3155,3 +3155,152 @@ pre.llm-payload-viewer,
     grid-template-columns: 1fr;
   }
 }
+
+/* ===========================================================================
+ * QMT 实盘复盘看板（仅 admin）。配色遵循 A 股「红涨绿跌」；整体延续全站浅色数据风。
+ * 创建日期：2026-06-14
+ * author: claude
+ * ======================================================================== */
+.qmt-review-page .ant-tabs-nav {
+  margin-bottom: 16px;
+}
+
+.qmt-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.qmt-tab-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.qmt-daily,
+.qmt-history,
+.qmt-quality {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* KPI 卡片网格 */
+.qmt-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+}
+
+.qmt-kpi-card {
+  padding: 16px 18px;
+  border: 1px solid #e5ebf3;
+  border-radius: 10px;
+  background: linear-gradient(180deg, #fbfcfe 0%, #ffffff 60%);
+}
+
+.qmt-kpi-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: #64748b;
+  font-size: 13px;
+  margin-bottom: 8px;
+}
+
+.qmt-kpi-hint {
+  color: #94a3b8;
+  cursor: help;
+}
+
+.qmt-kpi-value {
+  font-size: 26px;
+  font-weight: 700;
+  line-height: 1.15;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+.qmt-kpi-sub {
+  margin-top: 6px;
+  color: #94a3b8;
+  font-size: 12px;
+}
+
+/* 红涨绿跌（盈亏方向着色） */
+.qmt-up {
+  color: #cf1322;
+}
+
+.qmt-down {
+  color: #2f9e44;
+}
+
+.qmt-flat {
+  color: #1f2937;
+}
+
+/* 区段标题行（标题 + 右侧控件） */
+.qmt-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.qmt-nav-note {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: #94a3b8;
+  font-size: 12px;
+  cursor: help;
+}
+
+/* 表格内双行单元格 */
+.qmt-cell-stack {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.25;
+}
+
+.qmt-strong {
+  font-weight: 600;
+  color: #172033;
+}
+
+.qmt-muted {
+  color: #94a3b8;
+  font-size: 12px;
+}
+
+.qmt-signal-tags {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.qmt-signal-tags .ant-tag {
+  margin: 0;
+}
+
+.qmt-panel-spin {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 200px;
+}
+
+.qmt-empty-rich {
+  max-width: 460px;
+  margin: 0 auto;
+  text-align: center;
+}
+
+/* 表格内盈亏数值等宽对齐 */
+.qmt-review-page .ant-table-cell {
+  font-variant-numeric: tabular-nums;
+}
