@@ -1942,10 +1942,24 @@ class LimitUpPushService:
 
         indicator = indicator or {}
         limit_order = to_decimal(row.get("limit_order") or row.get("fd_amount"))
-        free_float = to_decimal(
-            row.get("free_float") or row.get("float_mv") or indicator.get("circ_mv")
-        )
+        # 封流比 = 封单额 / 流通市值 ×100，分子分母须同口径（单位"元"）。
+        # KPL 的 free_float / float_mv 本为"元"，可直接做分母；缺失时回退 daily_basic.circ_mv，
+        # 但 circ_mv 的 Tushare 口径是"万元"，必须 ×10000 换算成"元"——否则分母被缩小 1e4、
+        # 封流比被放大约 1 万倍，弱封首板会被误评成强龙头进 T+1 名单（评审 P0-F2）。
+        free_float = to_decimal(row.get("free_float") or row.get("float_mv"))
+        if free_float is None:
+            circ_mv_wan = to_decimal(indicator.get("circ_mv"))  # daily_basic 口径：万元
+            free_float = circ_mv_wan * Decimal("10000") if circ_mv_wan is not None else None
         seal_ratio = self._safe_pct_ratio(limit_order, free_float)
+        # 合理上界保护（评审 P0-F2）：封单额不可能超过全部流通市值，封流比 >100% 即视为单位错配/脏数据，
+        # 置缺并告警，避免错误值静默落表污染龙头打分卡的封板质量分位。
+        if seal_ratio is not None and seal_ratio > Decimal("100"):
+            logger.warning(
+                "seal_ratio_pct 异常 >100%%(疑似单位错配/脏数据)，置缺：ts_code=%s value=%s "
+                "limit_order=%s free_float=%s",
+                row.get("ts_code"), seal_ratio, limit_order, free_float,
+            )
+            seal_ratio = None
         compact = {
             "ts_code": row.get("ts_code"),
             "name": row.get("name"),

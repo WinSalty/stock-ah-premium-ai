@@ -92,6 +92,35 @@ def make_db() -> Session:
     return Session(engine)
 
 
+def _compact_service() -> LimitUpPushService:
+    """构造一个仅用于测试纯计算方法(_compact_stock_row 等)的轻量 service。"""
+    return LimitUpPushService(
+        make_db(),
+        settings=Settings(llm_api_key_file=None, tushare_token="token", tushare_token_file=None),
+        tushare_client=FakeTushareClient({}),
+        notification_service=FakeNotificationService(),
+    )
+
+
+def test_compact_stock_row_seal_ratio_unit_consistency():
+    """评审 P0-F2：封流比分母 free_float(元) 缺失回退 circ_mv(万元) 时必须 ×10000 换算，
+    否则分母被缩小 1e4、封流比被放大约 1 万倍。"""
+    svc = _compact_service()
+    # (a) free_float 直接给（元）：1e7 封单 / 1e9 流通 = 1.0%
+    ra = svc._compact_stock_row({"ts_code": "600000.SH", "limit_order": 1e7, "free_float": 1e9}, {})
+    assert ra["seal_ratio_pct"] == pytest.approx(1.0, abs=1e-6)
+    # (b) free_float 缺失，回退 circ_mv=1e5(万元=1e9元)：应同为 1.0%，而非 10000%
+    rb = svc._compact_stock_row({"ts_code": "600000.SH", "limit_order": 1e7}, {"circ_mv": 1e5})
+    assert rb["seal_ratio_pct"] == pytest.approx(1.0, abs=1e-6)
+
+
+def test_compact_stock_row_seal_ratio_over_100_capped():
+    """封流比 >100%(单位错配/脏数据：封单>流通市值) → 置缺(None)，不静默落表污染打分。"""
+    svc = _compact_service()
+    r = svc._compact_stock_row({"ts_code": "600000.SH", "limit_order": 1e9, "free_float": 1e7}, {})
+    assert r["seal_ratio_pct"] is None
+
+
 def add_user(db: Session) -> AppUser:
     """写入可接收打板推送的测试用户。
 
