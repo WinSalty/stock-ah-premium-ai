@@ -131,7 +131,8 @@ export default function QmtReviewPage() {
   const [side, setSide] = useState<'ALL' | 'BUY' | 'SELL'>('ALL');
   const [tradePage, setTradePage] = useState(1);
   const [range, setRange] = useState<[Dayjs, Dayjs] | null>(null);
-  const [tab, setTab] = useState('daily');
+  // 默认落在「信号选股」：纯信号侧数据、与执行侧回流解耦，执行侧未回流时也能直接看。
+  const [tab, setTab] = useState('selection');
 
   // 账户清单：加载后自动选中最新账户与其最新交易日（仅首次）。
   const accountsQuery = useQuery({ queryKey: [QK, 'accounts'], queryFn: fetchQmtAccounts });
@@ -227,27 +228,9 @@ export default function QmtReviewPage() {
     </div>
   );
 
-  // 全库无回流数据：统一空态，避免误以为接口异常。
-  if (accountsQuery.isSuccess && accounts.length === 0) {
-    return (
-      <main className="page">
-        <PageHeader title="实盘复盘" />
-        <div className="panel">
-          <Empty
-            description={
-              <div className="qmt-empty-rich">
-                <Typography.Text strong>执行侧尚未回流任何账户数据</Typography.Text>
-                <Typography.Paragraph type="secondary" style={{ marginTop: 8, marginBottom: 0 }}>
-                  待 miniQMT 执行侧盘后通过 <code>POST /api/internal/qmt/ingest</code> 回流成交 / 委托 /
-                  持仓 / 账户日快照后，本看板将自动呈现当日复盘与历史净值。
-                </Typography.Paragraph>
-              </div>
-            }
-          />
-        </div>
-      </main>
-    );
-  }
+  // 说明：不再因「无执行侧账户」整页空态——「信号选股」纯信号侧数据需与执行侧回流解耦，
+  // 执行侧未回流时仍可查看选股；执行相关 Tab（当日复盘/历史净值/持仓/交易质量/决策流水）各自展示空态。
+  const noQmtAccounts = accountsQuery.isSuccess && accounts.length === 0;
 
   return (
     <main className="page qmt-review-page">
@@ -272,7 +255,9 @@ export default function QmtReviewPage() {
                 <GitBranch size={15} /> 决策流水
               </span>
             ),
-            children: (
+            children: noQmtAccounts ? (
+              <ExecPendingEmpty />
+            ) : (
               <DecisionsTab active={tab === 'decisions'} accountId={accountId} dateStr={dateStr} />
             )
           },
@@ -283,7 +268,9 @@ export default function QmtReviewPage() {
                 <Wallet size={15} /> 当日复盘
               </span>
             ),
-            children: (
+            children: noQmtAccounts ? (
+              <ExecPendingEmpty />
+            ) : (
               <DailyTab
                 loading={dailyQuery.isLoading}
                 daily={daily}
@@ -308,7 +295,11 @@ export default function QmtReviewPage() {
                 <TrendingUp size={15} /> 历史净值
               </span>
             ),
-            children: <HistoryTab loading={historyQuery.isLoading} history={history} />
+            children: noQmtAccounts ? (
+              <ExecPendingEmpty />
+            ) : (
+              <HistoryTab loading={historyQuery.isLoading} history={history} />
+            )
           },
           {
             key: 'positions',
@@ -317,7 +308,9 @@ export default function QmtReviewPage() {
                 <Layers size={15} /> 持仓明细
               </span>
             ),
-            children: (
+            children: noQmtAccounts ? (
+              <ExecPendingEmpty />
+            ) : (
               <PositionsTable loading={positionsQuery.isLoading} positions={positionsQuery.data ?? []} />
             )
           },
@@ -328,7 +321,7 @@ export default function QmtReviewPage() {
                 <Activity size={15} /> 交易质量
               </span>
             ),
-            children: <QualityTab daily={daily} />
+            children: noQmtAccounts ? <ExecPendingEmpty /> : <QualityTab daily={daily} />
           }
         ]}
       />
@@ -835,6 +828,25 @@ function PanelSpin() {
   return (
     <div className="panel qmt-panel-spin">
       <Spin />
+    </div>
+  );
+}
+
+/** 执行侧尚未回流时，执行相关 Tab 的统一空态（与「信号选股」解耦：信号侧数据不受影响）。 */
+function ExecPendingEmpty() {
+  return (
+    <div className="panel">
+      <Empty
+        description={
+          <div className="qmt-empty-rich">
+            <Typography.Text strong>执行侧尚未回流任何账户数据</Typography.Text>
+            <Typography.Paragraph type="secondary" style={{ marginTop: 8, marginBottom: 0 }}>
+              待 miniQMT 执行侧盘后通过 <code>POST /api/internal/qmt/ingest</code> 回流成交 / 委托 /
+              持仓 / 账户日快照后，本看板将自动呈现当日复盘、历史净值、决策流水等。「信号选股」为纯信号侧数据，不受影响。
+            </Typography.Paragraph>
+          </div>
+        }
+      />
     </div>
   );
 }
