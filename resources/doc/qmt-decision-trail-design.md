@@ -36,7 +36,7 @@
 
 **埋点（精确位置见探查报告）**：买入侧核心钩子 `entry_router.py:312 _record`（现 `decision_log=[]` 是死代码，替换为 `DecisionEmitter`）；编排层 `main.py:268/427/439`；下单层 `order_executor.py:193/206/220/237/299/319/425/573/621`；卖出 `sell_decider.py:383`。手法：每处现有 `logger.info(event,...)` 旁**追加一行** `emitter.emit(...)`，不改动任何现有控制流。
 
-**Feature flag**：`settings.decision_log_enabled`（**默认 False**）。关时 `DecisionEmitter` 为 no-op（不建队列、不起线程，埋点零成本）。回滚＝flag 置 False 重启。
+**Feature flag**：`settings.decision_log_enabled`（**默认 True**，按用户决定默认开）。置 False（或缺信号回流通道）时 `DecisionEmitter` 为 no-op（不建队列、不起线程，埋点零成本），即一键回滚开关。默认开意味着真机部署即生效，故「不影响实盘下单」需真机验证（见 §E 阶段 4）。
 
 ## C. 回流链路（复用 `/api/internal/qmt/ingest`）
 
@@ -53,7 +53,7 @@
 
 - **阶段 1（零交易风险，无需真机）**：`/api/review/selection` + 「信号选股」Tab，暴露已落库选股决策字段。
 - **阶段 2（零交易风险，构造数据验证）**：`qmt_decision_log` ORM + 迁移 `0055` + ingest 接收端（两处）+ `/review/decisions`、`/review/decision-closeloop` + 「决策流水/闭环」Tab。
-- **阶段 3（需真机 miniQMT 验证）**：执行侧 `DecisionEmitter`（有界队列+消费线程+no-op 降级）+ 各埋点旁路 emit + best-effort 回流 + feature flag（默认关）。
+- **阶段 3（需真机 miniQMT 验证）**：执行侧 `DecisionEmitter`（有界队列+消费线程+no-op 降级）+ 各埋点旁路 emit + best-effort 回流 + feature flag（**默认开**，按用户决定）。
 - **阶段 4**：真机决策 → 看板闭环时间线端到端核对；prompt_version 消歧、时间双写、reason_code 映射校准。
 
 ## F. 风险与回滚
@@ -64,3 +64,14 @@
 
 **信号侧**：`schemas/qmt_ingest.py`、`services/qmt_ingest_service.py`、`db/models/qmt.py`（新 `QmtDecisionLog`）、`alembic/versions/20260614_0055_*`、`api/routes_qmt_review.py`、`services/qmt_review_service.py`、`schemas/qmt_review.py`、`frontend/src/api/qmt.ts`、`frontend/src/pages/QmtReviewPage.tsx`、`tests/`。
 **执行侧**：新建 `qmt_strategy/decision/decision_emitter.py`；改 `entry/entry_router.py`、`app/main.py`、`order/order_executor.py`、`position/sell_decider.py`、`storage/schema.py`、`storage/http_ingest_repository.py`、`storage/local_stack.py`、`app/run.py`、settings。
+
+---
+
+## 实施状态（2026-06-14）
+
+- **阶段 1 ✅**（信号侧，零交易风险）：`GET /api/review/selection` +「信号选股」Tab，暴露 `limit_up_selected_stock` 决策字段（最新 READY 版本消歧）。
+- **阶段 2 ✅**（信号侧，零交易风险，构造数据验证）：`qmt_decision_log` 表（迁移 `0055`）+ ingest 接收端（白名单 + `_TABLE_SPEC` + 修复 JSON 列 `_coerce_value` 双重编码）+ `GET /api/review/decisions`、`/decision-closeloop` +「决策流水/闭环」Tab（antd Timeline）。本机已迁移 + 灌演示数据，浏览器端到端验证通过。
+- **阶段 3 ✅**（执行侧，`decision_log_enabled` 默认开）：`qmt_strategy/decision/decision_emitter.py`（有界队列 + 独立 daemon 线程 + best-effort 回流 + 异常全吞 + no-op 降级）+ entry_router/order_executor/sell_decider/main 编排各点埋点 + run.py 装配。全仓 444 测试通过（含 10 个采集器单测）。**与下单热路径物理隔离，整条采集崩溃也不影响交易/四表回流/对账。**
+- **阶段 4 ⏳ 待真机**：默认开的采集对实盘下单零影响验证、两侧 token 部署、决策→看板闭环端到端核对、一键回滚演练。见执行侧 `doc/待办与上线验证清单.md` §F。
+
+> 提交：信号侧 `feature/limit-up-watchlist-signal`（阶段 1-2）；执行侧 `main`（阶段 3）。
